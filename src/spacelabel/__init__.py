@@ -21,8 +21,7 @@ __all__ = ["APP_NAME", "BUNDLE_ID", "__version__"]
 APP_NAME = "spacelabel"
 
 #: Reverse-DNS identifier — the single source of truth, reused verbatim as the
-#: LaunchAgent ``Label``, the plist filename, and the ``os_log`` subsystem. Moving
-#: to a Quicknode namespace later is a one-line change here (see DECISIONS.md 6.7).
+#: LaunchAgent ``Label``, the plist filename, and the ``os_log`` subsystem.
 BUNDLE_ID = "dev.mcsim.spacelabel"
 
 #: Package version (single source; pyproject reads this via setuptools dynamic).

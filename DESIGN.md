@@ -343,7 +343,7 @@ Machine-readable output (`spaces`, `label list`) goes to **stdout** via `click.e
 - **Library validation:** the Homebrew interpreter is **adhoc-signed, non-hardened** (verified `flags=0x2(adhoc)`, no `0x10000`), so LV is not enforced and `ctypes`/PyObjC can dlopen Apple-signed private frameworks with **no entitlement and no SIP change**. (Holds only while the interpreter stays non-hardened; a hardened/notarized py2app bundle would re-engage LV.)
 
 ### 9.2 LaunchAgent (login) — confirmed: agent runs in the Aqua GUI session
-`~/Library/LaunchAgents/dev.mcsim.spacelabel.plist`, loaded into the per-user GUI domain. **The reverse-DNS id `dev.mcsim.spacelabel` is the single source of truth** — reused verbatim as the LaunchAgent `Label`, the plist filename, and the `os_log` subsystem (§8.2) — so the planned later move to a Quicknode namespace (`io.quiknode.spacelabel`) is a one-constant change. Repo starts at **github.com/McSim85**.
+`~/Library/LaunchAgents/dev.mcsim.spacelabel.plist`, loaded into the per-user GUI domain. **The reverse-DNS id `dev.mcsim.spacelabel` is the single source of truth** — reused verbatim as the LaunchAgent `Label`, the plist filename, and the `os_log` subsystem (§8.2) — so a future namespace rename is a one-constant change. Repo starts at **github.com/McSim85**.
 
 ```xml
 <key>Label</key>                  <string>dev.mcsim.spacelabel</string>

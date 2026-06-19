@@ -129,7 +129,7 @@ read-only probe verifies the load-bearing empirical assumptions on hardware
 
 - **`dev.mcsim.spacelabel`** is the single reverse-DNS constant (LaunchAgent `Label`,
   plist filename, `os_log` subsystem) — one source of truth so a later move to a
-  Quicknode namespace (`io.quiknode.spacelabel`) is a one-line change. (DECISIONS §6.7)
+  a future namespace rename is a one-line change. (DECISIONS §6.7)
 - Repo: private under github.com/McSim85; MIT © Max Kramarenko.
 
 ---
