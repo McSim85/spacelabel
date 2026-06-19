@@ -146,6 +146,7 @@ The Shared Baseline says *"ctypes `dlopen` of SkyLight for the private CGS reads
 - mypy PyObjC per-module overrides are present but "unused" until Phase 4 imports PyObjC; `warn_unused_configs` is intentionally left off until then.
 - pre-commit revs pinned via `pre-commit autoupdate` (pre-commit-hooks v6.0.0, ruff v0.15.18, mirrors-mypy v2.1.0); contributors re-run autoupdate as needed.
 - `uv.lock` is gitignored (deps are pinned in `pyproject.toml`; pipx is the distribution path). Revisit if reproducible dev pinning is wanted.
+- The pre-commit git hook is **installed locally** (`pre-commit install`). **Branch protection on `main` and GitHub Discussions are intentionally deferred until the repo goes public** (they add solo-dev friction and need an audience / a green CI run first); the how-to is recorded in `.github/SETTINGS.md` as the go-public checklist.
 
 ---
 
