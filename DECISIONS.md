@@ -130,11 +130,30 @@ The Shared Baseline says *"ctypes `dlopen` of SkyLight for the private CGS reads
 
 ---
 
+## 8. Repository layout & packaging (Phase 2)
+
+| # | Decision | Rationale | Confidence |
+|---|---|---|---|
+| 8.1 | **src-layout: package lives in `src/spacelabel/`** with the DESIGN §2 tree (`platform/` + `agent/` subpackages). | PyPA best practice: disambiguates the repo dir from the package, prevents accidental imports of the in-tree source, and works with both editable installs and pipx. Phase 2 owns final layout (DESIGN §2 is "intent, not a binding contract"). | high |
+| 8.2 | **Repo name `spacelabel`; created **private** under github.com/McSim85; MIT © Max Kramarenko.** | Max's call — personal account for now, with a possible later move to a Quicknode namespace (a one-constant change, see 6.7). Private is reversible to public at any time. | high |
+| 8.3 | **One console entry point confirmed end-to-end:** `spacelabel = "spacelabel.cli:main"`, plus a `python -m spacelabel` alias; `spacelabel agent` lazily imports and calls `agent.app.run_agent`. | Verified locally: editable install, `spacelabel --help`/`--version`, and `agent` dispatch all work (the §6.1 design, now exercised). Heavy imports (PyObjC, store, agent) stay lazy inside command bodies so the CLI never pulls AppKit for `--help`. | high |
+| 8.4 | **Tooling = ruff (lint + format) + mypy `strict` + pytest; pre-commit mirrors the CI gates; CI runs on `macos-latest`.** | Engineering-standards requirement (PEP 8/257/484). The PyObjC framework wheels are macOS-only, so a Linux runner cannot even install the package — CI must be macOS. All four gates are green on the scaffold. | high |
+| 8.5 | **Exception renamed `CGSUnavailable` → `CGSUnavailableError`** across code + DESIGN.md + DECISIONS.md. | PEP 8 exception naming (ruff `N818`); keeps the locked design and the code in sync. | high |
+| 8.6 | **The LaunchAgent invokes `spacelabel agent`** (locked design §8.1/§9.2/6.1), **not** the Phase-2 task's loose wording "`run`". The plist template `packaging/dev.mcsim.spacelabel.plist` uses `__HOME__` tokens that `install.py` substitutes. | Reconciles the task↔DESIGN wording conflict in favour of the locked design (there is no `run` subcommand). | high |
+
+**Notes / residual:**
+- `logging_setup` is implemented for **CLI** mode (stderr at WARNING/INFO/DEBUG); the **agent** file sink (`RotatingFileHandler` + optional `os_log` mirror) is a `TODO(phase-4)` and currently falls back to stderr.
+- mypy PyObjC per-module overrides are present but "unused" until Phase 4 imports PyObjC; `warn_unused_configs` is intentionally left off until then.
+- pre-commit revs pinned via `pre-commit autoupdate` (pre-commit-hooks v6.0.0, ruff v0.15.18, mirrors-mypy v2.1.0); contributors re-run autoupdate as needed.
+- `uv.lock` is gitignored (deps are pinned in `pyproject.toml`; pipx is the distribution path). Revisit if reproducible dev pinning is wanted.
+
+---
+
 ## Cross-phase impact (hand-off)
 
-- **Phase 2 (repo layout):** scaffold `pyproject.toml` per §9.1/§10 (deps = the 4 PyObjC parts + click; `[project.scripts] spacelabel = "spacelabel.cli:main"`; dev extras ruff+mypy; CGS never a dep). Adopt the §2 package tree as intent. **Carry the §0 baseline correction** into any baseline text you copy. CI must run ruff + mypy.
-- **Phase 3 (CLI/UI concepts):** the CLI surface (§8.1) and the four display-mode designs (§6) are the concept inputs; the Tahoe menu-bar transparency/visibility caveats (decision 6.5, §6.1) and the experimental-wallpaper framing (§7) should shape the UI copy.
-- **Phase 4 (code + tests):** implement `cgs.py` per the **committed** loader (1.1–1.3) — not the as-written Phase-1-track sketches that bound SkyLight directly. Implement the data model (§5 / §7-decisions) including atomic writes, file lock, watch/reload, prune. Honor the no-silent-except policy at every CGS/plist site. The notification-center + debounce footgun (§4) is an explicit adversarial-review target.
+- **Phase 2 (repo layout): ✅ DONE** — see §8. Repo scaffolded (src-layout, stub modules, `pyproject.toml` with the 4 PyObjC parts + click, `spacelabel = "spacelabel.cli:main"`, ruff/mypy-strict/pytest, pre-commit, packaging, GitHub templates + macOS CI). Initial commit pushed to **private** github.com/McSim85/spacelabel. All four gates green.
+- **Phase 3 (CLI/UI concepts):** the CLI surface (§8.1) and the four display-mode designs (§6) are the concept inputs; the Tahoe menu-bar transparency/visibility caveats (decision 6.5, §6.1) and the experimental-wallpaper framing (§7) should shape the UI copy. The command tree is now scaffolded in `src/spacelabel/cli.py` (stubs) and rendered in the README — use **`agent`** (not `run`) and the exact subcommand names there as the canonical surface.
+- **Phase 4 (code + tests):** fill the stubs under `src/spacelabel/` (every module has a docstring + `TODO(phase-4)` markers). Implement `cgs.py` per the **committed** loader (1.1–1.3) — not the Phase-1 sketches that bound SkyLight directly — raising the renamed **`CGSUnavailableError`** (8.5). Implement the data model (§5 / §7-decisions): atomic writes, `fcntl.flock`, watch/reload, prune. Honor the no-silent-except policy at every CGS/plist site. The notification-center + debounce footgun (§4) is an explicit adversarial-review target. Scaffold realities to build on: src-layout (import from the installed package); the console entry point + `agent` dispatch are confirmed working (8.3); finish `logging_setup`'s **agent** branch (RotatingFileHandler + feature-detected `os_log`); `install.py` must substitute `__HOME__` in `packaging/dev.mcsim.spacelabel.plist`, `mkdir ~/Library/Logs/spacelabel` before load, and ensure one instance; once PyObjC is actually imported, the mypy overrides become "used" (consider re-enabling `warn_unused_configs`).
 - **Phase 5 (backlog):** open questions in §1/§2/§3/§6 are backlog candidates; the wallpaper durability ceiling (§7) bounds what to promise.
 - **Phase 6 (verification):** run the §12 checklist of `DESIGN.md`. **Gate the whole project on item 1 (uuid reboot-stability) and item 3 (RSS-flat memory).** If `uuid` is not reboot-stable, revisit decision 1.4 (the entire UUID-keying premise).
 
