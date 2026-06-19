@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spacelabel — UI reference</title>
+</head>
+<body>
+<style>
+  :root {
+    --ground: #0B0A14;
+    --ground-2: #14122A;
+    --text: #E8E6F0;
+    --muted: #9A95B8;
+    --faint: #6A6588;
+    --accent: #5EE6D0;        /* instrument-mint: the spec/annotation layer */
+    --accent-dim: #2E7E76;
+    --sys-blue: #0A84FF;       /* macOS system blue — only inside rendered chrome */
+    --hairline: rgba(255,255,255,0.10);
+    --hairline-2: rgba(255,255,255,0.06);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sf: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    --radius: 14px;
+    --maxw: 1160px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 800px at 78% -8%, rgba(94,230,208,0.10), transparent 60%),
+      radial-gradient(900px 700px at 8% 12%, rgba(120,80,200,0.16), transparent 58%),
+      linear-gradient(170deg, #0B0A14 0%, #0E0B1C 45%, #0B0A14 100%);
+    color: var(--text);
+    font-family: var(--sf);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  #stars {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    z-index: 0; pointer-events: none;
+  }
+
+  .board {
+    position: relative;
+    z-index: 1;
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: clamp(28px, 5vw, 72px) clamp(18px, 4vw, 40px) 96px;
+  }
+
+  /* ---------- doc header ---------- */
+  .doc-head { margin-bottom: clamp(40px, 7vw, 84px); }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  .doc-title {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: clamp(34px, 7vw, 68px);
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+    margin: 0;
+  }
+  .doc-title .dot { color: var(--accent); }
+  .thesis {
+    max-width: 60ch;
+    font-size: clamp(16px, 2vw, 19px);
+    color: var(--muted);
+    margin: 22px 0 0;
+  }
+  .thesis b { color: var(--text); font-weight: 600; }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-top: 26px;
+    font-family: var(--mono); font-size: 12px; color: var(--faint);
+  }
+  .tag {
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    padding: 5px 12px;
+    color: var(--muted);
+  }
+  .tag.live { color: var(--accent); border-color: var(--accent-dim); }
+
+  /* ---------- section scaffolding ---------- */
+  section { margin-top: clamp(56px, 9vw, 110px); }
+  .eyebrow {
+    display: flex; align-items: center; gap: 14px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.26em;
+    text-transform: uppercase; color: var(--accent);
+    margin: 0 0 6px;
+  }
+  .eyebrow::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--hairline), transparent);
+  }
+  .sec-title {
+    font-size: clamp(22px, 3.4vw, 32px);
+    font-weight: 600; letter-spacing: -0.015em;
+    margin: 0 0 10px;
+  }
+  .sec-lede {
+    max-width: 68ch; color: var(--muted);
+    font-size: 15.5px; margin: 0 0 30px;
+  }
+  .sec-lede code, .keys code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--hairline-2);
+    border-radius: 5px; padding: 1px 6px; color: var(--text);
+  }
+
+  /* =====================================================
+     macOS chrome — faithful rendering (the design system here)
+     ===================================================== */
+  .screen {
+    position: relative;
+    border-radius: 18px;
+    overflow: hidden;
+    aspect-ratio: 16 / 10;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 40px 90px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.06);
+    /* a real-feeling Tahoe wallpaper, doubling as "space" */
+    background:
+      radial-gradient(120% 90% at 80% -10%, rgba(94,230,208,0.16), transparent 55%),
+      radial-gradient(100% 80% at 12% 110%, rgba(180,90,220,0.22), transparent 60%),
+      linear-gradient(150deg, #241a4e 0%, #2c1c5a 38%, #3a1f63 70%, #1a1436 100%);
+  }
+  .wp-stars { position: absolute; inset: 0; pointer-events: none; opacity: 0.7; }
+
+  /* menu bar — translucent Liquid Glass */
+  .menubar {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 30px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px;
+    font-size: 13px;
+    background: rgba(20,18,40,0.34);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    z-index: 5;
+  }
+  .mb-left { display: flex; align-items: center; gap: 16px; color: rgba(255,255,255,0.92); }
+  .mb-left .apple { display: inline-flex; }
+  .mb-left .apple svg { display: block; }
+  .mb-left .app { font-weight: 600; }
+  .mb-left .mi { color: rgba(255,255,255,0.78); font-weight: 400; }
+  .mb-right { display: flex; align-items: center; gap: 14px; color: rgba(255,255,255,0.92); }
+
+  /* our status item: title + buttons row, hosted in ONE item */
+  .status-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 3px 8px; margin: 0 -2px;
+    border-radius: 7px;
+  }
+  .status-item.open { background: rgba(255,255,255,0.16); }
+  .status-title { font-weight: 600; letter-spacing: 0.01em; }
+
+  .pills { display: flex; align-items: center; gap: 4px; }
+  .pill {
+    min-width: 17px; height: 17px; padding: 0 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.9);
+    color: #1c1730;
+    font-size: 10.5px; font-weight: 700;
+    font-family: var(--sf);
+    opacity: 0.4;                 /* inactive Spaces */
+  }
+  .pill.current { opacity: 1; }   /* current marked by ALPHA, never color */
+  .pill.tinted { background: var(--accent); }       /* user color (optional) */
+  .pill.tinted2 { background: #FFC24B; }
+  .pill-div {
+    width: 1px; height: 13px; margin: 0 4px;
+    background: rgba(255,255,255,0.45);
+  }
+  .mb-sys { display: inline-flex; gap: 12px; align-items: center; color: rgba(255,255,255,0.85); }
+  .mb-sys svg { display: block; }
+  .clock { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+
+  /* the NSMenu dropdown */
+  .dropdown {
+    position: absolute; top: 36px;
+    width: 268px;
+    border-radius: 12px;
+    padding: 6px;
+    background: rgba(28,24,52,0.72);
+    -webkit-backdrop-filter: blur(34px) saturate(180%);
+    backdrop-filter: blur(34px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.7);
+    font-size: 13px;
+    z-index: 6;
+  }
+  .screen .dropdown { right: 12px; }   /* hero menu drops under the status item */
+  .mrow {
+    display: flex; align-items: center; gap: 8px;
+    height: 26px; padding: 0 9px;
+    border-radius: 6px; color: rgba(255,255,255,0.92);
+    white-space: nowrap;
+  }
+  .mrow .check { width: 13px; color: var(--accent); font-size: 12px; }
+  .mrow .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .mrow .key { color: rgba(255,255,255,0.45); font-size: 12px; }
+  .mrow .swatch { width: 9px; height: 9px; border-radius: 3px; }
+  .mrow.sel { background: var(--sys-blue); color: #fff; }
+  .mrow.sel .key { color: rgba(255,255,255,0.8); }
+  .mhead {
+    height: 22px; display: flex; align-items: center;
+    padding: 0 9px; margin-top: 4px;
+    font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: rgba(255,255,255,0.42); font-weight: 600;
+  }
+  .msep { height: 1px; margin: 5px 8px; background: rgba(255,255,255,0.12); }
+  .badge {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: #1c1730;
+    background: #FFC24B; border-radius: 4px; padding: 1px 5px;
+  }
+  .indent { padding-left: 9px; }
+
+  /* HUD — transient centered banner */
+  .hud {
+    position: absolute; left: 50%; top: 22%;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 16px 30px;
+    border-radius: 18px;
+    background: rgba(18,16,36,0.55);
+    -webkit-backdrop-filter: blur(30px) saturate(170%);
+    backdrop-filter: blur(30px) saturate(170%);
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 24px 50px -16px rgba(0,0,0,0.6);
+    z-index: 4;
+  }
+  .hud .big { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+  .hud .sub { font-size: 11.5px; color: rgba(255,255,255,0.6); letter-spacing: 0.04em; }
+
+  /* persistent corner overlay (corner is config-driven; shown bottom-right here) */
+  .overlay {
+    position: absolute; bottom: 16px; right: 14px;
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 12px;
+    border-radius: 11px;
+    background: rgba(18,16,36,0.5);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    backdrop-filter: blur(22px) saturate(160%);
+    border: 1px solid rgba(255,255,255,0.12);
+    font-size: 13px; font-weight: 600;
+    z-index: 4;
+  }
+  .overlay .dotmark { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+  /* dock hint */
+  .dock {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; padding: 7px 10px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.10);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .dock i { width: 26px; height: 26px; border-radius: 7px; display: block; }
+
+  /* scene caption */
+  .scene-cap {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    margin-top: 18px; font-size: 13px; color: var(--muted);
+  }
+  .scene-cap span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch-key { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  /* ---------- two-column anatomy ---------- */
+  .grid2 {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 26px;
+    align-items: start;
+  }
+  @media (max-width: 880px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .card {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012));
+    padding: 22px;
+  }
+  .card h3 {
+    margin: 0 0 4px; font-size: 16px; font-weight: 600;
+  }
+  .card .demo {
+    margin: 16px 0 18px; padding: 22px 18px;
+    border-radius: 10px;
+    background:
+      radial-gradient(90% 120% at 70% 0%, rgba(94,230,208,0.10), transparent 60%),
+      linear-gradient(150deg, #271c52, #1a1436);
+    border: 1px solid rgba(255,255,255,0.07);
+    display: flex; align-items: center; justify-content: center;
+    min-height: 96px;
+    overflow-x: auto;
+  }
+  /* dropdown sits flush in its demo */
+  .demo .dropdown { position: static; width: 100%; max-width: 280px; }
+
+  .keys { list-style: none; margin: 0; padding: 0; }
+  .keys li {
+    position: relative; padding-left: 20px; margin: 0 0 10px;
+    font-size: 13.5px; color: var(--muted);
+  }
+  .keys li::before {
+    content: ""; position: absolute; left: 0; top: 8px;
+    width: 8px; height: 8px; border-radius: 2px;
+    background: var(--accent); opacity: 0.9;
+  }
+  .keys li b { color: var(--text); font-weight: 600; }
+
+  /* ---------- preferences window ---------- */
+  .prefs {
+    border-radius: 12px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(22,20,42,0.92);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+    box-shadow: 0 40px 80px -30px rgba(0,0,0,0.75);
+    max-width: 620px;
+  }
+  .win-bar {
+    height: 40px; display: flex; align-items: center; gap: 14px;
+    padding: 0 14px;
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights .r { background: #FF5F57; }
+  .lights .y { background: #FEBC2E; }
+  .lights .g { background: #28C840; }
+  .win-title { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+  .outline { padding: 6px 0; }
+  .ol-row {
+    display: grid;
+    grid-template-columns: 22px 1fr 96px 54px;
+    align-items: center;
+    height: 34px; padding: 0 14px;
+    font-size: 13.5px;
+  }
+  .ol-head {
+    grid-template-columns: 22px 1fr 96px 54px;
+    height: 26px; color: var(--faint);
+    font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    border-bottom: 1px solid var(--hairline-2);
+  }
+  .ol-row.group { font-weight: 600; color: var(--text); }
+  .ol-row.group .tri { color: var(--muted); }
+  .ol-row.space { color: rgba(255,255,255,0.88); }
+  .ol-row.space .name { padding-left: 14px; }
+  .ol-row.sel { background: rgba(10,132,255,0.22); border-radius: 6px; }
+  .ol-row .tri { font-size: 10px; color: var(--faint); }
+  .ol-row .name { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  .ol-row .name .disp-ico { color: var(--accent); font-size: 12px; }
+  .ol-row .editbox {
+    border: 1px solid var(--sys-blue);
+    border-radius: 5px; padding: 2px 7px; background: rgba(10,132,255,0.10);
+    display: inline-flex; align-items: center; gap: 1px;
+  }
+  .ol-row .caret { width: 1px; height: 14px; background: var(--text); margin-left: 1px; }
+  .ol-color { display: flex; align-items: center; }
+  .ol-color .well {
+    width: 34px; height: 16px; border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  .ol-cur { text-align: center; color: var(--accent); font-size: 12px; }
+  .ol-uuid { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+
+  .prefs-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 14px;
+    border-top: 1px solid var(--hairline);
+    background: rgba(255,255,255,0.02);
+  }
+  .foot-note { font-size: 12px; color: var(--faint); }
+  .btn {
+    font-family: var(--sf); font-size: 12.5px; font-weight: 500;
+    color: var(--text);
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--hairline);
+    border-radius: 7px; padding: 5px 12px; cursor: default;
+  }
+  .btn.primary { background: var(--sys-blue); border-color: transparent; color: #fff; }
+
+  /* ---------- geometry ---------- */
+  .geo-wrap { overflow-x: auto; padding-bottom: 6px; }
+  .geo {
+    display: flex; gap: 40px; align-items: flex-end;
+    min-width: 560px; padding: 10px 4px 4px;
+  }
+  .disp { position: relative; }
+  .disp .frame {
+    position: relative;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background:
+      radial-gradient(80% 60% at 60% 0%, rgba(94,230,208,0.10), transparent 60%),
+      linear-gradient(160deg, #271c52, #181232);
+    overflow: hidden;
+  }
+  .disp.portrait .frame { width: 150px; height: 266px; }
+  .disp.wide .frame { width: 300px; height: 169px; }
+  .disp .mb {
+    position: absolute; top: 0; left: 0; right: 0; height: 12px;
+    background: rgba(255,255,255,0.10);
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+  .disp .g-hud {
+    position: absolute; left: 50%; top: 22%; transform: translateX(-50%);
+    padding: 5px 12px; border-radius: 8px;
+    background: rgba(18,16,36,0.7);
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 10px; font-weight: 700; white-space: nowrap;
+  }
+  .disp .g-ovl {
+    position: absolute; top: 16px; right: 8px;
+    padding: 3px 7px; border-radius: 7px;
+    background: rgba(18,16,36,0.6);
+    border: 1px solid rgba(255,255,255,0.16);
+    font-size: 8.5px; font-weight: 600;
+  }
+  .disp .cap {
+    margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--muted);
+  }
+  .disp .cap b { color: var(--accent); font-weight: 600; }
+  .disp .cap .px { color: var(--faint); }
+
+  .formula {
+    margin-top: 28px;
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--accent);
+    border-radius: 10px;
+    background: rgba(94,230,208,0.05);
+    padding: 18px 20px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.9;
+    overflow-x: auto;
+  }
+  .formula .c { color: var(--faint); }       /* comment */
+  .formula .k { color: var(--accent); }       /* key term */
+  .formula .v { color: var(--text); }
+
+  /* anchor grid — the 9 HUD/overlay positions */
+  .anchors {
+    display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start;
+    margin-top: 28px;
+  }
+  .ascreen {
+    width: 240px; aspect-ratio: 16 / 10;
+    border: 1px solid rgba(255,255,255,0.18); border-radius: 10px;
+    background: linear-gradient(160deg, #271c52, #181232);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    padding: 9px; gap: 4px; position: relative; flex: none;
+  }
+  .ascreen::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 9px;
+    background: rgba(255,255,255,0.10);
+    border-radius: 10px 10px 0 0; border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+  .acell { display: flex; align-items: center; justify-content: center; }
+  .acell .pin {
+    font-family: var(--mono); font-size: 9px; color: var(--faint);
+    border: 1px dashed rgba(255,255,255,0.22); border-radius: 5px;
+    padding: 3px 5px; white-space: nowrap;
+  }
+  .acell.def .pin {
+    color: #1c1730; background: var(--accent);
+    border: 1px solid var(--accent); font-weight: 700;
+  }
+  .anchor-note { max-width: 30ch; font-size: 13.5px; color: var(--muted); }
+  .anchor-note b { color: var(--text); font-weight: 600; }
+  .anchor-note .k { font-family: var(--mono); color: var(--accent); font-size: 12.5px; }
+
+  /* ---------- legend / footer ---------- */
+  .legend {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 30px;
+    margin-top: 32px;
+  }
+  @media (max-width: 720px) { .legend { grid-template-columns: 1fr; } }
+  .legend .li { display: flex; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  .legend .li .ref {
+    font-family: var(--mono); font-size: 11px; color: var(--accent);
+    border: 1px solid var(--accent-dim); border-radius: 5px;
+    padding: 1px 7px; height: fit-content; white-space: nowrap;
+  }
+  .legend .li b { color: var(--text); font-weight: 600; }
+
+  .foot {
+    margin-top: 80px; padding-top: 22px;
+    border-top: 1px solid var(--hairline);
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+  }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .hud { animation: hudfade 5.5s ease-in-out infinite; }
+    @keyframes hudfade {
+      0%, 6%   { opacity: 0; transform: translate(-50%, 6px); }
+      12%, 64% { opacity: 1; transform: translate(-50%, 0); }
+      78%,100% { opacity: 0; transform: translate(-50%, -4px); }
+    }
+  }
+</style>
+
+<canvas id="stars" aria-hidden="true"></canvas>
+
+<main class="board">
+
+  <header class="doc-head">
+    <p class="kicker">spacelabel · phase 3 · ui reference</p>
+    <h1 class="doc-title">space<span class="dot">label</span></h1>
+    <p class="thesis">A label belongs to a <b>Space's UUID</b>, not its position — so it
+      follows the desktop through any reorder. This board shows every surface that
+      renders that label: the menu bar, its dropdown, the preferences window, and the
+      on-switch HUD &amp; corner overlay. macOS chrome is drawn to spec; the mint layer is
+      annotation.</p>
+    <div class="meta-row">
+      <span class="tag live">● design-only</span>
+      <span class="tag">macOS 26 Tahoe</span>
+      <span class="tag">single NSStatusItem</span>
+      <span class="tag">keyed by Space UUID</span>
+    </div>
+  </header>
+
+  <!-- ============ HERO: THE DESKTOP ============ -->
+  <section aria-labelledby="s-desktop">
+    <p class="eyebrow">The desktop</p>
+    <h2 class="sec-title" id="s-desktop">Everything, in place, at once</h2>
+    <p class="sec-lede">The active Space's label sits in the menu bar as the status title.
+      An optional buttons row shows every Space as a pill. On each switch a HUD flashes
+      center-screen; a corner overlay can stay pinned. Here a switch to <b>“Email”</b> just
+      landed.</p>
+
+    <div class="screen">
+      <canvas class="wp-stars" aria-hidden="true"></canvas>
+
+      <div class="menubar">
+        <div class="mb-left">
+          <span class="apple" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13"><rect x="1" y="1" width="11" height="11" rx="3.5" fill="#5EE6D0"/></svg></span>
+          <span class="app">spacelabel</span>
+          <span class="mi">File</span>
+          <span class="mi">Edit</span>
+          <span class="mi">View</span>
+        </div>
+        <div class="mb-right">
+          <div class="status-item open">
+            <span class="status-title">Email</span>
+            <span class="pills" role="img" aria-label="per-Space indicator row">
+              <span class="pill current tinted">E</span>
+              <span class="pill">C</span>
+              <span class="pill tinted2">S</span>
+              <span class="pill">D</span>
+              <span class="pill">5</span>
+              <span class="pill">6</span>
+              <span class="pill-div"></span>
+              <span class="pill">T</span>
+              <span class="pill current">Do</span>
+              <span class="pill">3</span>
+            </span>
+          </div>
+          <span class="mb-sys" aria-hidden="true">
+            <svg width="22" height="13" viewBox="0 0 22 13"><rect x="0.5" y="1.5" width="18" height="10" rx="2.5" fill="none" stroke="currentColor"/><rect x="2" y="3" width="12" height="7" rx="1" fill="currentColor"/><rect x="19.2" y="4.5" width="1.6" height="4" rx="0.8" fill="currentColor"/></svg>
+            <svg width="16" height="13" viewBox="0 0 16 13"><path d="M8 11.5l-.01.01M8 2C4.7 2 1.9 3.3 0 5.4l1.6 1.6C3.2 5.3 5.5 4.2 8 4.2s4.8 1.1 6.4 2.8L16 5.4C14.1 3.3 11.3 2 8 2z" fill="currentColor"/></svg>
+            <span class="clock">9:41</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="dropdown" role="menu" aria-label="spacelabel menu">
+        <div class="mrow"><span class="check"></span><span class="label">Rename this Space…</span></div>
+        <div class="msep"></div>
+        <div class="mhead">LG UltraFine</div>
+        <div class="mrow sel"><span class="check">✓</span><span class="swatch" style="background:var(--accent)"></span><span class="label">Email</span></div>
+        <div class="mrow"><span class="check"></span><span class="swatch" style="background:#8E8AA6"></span><span class="label">Code</span></div>
+        <div class="mrow"><span class="check"></span><span class="swatch" style="background:#FFC24B"></span><span class="label">Slack</span></div>
+        <div class="mhead">DELL 4K</div>
+        <div class="mrow"><span class="check"></span><span class="swatch" style="background:#8E8AA6"></span><span class="label">Terminal</span></div>
+        <div class="mrow"><span class="check">✓</span><span class="swatch" style="background:#6FA8FF"></span><span class="label">Docs</span></div>
+        <div class="msep"></div>
+        <div class="mrow"><span class="check">✓</span><span class="label">Menu-bar title</span></div>
+        <div class="mrow"><span class="check">✓</span><span class="label">On-switch HUD</span></div>
+        <div class="mrow"><span class="check"></span><span class="label">Corner overlay</span></div>
+        <div class="mrow"><span class="check"></span><span class="label">Wallpaper</span><span class="badge">exp</span></div>
+        <div class="msep"></div>
+        <div class="mrow"><span class="check"></span><span class="label">Preferences…</span><span class="key">⌘,</span></div>
+        <div class="mrow"><span class="check"></span><span class="label">Quit spacelabel</span><span class="key">⌘Q</span></div>
+      </div>
+
+      <div class="hud" role="status">
+        <span class="big">Email</span>
+        <span class="sub">LG ULTRAFINE · DESKTOP 1</span>
+      </div>
+
+      <div class="overlay"><span class="dotmark"></span>Email</div>
+
+      <div class="dock" aria-hidden="true">
+        <i style="background:linear-gradient(160deg,#5EE6D0,#2E7E76)"></i>
+        <i style="background:linear-gradient(160deg,#6FA8FF,#0A84FF)"></i>
+        <i style="background:linear-gradient(160deg,#FFC24B,#E08A1E)"></i>
+        <i style="background:linear-gradient(160deg,#C58BFF,#7A3FD6)"></i>
+        <i style="background:linear-gradient(160deg,#FF8A8A,#D64545)"></i>
+      </div>
+    </div>
+
+    <div class="scene-cap">
+      <span><span class="swatch-key" style="background:var(--accent)"></span> current Space — full opacity</span>
+      <span><span class="swatch-key" style="background:rgba(255,255,255,0.9);opacity:0.4"></span> inactive Space — ~40% opacity</span>
+      <span><span class="swatch-key" style="background:transparent;border:1px solid rgba(255,255,255,0.45)"></span> thin divider splits physical displays</span>
+    </div>
+  </section>
+
+  <!-- ============ MENU-BAR ANATOMY ============ -->
+  <section aria-labelledby="s-menubar">
+    <p class="eyebrow">Menu-bar anatomy</p>
+    <h2 class="sec-title" id="s-menubar">One status item, one drawn view</h2>
+    <p class="sec-lede">The buttons row is <b>one</b> <code>NSStatusItem</code> hosting a custom
+      CG-drawn view — never N separate items, which worsen Tahoe's Control Center hiding and
+      notch overflow. Each segment is a pill: first letter(s) of the label, falling back to the
+      Space number.</p>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Buttons row</h3>
+        <div class="demo">
+          <span class="pills" style="transform:scale(1.6);transform-origin:center">
+            <span class="pill current tinted">E</span>
+            <span class="pill">C</span>
+            <span class="pill tinted2">S</span>
+            <span class="pill">D</span>
+            <span class="pill">5</span>
+            <span class="pill-div"></span>
+            <span class="pill">T</span>
+            <span class="pill current">Do</span>
+            <span class="pill">3</span>
+          </span>
+        </div>
+        <ul class="keys">
+          <li><b>Current = alpha, not color.</b> The active Space is full opacity; the rest sit at ~40%. Color stays free for the user's own tags. One current per display.</li>
+          <li><b>Pill text</b> is the label's leading letter(s); an unlabeled Space falls back to its number (<code>5</code>, <code>3</code>).</li>
+          <li><b>Per-display split</b> — a thin vertical divider groups each physical display, drawn left-to-right.</li>
+          <li><b>Scope toggle</b> — <code>menubar.buttons_scope</code>: <i>all displays</i> (default) or <i>active display only</i>.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Status title &amp; visibility</h3>
+        <div class="demo">
+          <div class="status-item open" style="transform:scale(1.3)">
+            <span class="status-title">Email</span>
+            <span class="pills">
+              <span class="pill current tinted">E</span>
+              <span class="pill">C</span>
+              <span class="pill tinted2">S</span>
+            </span>
+          </div>
+        </div>
+        <ul class="keys">
+          <li><b>Primary mode</b> — the active Space's label is the status item's title, updated on the debounced space-change.</li>
+          <li><b>Buttons row is opt-in</b> via <code>menubar.show_buttons_row</code> (default off); title-only is the quiet default.</li>
+          <li><b>“Alive” ≠ “visible” on Tahoe.</b> If the icon is hidden, the dropdown copy points to <i>System Settings → Control Center / Menu Bar</i>; one instance only.</li>
+          <li><b>Display-only by default.</b> Clicking a pill switches Spaces only if you opt into click-to-switch (see legend).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ THE DROPDOWN ============ -->
+  <section aria-labelledby="s-drop">
+    <p class="eyebrow">The dropdown</p>
+    <h2 class="sec-title" id="s-drop">Everyday editing, grouped by display</h2>
+    <p class="sec-lede">WhichSpace parity without the index bug. The all-Spaces list is grouped
+      under a per-display header (friendly name resolved from the display UUID), the current
+      Space checkmarked. We never loop-toggle <code>isVisible</code> (the Tahoe Control Center regression).</p>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Menu structure</h3>
+        <div class="demo">
+          <div class="dropdown" role="menu" aria-label="spacelabel menu detail">
+            <div class="mrow"><span class="check"></span><span class="label">Rename this Space…</span></div>
+            <div class="msep"></div>
+            <div class="mhead">LG UltraFine</div>
+            <div class="mrow sel"><span class="check">✓</span><span class="swatch" style="background:var(--accent)"></span><span class="label">Email</span></div>
+            <div class="mrow"><span class="check"></span><span class="swatch" style="background:#8E8AA6"></span><span class="label">Code</span></div>
+            <div class="mhead">DELL 4K</div>
+            <div class="mrow"><span class="check">✓</span><span class="swatch" style="background:#6FA8FF"></span><span class="label">Docs</span></div>
+            <div class="msep"></div>
+            <div class="mrow"><span class="check"></span><span class="label">Wallpaper</span><span class="badge">exp</span></div>
+            <div class="msep"></div>
+            <div class="mrow"><span class="check"></span><span class="label">Preferences…</span><span class="key">⌘,</span></div>
+            <div class="mrow"><span class="check"></span><span class="label">Quit spacelabel</span><span class="key">⌘Q</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>What each part does</h3>
+        <ul class="keys">
+          <li><b>Rename this Space…</b> opens a text dialog → runs <code>label set current</code>.</li>
+          <li><b>Per-display section headers</b> resolve the display UUID to a friendly name so per-display Spaces never conflate.</li>
+          <li><b>Checkmark</b> = the current Space on its display; the swatch shows the user's color tag.</li>
+          <li><b>Mode toggles</b> mirror the CLI <code>mode</code> command; <b>Wallpaper</b> is flagged <span class="badge">exp</span> — cosmetic, may revert.</li>
+          <li><b>Preferences…</b> and <b>Quit</b> close the everyday surface; Quit stays stopped (it won't auto-relaunch).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PREFERENCES ============ -->
+  <section aria-labelledby="s-prefs">
+    <p class="eyebrow">Preferences</p>
+    <h2 class="sec-title" id="s-prefs">A display → its Spaces, inline-editable</h2>
+    <p class="sec-lede">A two-level <code>NSOutlineView</code>: each physical display is a parent
+      row, its Spaces the children. Edit the label or color in place; the current Space is marked.
+      Labels persist <b>keyed by Space UUID</b> — the display UUID is stored alongside for grouping
+      only, never as part of the key.</p>
+
+    <div class="prefs">
+      <div class="win-bar">
+        <span class="lights" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+        <span class="win-title">spacelabel — Preferences</span>
+      </div>
+      <div class="outline" role="treegrid" aria-label="Displays and Spaces">
+        <div class="ol-row ol-head"><span></span><span class="name">Space / Label</span><span>Color</span><span class="ol-cur">Now</span></div>
+
+        <div class="ol-row group"><span class="tri">▾</span><span class="name"><span class="disp-ico">🖥</span>LG UltraFine — portrait · 2160×3840</span><span></span><span></span></div>
+        <div class="ol-row space sel"><span></span><span class="name"><span class="editbox">Email<span class="caret"></span></span></span><span class="ol-color"><span class="well" style="background:var(--accent)"></span></span><span class="ol-cur">●</span></div>
+        <div class="ol-row space"><span></span><span class="name">Code</span><span class="ol-color"><span class="well" style="background:#8E8AA6"></span></span><span class="ol-cur"></span></div>
+        <div class="ol-row space"><span></span><span class="name">Slack</span><span class="ol-color"><span class="well" style="background:#FFC24B"></span></span><span class="ol-cur"></span></div>
+
+        <div class="ol-row group"><span class="tri">▾</span><span class="name"><span class="disp-ico">🖥</span>DELL 4K — landscape · 3840×2160</span><span></span><span></span></div>
+        <div class="ol-row space"><span></span><span class="name">Terminal</span><span class="ol-color"><span class="well" style="background:#8E8AA6"></span></span><span class="ol-cur"></span></div>
+        <div class="ol-row space"><span></span><span class="name">Docs</span><span class="ol-color"><span class="well" style="background:#6FA8FF"></span></span><span class="ol-cur">●</span></div>
+
+        <div class="ol-row group"><span class="tri">▸</span><span class="name ol-uuid">Orphaned labels — not on any current display (2)</span><span></span><span></span></div>
+      </div>
+      <div class="prefs-foot">
+        <span class="foot-note">Labels keyed by Space UUID · orphans retained until pruned</span>
+        <span style="display:flex;gap:8px">
+          <button class="btn" type="button">Prune orphans…</button>
+          <button class="btn primary" type="button">Done</button>
+        </span>
+      </div>
+    </div>
+
+    <ul class="keys" style="margin-top:24px;max-width:80ch">
+      <li><b>Inline edit</b> — double-click a label to edit (blue edit box); pick a color in the Color well. Commit on Return or focus-loss, write is atomic + flock-guarded.</li>
+      <li><b>Orphans retained by default.</b> A deleted/recreated Space gets a new UUID; old labels collapse under an “Orphaned labels” group and survive until you <b>Prune orphans</b> (mirrors <code>label prune</code>). Never auto-deleted — cross-reboot UUID stability is still being verified.</li>
+    </ul>
+  </section>
+
+  <!-- ============ GEOMETRY ============ -->
+  <section aria-labelledby="s-geo">
+    <p class="eyebrow">HUD &amp; overlay geometry</p>
+    <h2 class="sec-title" id="s-geo">Sizes computed from the screen, never hardcoded</h2>
+    <p class="sec-lede">Font size, position, and fade are derived at runtime from the current
+      display's geometry — orientation, point size, and Retina scale. The same formula must read
+      well on a tall portrait panel, a wide 4K, and a single-display laptop.</p>
+
+    <div class="geo-wrap">
+      <div class="geo">
+        <div class="disp portrait">
+          <div class="frame">
+            <div class="mb"></div>
+            <div class="g-hud">Email</div>
+            <div class="g-ovl">● Email</div>
+          </div>
+          <div class="cap">LG UltraFine <span class="px">2160×3840 px @2x</span><br>S = 1080 pt → HUD <b>54 pt</b></div>
+        </div>
+        <div class="disp wide">
+          <div class="frame">
+            <div class="mb"></div>
+            <div class="g-hud">Docs</div>
+            <div class="g-ovl">● Docs</div>
+          </div>
+          <div class="cap">DELL 4K <span class="px">3840×2160 px @2x</span><br>S = 1080 pt → HUD <b>54 pt</b></div>
+        </div>
+        <div class="disp portrait" style="opacity:0.85">
+          <div class="frame" style="width:120px;height:78px">
+            <div class="mb"></div>
+            <div class="g-hud" style="font-size:9px">Mail</div>
+            <div class="g-ovl" style="font-size:7.5px">● Mail</div>
+          </div>
+          <div class="cap">13″ laptop <span class="px">1470×956 pt @2x</span><br>S = 956 pt → HUD <b>48 pt</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anchors">
+      <div class="ascreen" role="img" aria-label="The nine HUD/overlay anchor positions; center is the HUD default">
+        <div class="acell"><span class="pin">top-left</span></div>
+        <div class="acell"><span class="pin">top-center</span></div>
+        <div class="acell"><span class="pin">top-right</span></div>
+        <div class="acell"><span class="pin">center-left</span></div>
+        <div class="acell def"><span class="pin">center ●</span></div>
+        <div class="acell"><span class="pin">center-right</span></div>
+        <div class="acell"><span class="pin">bottom-left</span></div>
+        <div class="acell"><span class="pin">bottom-center</span></div>
+        <div class="acell"><span class="pin">bottom-right</span></div>
+      </div>
+      <div class="anchor-note">
+        <p style="margin:0 0 10px"><b>Position is configurable.</b> The HUD takes any of these
+          nine anchors via <span class="k">hud.position</span> — default <b>center</b>. The persistent
+          overlay shares the same anchors via <span class="k">overlay.corner</span> (default
+          <b>top-right</b>).</p>
+        <p style="margin:0">Edge and corner anchors are inset by <span class="k">hud.margin</span> /
+          <span class="k">overlay.margin</span>; center anchors ignore the margin on the centered axis.
+          One shared helper computes every panel's origin.</p>
+      </div>
+    </div>
+
+    <div class="formula">
+<span class="c"># S = short side of the display, in points (handles portrait & landscape alike)</span><br>
+<span class="k">S</span> = min(frame.width_pt, frame.height_pt)<br>
+<span class="k">hud_font</span> = clamp(round(<span class="v">S × 0.05</span>), 18, 64) pt &nbsp; <span class="c"># scales, clamped so it's never silly</span><br>
+<span class="k">overlay_font</span> = <span class="v">overlay.font_size</span> (15 pt) <span class="c">| auto: clamp(round(S × 0.018), 12, 28)</span><br>
+<br>
+<span class="c"># ONE anchor helper places both panels inside visibleFrame (AppKit bottom-left origin):</span><br>
+<span class="k">anchor_origin</span>(vf, panel(w,h), pos, m):<br>
+&nbsp;&nbsp;x = { left: vx+m,&nbsp; center: vx+(vw−w)/2,&nbsp; right: vx+vw−w−m }[pos.horizontal]<br>
+&nbsp;&nbsp;y = { top: vy+vh−h−m,&nbsp; middle: vy+(vh−h)/2,&nbsp; bottom: vy+m }[pos.vertical]<br>
+<br>
+<span class="k">hud</span>: pos = <span class="v">hud.position</span> (center), m = hud.margin (24) <span class="c"># e.g. top-left, bottom-center…</span><br>
+<span class="k">overlay</span>: pos = <span class="v">overlay.corner</span> (top-right), m = overlay.margin (12)<br>
+<span class="k">hud_fade</span> = in 120 ms → hold <span class="v">hud.duration_ms</span> (1100) → out 350 ms <span class="c"># one reused NSPanel</span><br>
+<br>
+<span class="c"># Retina crispness is free: AppKit draws in points, backingScaleFactor handles pixels.</span><br>
+<span class="c"># Reposition every panel on NSApplicationDidChangeScreenParameters; HUD on the active display, one overlay per display.</span>
+    </div>
+  </section>
+
+  <!-- ============ LEGEND ============ -->
+  <section aria-labelledby="s-legend">
+    <p class="eyebrow">Maps to the spec</p>
+    <h2 class="sec-title" id="s-legend">Where each surface is decided</h2>
+    <div class="legend">
+      <div class="li"><span class="ref">DESIGN §6.1</span><span><b>Menu-bar item</b> — raw NSStatusItem title; one item hosts the drawn buttons row.</span></div>
+      <div class="li"><span class="ref">UI.md §2</span><span><b>Dropdown</b> — rename, per-display groups, mode toggles, Preferences, Quit.</span></div>
+      <div class="li"><span class="ref">DECISIONS 2.4</span><span><b>Preferences</b> — two-level outline (display → Spaces), inline label + color.</span></div>
+      <div class="li"><span class="ref">DESIGN §6.2–6.3</span><span><b>HUD &amp; overlay</b> — non-activating NSPanels; runtime geometry.</span></div>
+      <div class="li"><span class="ref">menubar.*</span><span><b>New config keys</b> — <code>show_buttons_row</code>, <code>buttons_scope</code>, <code>click_to_switch</code>.</span></div>
+      <div class="li"><span class="ref">labels.json</span><span><b>New label field</b> — optional <code>color</code> per entry (UUID stays the key).</span></div>
+      <div class="li"><span class="ref">opt-in</span><span><b>Click-to-switch</b> — off in v1; walks through Mission Control shortcut + Accessibility, else disabled with a reason.</span></div>
+      <div class="li"><span class="ref">DECISIONS 6.5</span><span><b>Visibility</b> — single instance; never loop-toggle isVisible.</span></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>spacelabel · UI reference · Phase 3 (design-only)</span>
+    <span>chrome to spec · mint = annotation · macOS 26 Tahoe</span>
+  </footer>
+</main>
+
+<script>
+  // Decorative starfield — generated, not hand-authored SVG. Static (no twinkle)
+  // to keep the motion budget for the single HUD fade. Math.random is fine in-browser.
+  (function () {
+    function paint(canvas, density) {
+      if (!canvas) return;
+      var ctx = canvas.getContext("2d");
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+      var n = Math.round((w * h) / density);
+      for (var i = 0; i < n; i++) {
+        var x = Math.random() * w, y = Math.random() * h;
+        var r = Math.random() * 1.1 + 0.2;
+        var a = Math.random() * 0.5 + 0.12;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(220, 225, 255, " + a.toFixed(3) + ")";
+        ctx.fill();
+      }
+    }
+    function paintAll() {
+      paint(document.getElementById("stars"), 7000);
+      var nodes = document.querySelectorAll(".wp-stars");
+      for (var i = 0; i < nodes.length; i++) paint(nodes[i], 2600);
+    }
+    paintAll();
+    var t;
+    window.addEventListener("resize", function () {
+      clearTimeout(t); t = setTimeout(paintAll, 150);
+    });
+  })();
+</script>
+
+</body>
+</html>
