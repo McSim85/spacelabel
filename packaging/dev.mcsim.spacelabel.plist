@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent template for the spacelabel menu-bar agent (DESIGN.md §9.2).
+
+  This is the canonical reference; `spacelabel install` renders the runtime copy
+  to ~/Library/LaunchAgents/dev.mcsim.spacelabel.plist, substituting the tokens
+  below. launchd does NOT expand `~` or read `$PATH`, so all paths must be
+  absolute. Keep the Label / filename == dev.mcsim.spacelabel (BUNDLE_ID).
+
+  Tokens substituted by install.py:
+    __HOME__   ->  the user's home directory (e.g. /Users/alex)
+
+  The agent must run in the per-user Aqua GUI domain (NSStatusItem needs a
+  window-server session); load with:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.mcsim.spacelabel.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.mcsim.spacelabel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/spacelabel</string>
+        <string>agent</string>
+    </array>
+
+    <!-- Window-server access for the status item requires the GUI session. -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on crash only; a deliberate Quit from the menu stays stopped. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/spacelabel/agent.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/spacelabel/agent.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,34 @@
+"""spacelabel — label macOS Spaces (virtual desktops) by their stable UUID.
+
+The label is bound to the Space's **UUID**, not its position, so it follows the
+desktop through any reorder (the core differentiator over WhichSpace). See
+``DESIGN.md`` for the architecture and ``DECISIONS.md`` for the rationale behind
+every locked choice.
+
+The package exposes a single console entry point, ``spacelabel`` (see
+:mod:`spacelabel.cli`); the long-lived menu-bar agent is the ``spacelabel agent``
+subcommand. Every other subcommand is a one-shot CLI action sharing the same
+read/store layers.
+"""
+
+from __future__ import annotations
+
+import logging
+
+__all__ = ["APP_NAME", "BUNDLE_ID", "__version__"]
+
+#: Human-facing application / package name; also the on-disk data + log dir name.
+APP_NAME = "spacelabel"
+
+#: Reverse-DNS identifier — the single source of truth, reused verbatim as the
+#: LaunchAgent ``Label``, the plist filename, and the ``os_log`` subsystem. Moving
+#: to a Quicknode namespace later is a one-line change here (see DECISIONS.md 6.7).
+BUNDLE_ID = "dev.mcsim.spacelabel"
+
+#: Package version (single source; pyproject reads this via setuptools dynamic).
+__version__ = "0.1.0"
+
+# Per DESIGN.md §8.2 and the stdlib logging HOWTO: a library never configures
+# logging. Attach one NullHandler at import so library log records are dropped
+# until the entry point calls spacelabel.logging_setup.setup_logging().
+logging.getLogger(__name__).addHandler(logging.NullHandler())

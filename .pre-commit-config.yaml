@@ -1,0 +1,29 @@
+# Pre-commit hooks mirroring the CI gates (ruff + mypy).
+# Setup:  pre-commit install      (pre-commit is in the `dev` extra)
+# Update: pre-commit autoupdate    (pins the `rev`s below to current releases)
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args: [--fix]
+      - id: ruff-format
+        name: ruff (format)
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: ^src/
+        additional_dependencies:
+          - "click>=8.1"

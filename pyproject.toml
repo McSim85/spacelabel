@@ -1,0 +1,153 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spacelabel"
+description = "Label macOS Spaces (virtual desktops) by their stable UUID — reorder-proof."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Max Kramarenko" }]
+keywords = [
+  "macos",
+  "spaces",
+  "virtual-desktops",
+  "menu-bar",
+  "appkit",
+  "pyobjc",
+  "window-management",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: MacOS X :: Cocoa",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Desktop Environment",
+  "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = [
+  "click>=8.1",
+  "pyobjc-core>=10.0",
+  "pyobjc-framework-Cocoa>=10.0",
+  "pyobjc-framework-Quartz>=10.0",
+  "pyobjc-framework-CoreText>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pre-commit>=3.7",
+  "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/McSim85/spacelabel"
+Repository = "https://github.com/McSim85/spacelabel"
+Issues = "https://github.com/McSim85/spacelabel/issues"
+
+[project.scripts]
+spacelabel = "spacelabel.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "spacelabel.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spacelabel = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# ruff — lint + format (CI gate, see .github/workflows/ci.yml)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "SIM",  # flake8-simplify
+  "PTH",  # flake8-use-pathlib
+  "D",    # pydocstyle (PEP 257)
+  "ANN",  # flake8-annotations (PEP 484)
+  "RUF",  # ruff-specific
+]
+ignore = [
+  "D203",   # incompatible with D211 (no blank line before class docstring)
+  "D213",   # incompatible with D212 (multi-line summary on first line)
+  "ANN401", # allow explicit Any where unavoidable (PyObjC bridges)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D102", "D103", "ANN", "S101"]
+"src/spacelabel/__main__.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.isort]
+known-first-party = ["spacelabel"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# mypy — type-check (CI gate)
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+pretty = true
+
+# PyObjC ships no type stubs; ignore missing imports for the frameworks we bind.
+# (These per-module overrides are "unused" until Phase 4 imports PyObjC; that is
+# expected — warn_unused_configs is intentionally left off until then.)
+[[tool.mypy.overrides]]
+module = [
+  "objc",
+  "objc.*",
+  "Foundation",
+  "Foundation.*",
+  "AppKit",
+  "AppKit.*",
+  "Cocoa",
+  "Cocoa.*",
+  "Quartz",
+  "Quartz.*",
+  "CoreText",
+  "CoreText.*",
+  "CoreFoundation",
+  "CoreFoundation.*",
+  "PyObjCTools",
+  "PyObjCTools.*",
+]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
