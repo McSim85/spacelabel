@@ -135,17 +135,29 @@ one-time steps:
 1. **Enable the Mission Control shortcuts** — *System Settings → Keyboard →
    Keyboard Shortcuts → Mission Control → "Switch to Desktop 1…N"* (ships **off**;
    covers only existing Spaces, max 16).
-2. **Grant Accessibility** to the spacelabel agent.
+2. **Grant Accessibility** to the spacelabel agent. *On a pipx install the agent
+   runs as the Python interpreter, so the Accessibility entry appears under
+   **"python3.x"**, not "spacelabel" — enable that entry. A code-signed `.app`
+   bundle (v1.0 packaging) is what makes it read "spacelabel"; see DECISIONS §6.*
 
-Then a pill click posts a synthetic **Ctrl+N** via `CGEventPost`, mapping the
-clicked Space's **UUID → its current ordinal** at click time (ordinals shift on
-reorder, so resolve live, never cache).
+Then a left-click on a pill maps the clicked Space's **UUID → its current ordinal**
+at click time (ordinals shift on reorder, so resolve live, never cache) and posts
+the **bound** "Switch to Desktop N" chord via `CGEventPost`. The chord is read live
+from `com.apple.symbolichotkeys` — whatever the user actually set (the default macOS
+suggestion is **Ctrl + the desktop number**, e.g. Ctrl+1), not a hardcoded key. While
+click-to-switch is on the row captures left-clicks, so the dropdown menu
+(Preferences/Quit) is reached by **right-click** or a click off a pill.
 
-> **Failure is visible, never silent.** If the shortcut for the target ordinal
-> can't be confirmed enabled, the pill's click action is **disabled with a shown
-> reason** (tooltip / disabled state + a one-line "enable Switch to Desktop N in
-> Keyboard Shortcuts"), per the no-silent-except policy. It must never look
-> clickable and then no-op.
+> **Failure is visible, never silent.** If Accessibility is not granted, or the
+> "Switch to Desktop N" shortcut for the target isn't enabled, the action is
+> **disabled with a shown reason** — a disabled `⚠︎ Click-to-switch off — …` row in
+> the dropdown plus a WARNING log naming the fix (grant Accessibility / enable the
+> shortcut in Keyboard Shortcuts → Mission Control) — and the row stops capturing
+> clicks so the menu stays reachable, per the no-silent-except policy. It never looks
+> clickable and then silently no-ops. Re-enable by toggling `menubar.click_to_switch`
+> off→on after fixing the cause. (Implementation: `platform/switching.py`; the macOS
+> "Switch to Desktop N" shortcuts ship **disabled**, so this is the out-of-the-box
+> state until the user enables them.)
 
 ---
 

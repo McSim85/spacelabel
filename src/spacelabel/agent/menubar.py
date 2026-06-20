@@ -24,6 +24,7 @@ import objc
 from AppKit import (
     NSColor,
     NSFont,
+    NSMakePoint,
     NSMakeRect,
     NSMenu,
     NSStatusBar,
@@ -34,6 +35,8 @@ from AppKit import (
 from spacelabel import labeling
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from spacelabel.model import Display, Label, Space
 
 __all__ = ["ButtonsRowView", "MenuBarItem", "PillModel"]
@@ -49,24 +52,88 @@ _PILL_GAP = 3.0
 _DIVIDER_WIDTH = 1.0
 _DIVIDER_GAP = 6.0
 _ROW_MARGIN_X = 4.0
+_ROW_HEIGHT = 22.0
 _ALPHA_CURRENT = 1.0
 _ALPHA_INACTIVE = 0.4
 
 
 class PillModel:
-    """One pill in the buttons row: its text, current-ness, and optional color.
+    """One pill in the buttons row: its text, current-ness, color, and Space UUID.
 
     A plain value object (no PyObjC) so the row's per-display layout is easy to
     assemble in :meth:`MenuBarItem.set_buttons_row` and unit-test in isolation.
+    ``uuid`` is the clicked-pill -> Space identity used by click-to-switch hit-
+    testing (DECISIONS.md 9.5); it is ``""`` for an unlabelable Space (which cannot
+    be a switch target -- no stable ordinal key).
     """
 
-    __slots__ = ("color", "is_current", "text")
+    __slots__ = ("color", "is_current", "text", "uuid")
 
-    def __init__(self, text: str, *, is_current: bool, color: str | None) -> None:
-        """Store the pill text, its current marker, and an optional hex color."""
+    def __init__(self, text: str, *, is_current: bool, color: str | None, uuid: str = "") -> None:
+        """Store the pill text, its current marker, an optional hex color, and UUID."""
         self.text = text
         self.is_current = is_current
         self.color = color
+        self.uuid = uuid
+
+
+def _pill_width(pill: PillModel) -> float:
+    """Estimate a pill's width from its text (monospaced-ish heuristic). Pure."""
+    # 7.5 pt/char is a safe upper bound for the small system font used here.
+    text_width = max(1, len(pill.text)) * 7.5
+    return max(_PILL_MIN_WIDTH, text_width + 2 * _PILL_PAD_X)
+
+
+def _pill_layout(
+    groups: Sequence[Sequence[PillModel]], height: float
+) -> tuple[list[tuple[float, float, PillModel]], float, list[float]]:
+    """Walk the row once, returning the pill frames, the pill ``y``, and divider ``x``s.
+
+    Returns ``(pills, cy, divider_xs)`` where ``pills`` is ``[(x, width, pill), ...]``
+    in draw order and ``cy`` is the shared vertical origin. ONE walk feeds both
+    drawing (:meth:`ButtonsRowView._draw_pills`) and hit-testing
+    (:func:`_pill_at_x`), so a clicked pixel resolves to the pill that was drawn
+    there -- a pill must never look clickable and switch to the wrong Space
+    (DECISIONS.md 9.5). Pure arithmetic over the layout constants: unit-testable
+    without a WindowServer.
+    """
+    cy = (height - _PILL_HEIGHT) / 2.0
+    pills: list[tuple[float, float, PillModel]] = []
+    divider_xs: list[float] = []
+    x = _ROW_MARGIN_X
+    for index, group in enumerate(groups):
+        if index > 0:
+            x += _DIVIDER_GAP
+            divider_xs.append(x)
+            x += _DIVIDER_WIDTH + _DIVIDER_GAP
+        for pill_index, pill in enumerate(group):
+            if pill_index > 0:
+                x += _PILL_GAP
+            width = _pill_width(pill)
+            pills.append((x, width, pill))
+            x += width
+    return pills, cy, divider_xs
+
+
+def _pill_at_x(pills: Sequence[tuple[float, float, PillModel]], x: float) -> PillModel | None:
+    """Return the pill whose horizontal span contains ``x`` (else ``None``). Pure.
+
+    Hit-tests on the x-range only: the row is thin and pills are its sole content,
+    so a click in the small vertical padding still selects the pill beneath it.
+    """
+    for px, width, pill in pills:
+        if px <= x <= px + width:
+            return pill
+    return None
+
+
+def _preferred_width(groups: Sequence[Sequence[PillModel]]) -> float:
+    """Total width the row needs (right edge of the last pill + margin). Pure."""
+    pills, _, _ = _pill_layout(groups, _ROW_HEIGHT)
+    if not pills:
+        return _PILL_MIN_WIDTH + _ROW_MARGIN_X * 2
+    last_x, last_width, _ = pills[-1]
+    return float(last_x + last_width + _ROW_MARGIN_X)
 
 
 class ButtonsRowView(NSView):
@@ -75,15 +142,24 @@ class ButtonsRowView(NSView):
     One view for the whole row (never N status items): pills are laid out
     left-to-right grouped by physical display, displays separated by a thin
     vertical divider, the current Space marked by full alpha and the rest dimmed.
+
+    When click-to-switch is enabled (DECISIONS.md 9.5) the view becomes the hit
+    target (:meth:`hitTest_`) and a pill click resolves to its Space UUID via the
+    shared layout; a click off a pill (or a right-click) opens the status menu so
+    Preferences/Quit stay reachable while the row captures clicks. Display-only by
+    default (the row falls clicks through to the status button).
     """
 
     def initWithFrame_(self, frame: object) -> ButtonsRowView | None:  # noqa: N802
-        """Initialize with an empty pill layout."""
+        """Initialize with an empty pill layout and click-to-switch disabled."""
         self = objc.super(ButtonsRowView, self).initWithFrame_(frame)
         if self is None:
             return None
         # list of display groups; each group is a list[PillModel]
         self._groups: list[list[PillModel]] = []
+        self._click_enabled: bool = False
+        self._switch_handler: Callable[[str], None] | None = None
+        self._menu_handler: Callable[[], None] | None = None
         return self
 
     @objc.python_method
@@ -93,28 +169,47 @@ class ButtonsRowView(NSView):
         self.setNeedsDisplay_(True)
 
     @objc.python_method
-    def _pill_width(self, pill: PillModel) -> float:
-        """Estimate a pill's width from its text (monospaced-ish heuristic)."""
-        # 7.5 pt/char is a safe upper bound for the small system font used here.
-        text_width = max(1, len(pill.text)) * 7.5
-        return max(_PILL_MIN_WIDTH, text_width + 2 * _PILL_PAD_X)
+    def set_handlers(
+        self,
+        switch_handler: Callable[[str], None] | None,
+        menu_handler: Callable[[], None] | None,
+    ) -> None:
+        """Wire the pill-click (UUID) and menu-open callbacks (DECISIONS.md 9.5)."""
+        self._switch_handler = switch_handler
+        self._menu_handler = menu_handler
+
+    @objc.python_method
+    def set_click_enabled(self, enabled: bool) -> None:
+        """Capture clicks (enabled) or pass them through to the status button (disabled).
+
+        Capture is gated in :meth:`hitTest_`: when disabled the view is transparent to
+        the mouse, so a click falls through to the status item and opens the menu
+        (display-only pills); when enabled the view is the hit target so a pill press
+        reaches :meth:`mouseDown_` and can switch Spaces (DECISIONS.md 9.5).
+        """
+        self._click_enabled = enabled
 
     @objc.python_method
     def preferred_width(self) -> float:
         """Total width this row needs, including gaps and per-display dividers."""
-        total = _ROW_MARGIN_X * 2
-        for index, group in enumerate(self._groups):
-            if index > 0:
-                total += _DIVIDER_GAP * 2 + _DIVIDER_WIDTH
-            for pill_index, pill in enumerate(group):
-                if pill_index > 0:
-                    total += _PILL_GAP
-                total += self._pill_width(pill)
-        return float(max(total, _PILL_MIN_WIDTH + _ROW_MARGIN_X * 2))
+        return _preferred_width(self._groups)
 
     def isFlipped(self) -> bool:  # noqa: N802
-        """Use a top-left origin so the small row math reads naturally."""
+        """Use a bottom-left origin (standard Cocoa); pills are vertically centered."""
         return False
+
+    def hitTest_(self, point: object) -> object:  # noqa: N802
+        """Be the hit target only when click capture is enabled; else fall through.
+
+        Returning ``nil`` while disabled makes the row transparent to the mouse so the
+        click reaches the status button and opens the menu -- the NSView equivalent of
+        the click-through used for display-only pills (DECISIONS.md 9.5). NSView has no
+        ``ignoresMouseEvents`` (that is an NSWindow property), so hit-testing is the
+        correct gate.
+        """
+        if not self._click_enabled:
+            return None
+        return objc.super(ButtonsRowView, self).hitTest_(point)
 
     def drawRect_(self, rect: object) -> None:  # noqa: N802
         """Draw the pills and dividers (called by AppKit on the main thread)."""
@@ -124,26 +219,58 @@ class ButtonsRowView(NSView):
             # Drawing must never crash the agent; log and leave the row blank.
             log.warning("buttons-row draw failed: %s", exc)
 
+    def mouseDown_(self, event: object) -> None:  # noqa: N802
+        """Switch to the clicked pill's Space, or open the menu off a pill.
+
+        Only reached when click-to-switch is enabled (otherwise the view ignores the
+        mouse). A pill hit invokes the switch handler with its UUID; a click in the
+        gap/margin opens the status menu so Preferences/Quit stay reachable
+        (DECISIONS.md 9.5).
+        """
+        if not self._click_enabled:
+            self._invoke_menu()
+            return
+        point = self.convertPoint_fromView_(event.locationInWindow(), None)
+        self._handle_click_at_x(float(point.x))
+
+    def rightMouseDown_(self, _event: object) -> None:  # noqa: N802
+        """Open the status menu unconditionally (reachable while pills capture clicks)."""
+        self._invoke_menu()
+
+    @objc.python_method
+    def _handle_click_at_x(self, x: float) -> None:
+        """Route a click at view-x ``x``: a labelable pill switches; otherwise open the menu.
+
+        Split out of :meth:`mouseDown_` (which only converts the event point) so the
+        pill-resolution dispatch is unit-testable without synthesizing an NSEvent. A
+        pill with no Space UUID (an unlabelable default Space, surfaced by
+        ``include_unlabelable``) is NOT a switch target -- it has no stable key to
+        resolve to a live ordinal -- so a click on it opens the menu like a click off
+        any pill, never a dead click that consumes the event and does nothing.
+        """
+        pills, _, _ = _pill_layout(self._groups, float(self.bounds().size.height))
+        pill = _pill_at_x(pills, x)
+        if pill is not None and pill.uuid and self._switch_handler is not None:
+            self._switch_handler(pill.uuid)
+            return
+        self._invoke_menu()
+
+    @objc.python_method
+    def _invoke_menu(self) -> None:
+        """Invoke the menu-open callback if wired."""
+        if self._menu_handler is not None:
+            self._menu_handler()
+
     @objc.python_method
     def _draw_pills(self) -> None:
         """Lay out and fill each pill; dim non-current ones via alpha."""
-        bounds = self.bounds()
-        height = float(bounds.size.height)
-        cy = (height - _PILL_HEIGHT) / 2.0
         font = NSFont.menuBarFontOfSize_(0) or NSFont.systemFontOfSize_(11.0)
-        x = _ROW_MARGIN_X
-        for index, group in enumerate(self._groups):
-            if index > 0:
-                x += _DIVIDER_GAP
-                NSColor.tertiaryLabelColor().setFill()
-                _fill_rect(NSMakeRect(x, cy, _DIVIDER_WIDTH, _PILL_HEIGHT))
-                x += _DIVIDER_WIDTH + _DIVIDER_GAP
-            for pill_index, pill in enumerate(group):
-                if pill_index > 0:
-                    x += _PILL_GAP
-                width = self._pill_width(pill)
-                self._draw_one_pill(pill, x, cy, width, font)
-                x += width
+        pills, cy, divider_xs = _pill_layout(self._groups, float(self.bounds().size.height))
+        for divider_x in divider_xs:
+            NSColor.tertiaryLabelColor().setFill()
+            _fill_rect(NSMakeRect(divider_x, cy, _DIVIDER_WIDTH, _PILL_HEIGHT))
+        for x, width, pill in pills:
+            self._draw_one_pill(pill, x, cy, width, font)
 
     @objc.python_method
     def _draw_one_pill(
@@ -238,19 +365,27 @@ class MenuBarItem:
         self._menu.setAutoenablesItems_(False)
         self._item.setMenu_(self._menu)
         self._row_view: ButtonsRowView | None = None
+        #: Pill-click handler (Space UUID -> switch), wired by the delegate; the
+        #: menu-open handler is the item's own :meth:`_pop_up_menu` (DECISIONS.md 9.5).
+        self._pill_switch_handler: object | None = None
         if show_buttons_row:
             self._install_row_view()
 
     def _install_row_view(self) -> None:
-        """Embed a buttons-row view in the status item's button."""
+        """Embed a buttons-row view in the status item's button (display-only until enabled)."""
         button = self._item.button()
         if button is None:
             log.warning("status item has no button; buttons row unavailable")
             return
-        frame = NSMakeRect(0.0, 0.0, _PILL_MIN_WIDTH + _ROW_MARGIN_X * 2, 22.0)
+        frame = NSMakeRect(0.0, 0.0, _PILL_MIN_WIDTH + _ROW_MARGIN_X * 2, _ROW_HEIGHT)
         view = ButtonsRowView.alloc().initWithFrame_(frame)
+        # Pills are display-only until click-to-switch enables capture: the view
+        # starts with _click_enabled False, so hitTest_ falls clicks through to the
+        # status button (the menu) until set_click_enabled(True) (DECISIONS.md 9.5).
         button.addSubview_(view)
         self._row_view = view
+        # Re-wire handlers if they were set before the row existed (runtime re-install).
+        view.set_handlers(self._pill_switch_handler, self._pop_up_menu)
 
     def set_show_buttons_row(self, enabled: bool) -> None:
         """Install or remove the pill row at runtime (so a mode-toggle takes effect).
@@ -268,6 +403,39 @@ class MenuBarItem:
             if button is not None:
                 # Let the variable-length item resize back to its title width.
                 button.setFrame_(NSMakeRect(0.0, 0.0, _PILL_MIN_WIDTH, 22.0))
+
+    def set_pill_switch_handler(self, handler: object | None) -> None:
+        """Wire the pill-click handler (Space UUID -> switch); DECISIONS.md 9.5.
+
+        The menu-open handler is always this item's own :meth:`_pop_up_menu`, so the
+        delegate only supplies the switch action. Stored so a runtime row re-install
+        re-wires it.
+        """
+        self._pill_switch_handler = handler
+        if self._row_view is not None:
+            self._row_view.set_handlers(handler, self._pop_up_menu)
+
+    def set_pills_clickable(self, enabled: bool) -> None:
+        """Enable/disable pill click-to-switch capture on the row view (DECISIONS.md 9.5).
+
+        When disabled (the default, and whenever switching is unavailable) the row
+        ignores the mouse so clicks open the menu; the delegate toggles this when
+        ``menubar.click_to_switch`` changes or a switch attempt fails.
+        """
+        if self._row_view is not None:
+            self._row_view.set_click_enabled(enabled)
+
+    def _pop_up_menu(self) -> None:
+        """Pop up the status-item menu (so it stays reachable while pills capture clicks).
+
+        Used as the row view's menu-open handler. Exact drop position is GUI-only
+        (Phase-6 tuning); anchoring just below the row is the sane default.
+        """
+        button = self._item.button()
+        if button is None:
+            return
+        location = NSMakePoint(0.0, button.bounds().size.height + 4.0)
+        self._menu.popUpMenuPositioningItem_atLocation_inView_(None, location, button)
 
     def set_title(self, text: str) -> None:
         """Update the status-item title (call on the main thread)."""
@@ -329,6 +497,7 @@ class MenuBarItem:
                         text,
                         is_current=space.is_current,
                         color=label.color if label is not None else None,
+                        uuid=space.uuid,
                     )
                 )
             groups.append(group)

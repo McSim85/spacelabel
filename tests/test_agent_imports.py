@@ -22,6 +22,7 @@ AGENT_MODULES = [
     "spacelabel.agent.wallpaper",
     "spacelabel.agent.prefs",
     "spacelabel.platform.notifications",
+    "spacelabel.platform.switching",
 ]
 
 
@@ -39,6 +40,57 @@ def test_prefs_datasource_uses_correct_view_based_selector():
     data_source = PrefsDataSource.alloc().init()
     assert data_source.respondsToSelector_("outlineView:viewForTableColumn:item:")
     assert not data_source.respondsToSelector_("outlineView:viewForTableColumn:byItem:")
+
+
+def test_click_to_switch_warning_item_is_visible_and_actionable():
+    # The "click-to-switch off" row must be ENABLED (not a grayed/disabled line that
+    # is easy to miss) with a colored emoji; when a Settings deep-link is known it
+    # opens it on click (DECISIONS.md 9.5).
+    from spacelabel.agent.app import _SETTINGS_URL_KEYBOARD, AppDelegate
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+
+    actionable = delegate._click_to_switch_warning_item(
+        "shortcut not enabled", _SETTINGS_URL_KEYBOARD
+    )
+    assert actionable.isEnabled()  # never gray -- the whole point of the fix
+    assert "⚠️" in str(actionable.title())  # plain title (no font/attributed AppKit calls)
+    assert actionable.action() == "openClickToSwitchSettings:"
+    assert str(actionable.representedObject()) == _SETTINGS_URL_KEYBOARD
+
+    # No deep-link known (rare CGS/post failure): still enabled + colored, no action.
+    informational = delegate._click_to_switch_warning_item("could not read live Spaces", None)
+    assert informational.isEnabled()
+    assert informational.action() is None
+
+
+def test_click_to_switch_reopt_in_clears_stale_disable_before_menu():
+    # After a failed click disables the feature, toggling menubar.click_to_switch
+    # off->on must clear the disable + reason in _sync_click_to_switch_state(), which
+    # _refresh() runs BEFORE _rebuild_menu() -- so the ⚠️ "off" row does not linger for
+    # an extra refresh after re-enabling (review P2).
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    delegate._config = Config()
+    delegate._config.menubar.click_to_switch = True
+    delegate._click_to_switch_on = True  # feature was already on
+
+    # A failed click left it disabled with a surfaced reason.
+    delegate._click_to_switch_available = False
+    delegate._click_to_switch_reason = "shortcut not enabled"
+
+    # Toggling OFF must not reset (no off->on edge yet).
+    delegate._config.menubar.click_to_switch = False
+    delegate._sync_click_to_switch_state()
+    assert delegate._click_to_switch_available is False
+
+    # Toggling back ON (the re-opt-in edge) clears the stale disable + reason.
+    delegate._config.menubar.click_to_switch = True
+    delegate._sync_click_to_switch_state()
+    assert delegate._click_to_switch_available is True
+    assert delegate._click_to_switch_reason is None
 
 
 def test_prefs_color_well_persists_to_store(tmp_path):

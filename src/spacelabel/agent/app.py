@@ -64,6 +64,14 @@ _MODE_MENU_TITLES = (
     ("wallpaper", "Wallpaper  [experimental]"),
 )
 
+#: System Settings deep-links offered on the click-to-switch "off" row (best-effort:
+#: the Keyboard link lands on the pane; the user navigates to Keyboard Shortcuts →
+#: Mission Control from there). Opened via NSWorkspace when the row is clicked (9.5).
+_SETTINGS_URL_ACCESSIBILITY = (
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+)
+_SETTINGS_URL_KEYBOARD = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"
+
 
 def run_agent(
     config_path: Path | None = None, *, verbose: bool = False, debug: bool = False
@@ -151,7 +159,14 @@ class AppDelegate(NSObject):
         self._config_mtime: float = 0.0
         self._labels_mtime: float = 0.0
         self._displays_mtime: float = 0.0
-        self._warned_click_to_switch: bool = False
+        # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
+        # reactively (on a pill click) and on a fresh opt-in; a failure disables
+        # capture with a surfaced reason rather than a silent no-op.
+        self._click_to_switch_available: bool = True
+        self._click_to_switch_reason: str | None = None
+        self._click_to_switch_settings_url: str | None = None
+        self._click_to_switch_on: bool = False
+        self._ax_prompted: bool = False
         return self
 
     def retainLockHandle_(self, handle: object) -> None:  # noqa: N802
@@ -179,6 +194,9 @@ class AppDelegate(NSObject):
 
         config = self._require_config()
         self._menubar = MenuBarItem(show_buttons_row=config.menubar.show_buttons_row)
+        # Wire pill click-to-switch (no-op until menubar.click_to_switch is enabled
+        # and verified; DECISIONS.md 9.5). The menu-open handler is the item's own.
+        self._menubar.set_pill_switch_handler(self._on_pill_clicked)
         # The menu is (re)built per refresh from the live Spaces (see _rebuild_menu).
         if config.modes.get("hud"):
             from spacelabel.agent.hud import Hud
@@ -253,6 +271,19 @@ class AppDelegate(NSObject):
             entry.setRepresentedObject_(mode_name)
             entry.setState_(_STATE_ON if config.modes.get(mode_name) else _STATE_OFF)
             items.append(entry)
+
+        # Surface WHY click-to-switch is off when it is enabled but unusable, so the
+        # opt-in never looks active yet silently no-ops (DECISIONS.md 9.5).
+        if (
+            config.modes.get("menubar")
+            and config.menubar.show_buttons_row
+            and config.menubar.click_to_switch
+            and not self._click_to_switch_available
+        ):
+            reason = self._click_to_switch_reason or "click-to-switch is unavailable"
+            items.append(
+                self._click_to_switch_warning_item(reason, self._click_to_switch_settings_url)
+            )
 
         items.append(NSMenuItem.separatorItem())
         prefs_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
@@ -356,6 +387,11 @@ class AppDelegate(NSObject):
         active_space = self._find_space(spaces, active_uuid)
         title = self._title_for_active(active_space, ordinals)
         if self._menubar is not None:
+            # Reconcile click-to-switch availability with config BEFORE rebuilding the
+            # menu, so a fresh opt-in clears the stale ⚠️ "off" row on the SAME refresh
+            # (capture itself is re-applied later in _update_buttons_row, once the row
+            # view exists). (P2 review fix.)
+            self._sync_click_to_switch_state()
             self._rebuild_menu(spaces, ordinals)
             config = self._require_config()
             if not config.modes.get("menubar"):
@@ -392,15 +428,9 @@ class AppDelegate(NSObject):
         config = self._require_config()
         if not config.menubar.show_buttons_row or self._menubar is None:
             return
-        if config.menubar.click_to_switch and not self._warned_click_to_switch:
-            # The opt-in click-to-switch (DECISIONS 9.5) is not implemented yet; the
-            # pills are display-only. Surface that loudly rather than silently no-op.
-            log.warning(
-                "menubar.click_to_switch is enabled but not implemented yet: pills are "
-                "display-only (synthetic Ctrl+N switching is a backlog item). The setting "
-                "has no effect."
-            )
-            self._warned_click_to_switch = True
+        # Apply capture AFTER set_show_buttons_row (in _refresh) created the row view;
+        # the availability state was already reconciled before the menu rebuild.
+        self._apply_click_to_switch_capture()
         groups = self._group_by_display(spaces)
         if config.menubar.buttons_scope == "active_display":
             active_display = self._active_display_uuid()
@@ -408,6 +438,151 @@ class AppDelegate(NSObject):
         self._menubar.set_buttons_row(
             groups, self._labels, ordinals, pill_chars=config.menubar.pill_label_chars
         )
+
+    @objc.python_method
+    def _sync_click_to_switch_state(self) -> None:
+        """Reconcile click-to-switch availability with config (run BEFORE the menu rebuild).
+
+        A fresh opt-in (off->on) clears any stale disable + reason so the dropdown stops
+        showing the ⚠️ "off" row the moment the user re-enables the feature (rather than
+        for one extra refresh). Availability is otherwise verified reactively on a click
+        (so the agent never proactively prompts for Accessibility on start); once a click
+        fails, capture stays off -- with the reason surfaced -- until the next re-opt-in.
+        Pill click *capture* is applied separately in :meth:`_apply_click_to_switch_capture`,
+        which must run after the row view exists.
+        """
+        config = self._require_config()
+        on = config.menubar.click_to_switch
+        if on and not self._click_to_switch_on:
+            self._click_to_switch_available = True
+            self._click_to_switch_reason = None
+            self._click_to_switch_settings_url = None
+            self._ax_prompted = False
+        self._click_to_switch_on = on
+
+    @objc.python_method
+    def _apply_click_to_switch_capture(self) -> None:
+        """Toggle pill click capture to match config + availability (DECISIONS.md 9.5).
+
+        Called from :meth:`_update_buttons_row` so the row view is guaranteed to exist;
+        the availability state it reads was already reconciled by
+        :meth:`_sync_click_to_switch_state` before the menu was rebuilt.
+        """
+        if self._menubar is None:
+            return
+        config = self._require_config()
+        self._menubar.set_pills_clickable(
+            config.menubar.click_to_switch and self._click_to_switch_available
+        )
+
+    @objc.python_method
+    def _on_pill_clicked(self, uuid: str) -> None:
+        """Switch to the clicked pill's Space via the Mission Control shortcut.
+
+        Rebuilds the UUID->ordinal map from a LIVE CGS read at click time (ordinals
+        shift on reorder -- never cached, DECISIONS.md 9.5), resolves the target's
+        enabled "Switch to Desktop N" shortcut, and posts it. Any failure disables
+        capture with a specific, surfaced reason (prompting for Accessibility on the
+        first miss) rather than a silent no-op.
+        """
+        from spacelabel.platform import cgs, switching
+
+        if not uuid:
+            # Defensive: the buttons row already routes empty-UUID (unlabelable) pills
+            # to the menu (ButtonsRowView._handle_click_at_x), so a click never reaches
+            # here with an empty UUID.
+            log.debug("ignoring click-to-switch for a Space with no persistent UUID")
+            return
+        try:
+            spaces = cgs.enumerate_spaces(include_unlabelable=True)
+        except cgs.CGSUnavailableError as exc:
+            self._disable_click_to_switch(f"could not read live Spaces: {exc}")
+            return
+        ordinal = labeling.ordinal_for_uuid(spaces, uuid)
+        if ordinal is None:
+            # Space disappeared between last refresh and click (reorder race).
+            # Rebuild the row immediately so the stale pill is no longer clickable.
+            log.warning("clicked Space %s is no longer present; refreshing row", uuid)
+            self._refresh()
+            return
+        if not switching.accessibility_trusted(prompt=not self._ax_prompted):
+            self._ax_prompted = True
+            self._disable_click_to_switch(
+                "Accessibility permission is required — enable the entry in System "
+                "Settings → Privacy & Security → Accessibility (on a pipx install it "
+                "appears under your Python interpreter, e.g. “python3.x”, not "
+                "“spacelabel”), then re-enable click-to-switch.",
+                settings_url=_SETTINGS_URL_ACCESSIBILITY,
+            )
+            return
+        try:
+            hotkeys = switching.load_symbolic_hotkeys()
+        except switching.HotkeyReadError as exc:
+            self._disable_click_to_switch(f"could not read keyboard shortcuts: {exc!s}")
+            return
+        binding = switching.parse_desktop_binding(hotkeys, ordinal)
+        if binding is None:
+            self._disable_click_to_switch(
+                f"the “Switch to Desktop {ordinal}” shortcut is not enabled — turn it on in "
+                "System Settings → Keyboard → Keyboard Shortcuts → Mission Control.",
+                settings_url=_SETTINGS_URL_KEYBOARD,
+            )
+            return
+        if switching.post_switch(binding):
+            log.info("posted “Switch to Desktop %d” for Space %s", ordinal, uuid)
+        else:
+            self._disable_click_to_switch(
+                "could not post the switch key event (CGEventPost unavailable)."
+            )
+
+    @objc.python_method
+    def _disable_click_to_switch(self, reason: str, *, settings_url: str | None = None) -> None:
+        """Disable pill switching with a visible, logged reason (never silent; 9.5).
+
+        ``settings_url`` (when known) makes the dropdown's attention row open the
+        System Settings pane that fixes the blocker on click.
+        """
+        self._click_to_switch_available = False
+        self._click_to_switch_reason = reason
+        self._click_to_switch_settings_url = settings_url
+        log.warning("click-to-switch disabled: %s", reason)
+        if self._menubar is not None:
+            # Stop capturing clicks so the menu (Preferences/Quit) is reachable again.
+            self._menubar.set_pills_clickable(False)
+            self._rebuild_menu_safely()
+
+    @objc.python_method
+    def _rebuild_menu_safely(self) -> None:
+        """Rebuild the dropdown from the live Spaces so the disable reason appears."""
+        spaces = self._read_spaces(include_unlabelable=True)
+        ordinals = labeling.assign_ordinals(spaces)
+        self._rebuild_menu(spaces, ordinals)
+
+    @objc.python_method
+    def _click_to_switch_warning_item(self, reason: str, settings_url: str | None) -> object:
+        """Build the attention 'click-to-switch off' dropdown row (DECISIONS.md 9.5).
+
+        ENABLED (so AppKit does NOT gray it out) with a colored ⚠️ emoji, so the reason
+        is noticeable rather than the easy-to-miss dim disabled line it was. When a
+        Settings deep-link is known the row opens it on click, turning the notice into
+        a one-click fix. A plain (non-attributed) title is used deliberately: an enabled
+        item already renders the emoji in color and the text at full contrast, and it
+        avoids font/attributed-string AppKit calls (e.g. ``NSFont.menuFontOfSize_``) that
+        can abort before ``NSApplication`` is fully up -- in unit tests / headless CI,
+        and as an early call in general (review P1).
+        """
+        from AppKit import NSMenuItem
+
+        # The reason already names the System Settings destination; an enabled,
+        # colored, highlight-on-hover row signals it is clickable (opens Settings).
+        title = f"⚠️ Click-to-switch off — {reason}"
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, "", "")
+        if settings_url:
+            item.setTarget_(self)
+            item.setAction_("openClickToSwitchSettings:")
+            item.setRepresentedObject_(settings_url)
+        item.setEnabled_(True)  # never gray -- visibility is the whole point
+        return item
 
     @objc.python_method
     def _update_hud(self, title: str) -> None:
@@ -503,6 +678,21 @@ class AppDelegate(NSObject):
             self._prefs = PreferencesWindow(self._config_path)
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         self._prefs.show()
+
+    def openClickToSwitchSettings_(self, sender: object) -> None:  # noqa: N802
+        """Open the System Settings pane that fixes the click-to-switch blocker (9.5)."""
+        url = sender.representedObject()
+        if not url:
+            return
+        from AppKit import NSWorkspace
+        from Foundation import NSURL
+
+        ns_url = NSURL.URLWithString_(str(url))
+        if ns_url is None:
+            log.warning("could not build Settings URL from %r", url)
+            return
+        if not NSWorkspace.sharedWorkspace().openURL_(ns_url):
+            log.warning("could not open Settings URL %s", url)
 
     def quit_(self, _sender: object) -> None:
         """Stop observers and terminate the application (stays stopped, 6.4)."""
