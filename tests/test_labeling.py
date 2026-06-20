@@ -6,6 +6,7 @@ from spacelabel.labeling import (
     assign_ordinals,
     canonical_uuid,
     find_orphans,
+    ordinal_for_uuid,
     pill_text,
     title_for,
     truncate,
@@ -31,6 +32,22 @@ def test_assign_ordinals_distinguishes_empty_uuid_spaces():
     assert ordinals[id(s1)] == 1
     assert ordinals[id(s2)] == 2
     assert len(ordinals) == 2
+
+
+def test_ordinal_for_uuid_resolves_live_position():
+    # Click-to-switch maps the clicked Space's UUID to its current ordinal at click
+    # time (DECISIONS.md 9.5); reordering shifts the answer, which is why it is never
+    # cached.
+    a, b, c = _space("a"), _space("b"), _space("c")
+    assert ordinal_for_uuid([a, b, c], "b") == 2
+    assert ordinal_for_uuid([b, a, c], "b") == 1  # reordered -> different ordinal
+
+
+def test_ordinal_for_uuid_absent_or_empty_returns_none():
+    a, b = _space("a"), _space("b")
+    assert ordinal_for_uuid([a, b], "missing") is None
+    # An empty UUID (unlabelable Space) is never a switch target, even if present.
+    assert ordinal_for_uuid([_space(""), a], "") is None
 
 
 def test_truncate():

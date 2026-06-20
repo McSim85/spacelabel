@@ -17,6 +17,7 @@ __all__ = [
     "assign_ordinals",
     "canonical_uuid",
     "find_orphans",
+    "ordinal_for_uuid",
     "pill_text",
     "title_for",
     "truncate",
@@ -54,6 +55,25 @@ def assign_ordinals(spaces: Iterable[Space]) -> dict[int, int]:
     on the SAME Space objects they enumerated.
     """
     return {id(space): index for index, space in enumerate(spaces, start=1)}
+
+
+def ordinal_for_uuid(spaces: Iterable[Space], uuid: str) -> int | None:
+    """Return the 1-based "Desktop N" ordinal of the Space with ``uuid``, else ``None``.
+
+    Built from a LIVE enumeration at lookup time -- ordinals shift on reorder, so
+    click-to-switch resolves the clicked Space's UUID to its current ordinal here and
+    never caches the map (DECISIONS.md 9.5). Matches the numbering of
+    :func:`assign_ordinals`. An empty ``uuid`` never matches (an unlabelable Space is
+    not a switch target).
+    """
+    if not uuid:
+        return None
+    spaces_list = list(spaces)
+    ordinals = assign_ordinals(spaces_list)
+    for space in spaces_list:
+        if space.uuid == uuid:
+            return ordinals[id(space)]
+    return None
 
 
 def truncate(text: str, max_length: int) -> str:

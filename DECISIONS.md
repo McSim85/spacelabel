@@ -118,6 +118,7 @@ The Shared Baseline says *"ctypes `dlopen` of SkyLight for the private CGS reads
 - Interpreter pinning: `brew upgrade python` minor bump orphans the pipx venv → `pipx reinstall` (and recreate uv `.venv`).
 - macOS-26 PyObjC forward-compat is empirical-only (works on 26.5.1; no vendor cert). Keep CGS reads behind try/except + plist fallback.
 - A hardened+notarized py2app bundle would re-engage library validation (out of scope for the pipx/personal path).
+- **Accessibility (TCC) grant attaches to the Python interpreter, not "spacelabel"** — surfaced live by click-to-switch (§9.5). On the pipx path the agent process is the ad-hoc-signed Homebrew `python3.x` (verified: `Identifier=python3-…`, `Signature=adhoc`, `flags=0x2`, no TeamIdentifier), so the Accessibility prompt/list shows **"python3.x"**, and `brew upgrade python` changes the binary cdhash → the grant silently drops (same fragility as the venv-orphan bullet above; TCC ignores `argv[0]`/process title, so no runtime fix exists). **Cosmetic + robustness only** — click-to-switch works once that entry is enabled. The only real fix is a code-signed `.app` bundle (`CFBundleName=spacelabel`, id `dev.mcsim.spacelabel`) so TCC keys on the app identity — which **relaxes 2.7 + 6.3**, so it is **deferred to v1.0 packaging** and tracked in `todo/improvements.md` (item E), not pulled into the pipx path now. The disable-with-reason copy + docs/UI.md §2.4 set the "look under python3.x" expectation in the meantime.
 
 ---
 
@@ -165,17 +166,72 @@ The Shared Baseline says *"ctypes `dlopen` of SkyLight for the private CGS reads
 | 9.2 | **stdout = data, stderr = diagnostics/logs.** Default `spaces`/`label list` output is a **space-aligned table with the header on stdout** (revised in Phase 4 from the original TSV-with-header-on-stderr — Max's call after live testing: the ragged TSV read badly in a terminal). **`--json` is the machine-readable channel** for scripts. Logging never writes stdout (enforced by `setup_logging`). | A human-readable aligned table is the better interactive default; padded columns are not cleanly `cut`/`awk`-parseable, so structured consumers use `--json` (which is why `--json` exists on `spaces`/`label list`/`status`/`config get`). Supersedes the Phase-3 TSV default. | high |
 | 9.3 | **Additive CLI flags only:** `--json` (`spaces`, `label list`, `status`, bare `config get`), `--dry-run` (`label prune`), `--active-display/--all-displays` (`spaces`), `--no-load` (`install`), `--keep-labels` reserved (`uninstall`). | Cover the spec's machine-output + safety needs without touching the locked command tree. Each maps to a Phase-4 option on an existing command. | high (design) |
 | 9.4 | **Buttons row = ONE `NSStatusItem` + custom CG view.** Pills show first letter(s) of the label, else the Space number; **current marked by alpha (1.0/~0.4), never color**; physical displays split by a thin vertical divider, drawn L→R; scope toggle all-vs-active display. | Re-states 2.1/6.5 for the UI: N items worsen Tahoe ControlCenter hiding + notch overflow. Alpha (not color) keeps per-label color free as a user tag and reads "current" unambiguously with one-per-display. | high |
-| 9.5 | **Click-to-switch is opt-in, OFF in v1; display-only by default.** On enable, guide the two one-time steps (Mission Control "Switch to Desktop 1…N" shortcut + Accessibility), then post synthetic Ctrl+N via `CGEventPost` with a **live** UUID→ordinal map. If the shortcut can't be confirmed, **disable the action with a visible reason — never silently no-op.** | Space *switching* is the one operation behind the SIP/Dock wall; making it explicit keeps the default safe and honors the no-silent-except policy at the UI layer. Ordinals shift on reorder → resolve at click time, never cache. | high (policy) / medium (CGEventPost path, Phase-6 verify) |
+| 9.5 | **Click-to-switch is opt-in, OFF in v1; display-only by default.** On enable, guide the two one-time steps (Mission Control "Switch to Desktop 1…N" shortcut + Accessibility), then post the **bound** Switch-to-Desktop chord via `CGEventPost` with a **live** UUID→ordinal map. If the shortcut/permission can't be confirmed, **disable the action with a visible reason — never silently no-op.** | Space *switching* is the one operation behind the SIP/Dock wall; making it explicit keeps the default safe and honors the no-silent-except policy at the UI layer. Ordinals shift on reorder → resolve at click time, never cache. **Implemented (backlog `critical-click-to-switch`) and verified live 2026-06-20 — all 14 desktops switch; see the §9.5 implementation note below.** | high (policy) / high (end-to-end switch verified on the reference machine) |
 | 9.6 | **Preferences inline-edit commits on BOTH Return and focus-loss; Esc cancels.** Two-level `NSOutlineView` (display→Spaces) per 2.4; color column via `NSColorWell`. | Resolves the §2 open question ("Enter vs focus-loss"). Matches native table-edit expectations; both commit so a user never loses an edit by clicking away. | high |
 | 9.7 | **New `config.json` keys** (additive, schema_version stays 1): `menubar.show_buttons_row` (bool, def false), `menubar.buttons_scope` (`all_displays`\|`active_display`, def all), `menubar.pill_label_chars` (1–2, def 1), `menubar.click_to_switch` (bool, def false); `hud.position` (one of the 9 anchors, def `center`), `hud.margin` (int pt, def 24); `overlay.font_size` accepts `"auto"` as well as int; `overlay.corner` accepts any of the **9 anchors** (def `top-right`). | The UI exposes these as menu/prefs toggles and the `mode`/`config` CLI writes them. Defaults keep the quiet title-only behavior; **HUD/overlay placement is user-configurable** (asked for in Phase 3 review); all are forward-compatible additions. | high (design) |
 | 9.8 | **New `labels.json` field `color`** (optional hex string) per entry; **UUID remains the sole key.** | Color is a per-label user tag surfaced in pills/overlay/HUD/prefs; informational/forward-compatible like `last_display` (5.2), never part of the key (1.4). | high (design) |
 | 9.9 | **HUD/overlay geometry from one runtime formula keyed on the display's SHORT side** `S = min(width_pt, height_pt)`: `hud_font = clamp(round(S·0.05), 18, 64) pt`; `overlay_font` default 15 pt or `auto = clamp(round(S·0.018), 12, 28)`. **A single shared `anchor_origin(visibleFrame, w, h, position, margin)` helper (the 9-position grid) places BOTH panels** — HUD via `hud.position`/`hud.margin`, overlay via `overlay.corner`/`overlay.margin`. Reposition all panels on `didChangeScreenParameters`; AppKit points → Retina is free. | Portability requirement — nothing hardcoded. Keying on the short side gives identical HUD size on the portrait 2160×3840 and the scaled 4K (both S=1080→54 pt) and a sane 48 pt on a 13" laptop; the clamp catches a native-res 4K (S=2160). One anchor helper makes HUD position configurable (Phase-3 review) and keeps HUD/overlay placement consistent. `visibleFrame` clears menu bar/notch/Dock. | high (design) / medium (exact constants — tune in Phase 6) |
 
 **Open questions / Phase-4 & 6 follow-ups:**
-- `CGEventPost` Ctrl+N actually switching Spaces under SIP-on + Accessibility — verify on hardware (Phase 6); the disable-with-reason path is the safe fallback if it doesn't.
+- `CGEventPost` actually switching Spaces under SIP-on + Accessibility — **narrowed** (see the §9.5 implementation note): the building blocks are verified live (symbolic-hotkey grounding, AX binding, event creation, no-silent disable path); only the end-to-end "granted-AX agent posts the chord → WindowServer switches the Space" remains a Phase-6 GUI check, with disable-with-reason as the safe fallback.
 - Friendly display-name resolution (display UUID → human name/model) — best-effort; fall back to a short UUID prefix if unavailable.
 - Exact HUD `duration_ms`/fade constants and `S·0.05` coefficient are UX taste — tune live in Phase 6.
 - HUD `NSScreenSaverWindowLevel` (~101) vs system alerts on Tahoe remains the §2.2 open question (Phase 6).
+
+**§9.5 implementation note (backlog `critical-click-to-switch`, implemented):** the opt-in
+pill-click switch path is now real (`platform/switching.py`, wired through
+`agent/menubar.py` + `agent/app.py`); the "not implemented yet" warning is removed. Key
+decisions, grounded **live on the reference machine** (macOS 26.5.1, build 25F80):
+- **Post the *bound* chord, not a hardcoded "Ctrl+N".** We read the actual key code +
+  modifier flags from `com.apple.symbolichotkeys` (`AppleSymbolicHotKeys`, via live
+  CFPreferences) and post exactly that. The task wording "Ctrl+N" was imprecise: the
+  Mission-Control shortcut is **Ctrl + the desktop number** (the letter-N keycode would
+  never switch). Symbolic-hotkey **id == 117 + ordinal** (verified: ids 118/119/120 =
+  Switch to Desktop 1/2/3); params are `[asciiChar, keyCode, modifierFlags]` (e.g. Desktop 1
+  = `[65535, 18 (kVK_ANSI_1), 0x40000 (Control)]`). The plist modifier bits equal the
+  `kCGEventFlagMask*` bits, so they pass straight to `CGEventSetFlags`; posted at
+  `kCGHIDEventTap` so the WindowServer hotkey dispatch sees genuine input.
+- **The shortcuts ship DISABLED by default.** On the reference machine all of 118/119/120
+  are `enabled=False` and ids 121+ are absent — so **disable-with-reason is the live default
+  state**, not an edge case. The agent surfaces the specific reason ("enable Switch to
+  Desktop N in System Settings → Keyboard → … → Mission Control") as a disabled dropdown
+  row + a WARNING log, and stops capturing clicks (so the menu stays reachable). Re-opt-in
+  (toggling `menubar.click_to_switch` off→on) clears the disable to retry.
+- **Accessibility check binds from HIServices by *path*.** `AXIsProcessTrusted` /
+  `AXIsProcessTrustedWithOptions` are not wrapped by PyObjC on Tahoe and the
+  ApplicationServices/HIServices bundle will not `loadBundle` by identifier (no on-disk
+  Mach-O); `objc.loadBundle(bundle_path=…HIServices.framework)` resolves both (verified).
+  `AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})` drives the one-time
+  grant dialog on the first failing click; `kAXTrustedCheckOptionPrompt`'s string value is
+  used literally (the symbol is unexported).
+- **Live UUID→ordinal map, never cached** (`labeling.ordinal_for_uuid`): rebuilt from a fresh
+  `cgs.enumerate_spaces` on every click, since ordinals shift on reorder.
+- **Hit-testing** uses one shared pure layout walk (`menubar._pill_layout`) for both drawing
+  and the click map, so a clicked pixel resolves to the pill drawn there; capture is gated by
+  `hitTest_` returning `nil` when disabled (NSView has no `ignoresMouseEvents` — that is an
+  NSWindow property), the click-through that keeps display-only pills opening the menu. An
+  **unlabelable pill (`uuid=""`, an `include_unlabelable` default Space) is not a switch target**
+  — it has no stable key to resolve to a live ordinal — so a click on it opens the menu like a
+  click off any pill, never a dead click that consumes the event and does nothing (review P2).
+- **✅ Verified live on the reference machine (2026-06-20):** with Accessibility granted to the
+  agent's interpreter and the "Switch to Desktop N" shortcuts enabled, a pill click posts the
+  bound chord and **the Space actually switches** — for **all 14 desktops**, not just 1–3. This
+  resolves three prior Phase-6 unknowns at once: (a) **id contiguity holds past Desktop 3** (ids
+  118–131 = Desktop 1–14 once the user enables them; macOS materializes the entries on enable —
+  they were simply absent while disabled); (b) **`kCGHIDEventTap` is the correct tap** (the system
+  hotkey fires); (c) the **ordinal→Mission-Control numbering lines up** for the labelable Spaces
+  (all 14 reach their desktop). The disable-with-reason path was also exercised (both the
+  Accessibility-denied and shortcut-not-enabled reasons surfaced).
+- **Known behavior — pills do not refresh on a pure *reorder*:** the agent refreshes on
+  `activeSpaceDidChange` + `didChangeScreenParameters` (DECISIONS 4.1/3.3); dragging Spaces in
+  Mission Control fires neither (the active Space is unchanged), so the pill row stays visually
+  stale until the next Space switch. **Click correctness is unaffected** — the pill carries the
+  Space UUID and the click resolves UUID→*live* ordinal, so a click on a stale pill still switches
+  to the right Space. Surfacing a reorder live (periodic live-enumerate-and-diff in the 1 s poll)
+  is a backlog item (`todo/improvements.md`).
+- **Residual Phase-6 nicety:** confirm the ordinal mapping on a multi-display layout where the
+  first display's lone Space is unlabelable (`uuid=""`, ordinal 1) — it worked here, but the
+  general multi-display numbering vs Mission Control is worth a deliberate check.
 
 ---
 
@@ -242,7 +298,11 @@ The Shared Baseline says *"ctypes `dlopen` of SkyLight for the private CGS reads
     - **P1 — "defer PyObjC imports in `agent/app.py`": assessed not actionable.** `app.py` defines `class AppDelegate(NSObject)` at module scope, which forces `objc`/AppKit resolution at import; deferring would mean relocating the ~700-line ObjC subclass into `run_agent` (an anti-pattern, and `tests/test_agent_imports.py` introspects these module-level classes — the established pattern across all `agent/*` modules). The CLI already isolates this via the lazy `from spacelabel.agent.app import run_agent` inside the `agent()` command, so every non-agent CLI command runs PyObjC-free; the project is macOS-only (PyObjC hard dep, CI `macos-latest`, won't build on Linux), so a "PyObjC-less environment" is out of scope by design.
     - **Sibling fixes (verify/sweep workflow):** the workflow confirmed all four fixes above and surfaced same-class siblings, now fixed: **(a)** the `ImportError`-degrade was incomplete — three more CLI legs caught too narrowly and would crash (not degrade) on a PyObjC-less host: `_read_spaces_with_fallback` caught only `CGSUnavailableError` (so an `ImportError` from the lazy `import objc` **skipped the pure-stdlib plist fallback that should run**), and `_display_names` + `display list`'s topology leg caught only `OSError`. All now also catch `ImportError`. The three hard-fail `current` paths (`label set current`, `display set current`, `spaces --active-display`) now catch `ImportError` too — they still fail (a literal `current` needs the live read) but with a clean exit-1 `ClickException` instead of a raw traceback. **(b)** `display clear <literal-uuid>` computed its `existed` pre-check on the **raw** CLI value against canonical stored keys, so a lowercase/braced UUID printed "nothing to clear" right after successfully clearing it; `_resolve_display_target` now canonicalizes the literal branch. **(c)** `spaces_plist.parse_spaces_plist` canonicalizes a **real-UUID `Display Identifier`** too (it only canonicalized `Space.uuid`), mirroring `cgs._normalize_display_identifier`, so the plist-fallback display grouping joins against the canonical live topology. Each fix has a regression test (the prior `display list` degrade test was strengthened — it had mocked `discover_topology` to `[]`, masking the topology-leg gap).
   - **Refresh `CLAUDE.md` (Phase 7) at the end of this phase — done** (architecture map + command list reconciled, ColorSync gotcha added).
-- **Phase 5 (backlog):** open questions in §1/§2/§3/§6 are backlog candidates; the wallpaper durability ceiling (§7) bounds what to promise.
+- **Phase 5 (backlog): ✅ DONE** — `todo/` folder created at repo root with a `README.md` index + two Critical prompt files + one Non-critical batched prompt:
+  - **Critical** (gate a shippable release): `critical-click-to-switch.md` (implement opt-in `CGEventPost` Ctrl+N pill-click switching, v0.2/v0.3), `critical-release-automation.md` (release-please + PyPI OIDC + Homebrew tap + Renovate, v0.2+).
+  - **Non-critical** (polish/DX): `improvements.md` covers per-screen overlay note body (v0.2), wallpaper original persistence + per-display font sizing + user-change detection (v0.3), and CLI shell autocomplete (v0.2).
+  - Open questions in §1/§2/§3/§6 that require hardware verification remain deferred to Phase 6 (not promoted to backlog prompts). Wallpaper durability ceiling (§7) bounds the wallpaper improvements item in `improvements.md`.
+  - **Backlog progress — `critical-click-to-switch`: ✅ DONE.** Opt-in pill-click Space switching implemented end-to-end (`platform/switching.py` + `agent/menubar.py` hit-testing + `agent/app.py` wiring); the "not implemented yet" warning is replaced by the real disable-with-reason path. New pure helper `labeling.ordinal_for_uuid`; new tests `tests/test_switching.py` + `tests/test_menubar_buttons.py` (+ `ordinal_for_uuid` cases). Findings folded into the **§9.5 implementation note** above; the only residual is the Phase-6 end-to-end GUI verification. Gates green (ruff + ruff-format + mypy --strict + pytest). `todo/README.md` row marked done.
 - **Phase 6 (verification):** run the §12 checklist of `DESIGN.md`. **Gate the whole project on item 1 (uuid reboot-stability) and item 3 (RSS-flat memory).** If `uuid` is not reboot-stable, revisit decision 1.4 (the entire UUID-keying premise). **Refresh `CLAUDE.md` (Phase 7)** with any verified gotchas / corrected assumptions from the probe.
 
 ## Completeness gate (Phase 1)
