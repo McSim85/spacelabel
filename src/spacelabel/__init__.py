@@ -14,6 +14,8 @@ read/store layers.
 from __future__ import annotations
 
 import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 __all__ = ["APP_NAME", "BUNDLE_ID", "__version__"]
 
@@ -24,8 +26,12 @@ APP_NAME = "spacelabel"
 #: LaunchAgent ``Label``, the plist filename, and the ``os_log`` subsystem.
 BUNDLE_ID = "dev.mcsim.spacelabel"
 
-#: Package version (single source; pyproject reads this via setuptools dynamic).
-__version__ = "0.1.0"
+#: Package version — read from installed metadata so pyproject.toml is the
+#: single source of truth and release-please bumps exactly one place.
+try:
+    __version__ = _pkg_version(__name__)
+except PackageNotFoundError:  # running from a non-installed clone
+    __version__ = "0.0.0.dev0"
 
 # Per DESIGN.md §8.2 and the stdlib logging HOWTO: a library never configures
 # logging. Attach one NullHandler at import so library log records are dropped

@@ -1,0 +1,85 @@
+name: Build and attach release artifacts
+
+# Triggered when the release-please PR is merged and a GitHub Release is created.
+#
+# build-and-upload: builds the pure-Python wheel + sdist on ubuntu (no macOS
+# runner needed — no C extensions; PyObjC resolves from PyPI at install time)
+# and attaches the artifacts to the release so users can:
+#   pipx install https://github.com/McSim85/spacelabel/releases/download/vX.Y.Z/spacelabel-X.Y.Z-py3-none-any.whl
+#
+# update-homebrew-formula: runs only once Formula/spacelabel.rb is committed to
+# this repo (set FORMULA_IN_REPO=true in Settings → Variables when ready).
+# Uses GITHUB_TOKEN — no extra PAT or separate tap repo needed.
+# Install after going public:
+#   brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
+#   brew install McSim85/spacelabel/spacelabel
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write       # upload release assets + push formula branch
+  pull-requests: write  # open formula update PR
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Attach artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/*.whl dist/*.tar.gz
+
+  update-homebrew-formula:
+    # Deferred until Formula/spacelabel.rb is committed to this repo.
+    # Enable by adding a repository variable FORMULA_IN_REPO=true.
+    needs: build-and-upload
+    if: vars.FORMULA_IN_REPO == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Update formula url and sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ARCHIVE_URL="https://github.com/McSim85/spacelabel/archive/refs/tags/${TAG}.tar.gz"
+          export SHA256
+          SHA256=$(curl -fsSL "$ARCHIVE_URL" | sha256sum | awk '{print $1}')
+          export ARCHIVE_URL
+
+          # Update the top-level url and sha256 (count=1 skips resource blocks).
+          python3 << 'PYEOF'
+          import re, os
+
+          content = open("Formula/spacelabel.rb").read()
+          url = os.environ["ARCHIVE_URL"]
+          sha = os.environ["SHA256"]
+          content = re.sub(r'  url "[^"]*"', f'  url "{url}"', content, count=1)
+          content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
+          open("Formula/spacelabel.rb", "w").write(content)
+          PYEOF
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git checkout -b "chore/bump-formula-${VERSION}"
+          git add Formula/spacelabel.rb
+          git commit -m "chore: bump Homebrew formula to ${VERSION}"
+          git push origin "chore/bump-formula-${VERSION}"
+          gh pr create \
+            --title "chore: bump Homebrew formula to ${VERSION}" \
+            --body "Automated formula bump for release ${TAG}." \
+            --base main \
+            --head "chore/bump-formula-${VERSION}"

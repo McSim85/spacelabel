@@ -1,0 +1,29 @@
+name: Release Please
+
+# Maintains the release PR: on every push to main, release-please accumulates
+# Conventional Commit messages into CHANGELOG.md and bumps version in
+# pyproject.toml.  When the release PR is merged, the action creates the git
+# tag and a GitHub Release — which then triggers publish.yml.
+#
+# Ref: https://github.com/googleapis/release-please-action
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write       # create tags + GitHub Release
+  pull-requests: write  # create/update the release PR
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Renovate (renovate.json pinDigests:true) will pin this to a SHA on first run.
+      - uses: googleapis/release-please-action@v4
+        with:
+          # "python" release type: bumps `version = "..."` in pyproject.toml
+          # and populates CHANGELOG.md from Conventional Commits.
+          release-type: python
+          package-name: spacelabel

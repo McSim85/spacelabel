@@ -1,6 +1,25 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["config:recommended"],
+  "schedule": ["every weekend"],
+  "labels": ["dependencies"],
+  "automerge": false,
+  "packageRules": [
+    {
+      "matchManagers": ["pep621"],
+      "groupName": "Python dependencies",
+      "description": "pyproject.toml [project].dependencies (click, pyobjc-*)"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "pinDigests": true,
+      "description": "Pin GHA steps to exact commit SHAs (supply-chain safety)"
+    },
+    {
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks",
+      "description": "ruff / mypy / pre-commit-hooks rev pins in .pre-commit-config.yaml"
+    }
   ]
 }
