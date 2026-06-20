@@ -25,3 +25,9 @@ jobs:
           # "python" release type: bumps `version = "..."` in pyproject.toml
           # and populates CHANGELOG.md from Conventional Commits.
           release-type: python
+          # PAT required so the published release event triggers publish.yml.
+          # GITHUB_TOKEN releases are attributed to Actions and don't fire
+          # downstream workflow triggers (GitHub loop-prevention policy).
+          # Create a fine-grained PAT with Contents + Pull Requests write,
+          # add as repo secret RELEASE_PAT.
+          token: ${{ secrets.RELEASE_PAT }}
