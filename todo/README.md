@@ -21,7 +21,7 @@ order (they are independent); fold Non-critical items into a single session usin
 | Item | Priority | Prompt file | Milestone | Rough effort | Status |
 |---|---|---|---|---|---|
 | Click-to-switch pills — implement the opt-in `CGEventPost` switch path | **Critical** | [critical-click-to-switch.md](critical-click-to-switch.md) | v0.2/v0.3 | 1 session · Opus 4.8 · high | done (Phase-6 verifies end-to-end switch) |
-| Release automation — release-please + PyPI OIDC + Homebrew tap | **Critical** | [critical-release-automation.md](critical-release-automation.md) | v0.2+ | 1 session · Sonnet 4.6 · medium | open |
+| Release automation — release-please + PyPI OIDC + Homebrew tap + Renovate | **Critical** | [critical-release-automation.md](critical-release-automation.md) | v0.2+ | 1 session · Sonnet 4.6 · medium | done |
 | Per-screen overlay note body | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | open |
 | Wallpaper: persist captured original across restarts | Non-critical | [improvements.md](improvements.md) | v0.3 | bundled | open |
 | Wallpaper: per-display font sizing | Non-critical | [improvements.md](improvements.md) | v0.3 | bundled | open |
