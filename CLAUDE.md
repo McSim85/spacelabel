@@ -115,6 +115,24 @@ uv run spacelabel agent --debug    # run the agent in the foreground
 - **CI is macOS-only** (`macos-latest`) — PyObjC framework wheels don't install on
   Linux, so a Linux runner can't even build the package.
 - **Distribute via pipx** (`pipx install .`); pipx exposes `~/.local/bin/spacelabel`.
+
+### Pre-commit checklist (required before every commit)
+
+```sh
+# 1. Run the full gate suite
+uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest
+
+# 2. Run codex review in a loop until no critical findings remain
+git add <changed files>
+codex review "<focused prompt: changed files + what to flag: crash risks, logic errors,
+  missing system-boundary handling, thread-safety; skip style/naming/missing features>"
+# fix findings → re-run tests → re-stage → repeat until codex reports no critical findings
+
+# 3. Commit
+```
+
+The `--uncommitted` flag on `codex review` conflicts with a positional prompt argument;
+work around it by staging files first, then passing the prompt as a positional argument.
 - CLI contract: stdout = machine-readable data (TSV default, `--json` opt-in),
   stderr = all diagnostics; exit codes `0` ok / `1` runtime / `2` usage / `3` =
   status "agent not running". (DECISIONS §9 / `docs/CLI.md`)

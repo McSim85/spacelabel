@@ -312,6 +312,16 @@ LaunchAgent present but prefers to start the agent manually has no option.
    uv run mypy src
    uv run pytest
    ```
-2. Commit with a Conventional Commits message (e.g. `feat(overlay): add per-display note body`).
-3. Update `DECISIONS.md` if any item forced a new design decision.
-4. Mark the item `done` in `todo/README.md`.
+2. Run **codex review** in a loop until no critical findings remain:
+   ```sh
+   git add <changed files>
+   codex review "<focused prompt covering the changed files; flag only: crash risks,
+     logic errors, missing system-boundary handling, thread-safety issues; skip style,
+     naming, missing features>"
+   # fix findings → re-run gates → re-stage → repeat
+   ```
+   Note: `--uncommitted` conflicts with a positional prompt; stage first, then pass
+   the prompt as a positional argument.
+3. Commit with a Conventional Commits message (e.g. `feat(overlay): add per-display note body`).
+4. Update `DECISIONS.md` if any item forced a new design decision.
+5. Mark the item `done` in `todo/README.md`.

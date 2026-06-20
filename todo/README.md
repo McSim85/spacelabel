@@ -42,3 +42,16 @@ order (they are independent); fold Non-critical items into a single session usin
   (item 1) and flat-RSS memory (item 3).
 - Mark a row `done` here once its session completes and the code lands on `main`.
 - Update `DECISIONS.md` if any session forces a design decision change.
+
+## Required: codex review loop before every commit
+
+Every implementation session must run `codex review` in a loop until no critical
+findings remain, **before** committing. See `CLAUDE.md` → "Pre-commit checklist"
+for the exact steps. Short version:
+
+```sh
+git add <changed files>
+codex review "<focused prompt: flag crash risks, logic errors, missing system-boundary
+  handling, thread-safety; skip style/naming/missing features>"
+# fix → re-test → re-stage → repeat until clean
+```

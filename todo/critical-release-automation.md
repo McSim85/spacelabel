@@ -154,3 +154,16 @@ Add a decision entry (or extend an existing §8 row) documenting:
 6. `DECISIONS.md` update in §8
 7. All existing CI gates still green: `uv run ruff check .` / `mypy src` / `pytest`
    (the new YAML files don't affect Python linting, but pre-commit + ruff format must pass)
+
+## Before committing
+
+Run **codex review** in a loop until no critical findings remain:
+
+```sh
+git add <changed files>
+codex review "<focused prompt: list changed files; flag only crash risks, logic errors,
+  missing error handling, security issues in the CI/CD config; skip style/naming>"
+# fix findings → re-run gates → re-stage → repeat
+```
+
+Note: `--uncommitted` conflicts with a positional prompt; stage first.
