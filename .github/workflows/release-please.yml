@@ -20,10 +20,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # Renovate (renovate.json pinDigests:true) will pin this to a SHA on first run.
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           # "python" release type: bumps `version = "..."` in pyproject.toml
           # and populates CHANGELOG.md from Conventional Commits.
           release-type: python
-          package-name: spacelabel
