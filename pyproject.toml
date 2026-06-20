@@ -142,8 +142,30 @@ module = [
   "CoreFoundation.*",
   "PyObjCTools",
   "PyObjCTools.*",
+  "OSLog",       # optional os_log mirror; not a project dependency (feature-detected)
+  "OSLog.*",
 ]
 ignore_missing_imports = true
+
+# AppKit-glue modules subclass Objective-C base classes (NSObject/NSPanel/NSView)
+# and use PyObjC's `objc.python_method` decorator + bridged objects, none of which
+# carry type stubs. mypy --strict's structural checks are noise on this glue, so we
+# scope-relax them HERE ONLY; all pure logic (model, labeling, geometry, store, cgs
+# parser, displays, spaces_plist, install, cli, logging) stays fully strict.
+[[tool.mypy.overrides]]
+module = [
+  "spacelabel.agent.app",
+  "spacelabel.agent.menubar",
+  "spacelabel.agent.hud",
+  "spacelabel.agent.overlay",
+  "spacelabel.agent.wallpaper",
+  "spacelabel.agent.prefs",
+  "spacelabel.platform.notifications",
+]
+disallow_subclassing_any = false      # subclassing NSObject/NSPanel/NSView (typed Any)
+disallow_untyped_decorators = false   # @objc.python_method is untyped
+warn_return_any = false               # PyObjC calls return Any
+disable_error_code = ["attr-defined"] # attribute access on bridged Any/object PyObjC values
 
 # ---------------------------------------------------------------------------
 # pytest
