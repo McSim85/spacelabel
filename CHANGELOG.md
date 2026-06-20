@@ -1,0 +1,18 @@
+# Changelog
+
+## 0.1.0 (2026-06-20)
+
+
+### Features
+
+* **click-to-switch:** opt-in pill-click Space switching via CGEventPost ([#4](https://github.com/McSim85/spacelabel/issues/4)) ([00e92dc](https://github.com/McSim85/spacelabel/commit/00e92dceb940f08b8b5b4a50111fde3f57947359))
+* **phase-4:** implement modules, tests, and docs ([#3](https://github.com/McSim85/spacelabel/issues/3)) ([e4b9093](https://github.com/McSim85/spacelabel/commit/e4b9093a5cfe64f6aaac26a442cf029a844686a1))
+
+
+### Documentation
+
+* **decisions:** note pre-commit installed; defer branch protection + Discussions to go-public ([b4650ea](https://github.com/McSim85/spacelabel/commit/b4650ea23b29119852e11f572e22238fe7e11ad1))
+* **decisions:** record Phase 2 layout/packaging decisions and hand-off ([009f176](https://github.com/McSim85/spacelabel/commit/009f1767c332c988a4941f14eaebcf1ca6dd8048))
+* **phase-3:** CLI & UI specs + mockup ([39d8da4](https://github.com/McSim85/spacelabel/commit/39d8da445e66c8a5ccf83d6c923a98c28ae53dc9))
+* **phase-3:** CLI & UI specs + mockup; configurable HUD position ([5dd2d24](https://github.com/McSim85/spacelabel/commit/5dd2d2400ce0ec43696a41269ed8253889ed5d8c))
+* **phase-7:** add repo CLAUDE.md standing brief ([#2](https://github.com/McSim85/spacelabel/issues/2)) ([3e4875c](https://github.com/McSim85/spacelabel/commit/3e4875cf0b1e6f99214d55a826c44dab97a362f4))
