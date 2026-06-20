@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Renovate (renovate.json pinDigests:true) will pin this to a SHA on first run.
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           # "python" release type: bumps `version = "..."` in pyproject.toml
           # and populates CHANGELOG.md from Conventional Commits.
