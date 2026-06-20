@@ -13,8 +13,7 @@
     {
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
-      "pinDigests": true,
-      "description": "Pin GHA steps to exact commit SHAs (supply-chain safety)"
+      "description": "Bump GHA steps to latest version tags"
     },
     {
       "matchManagers": ["pre-commit"],
