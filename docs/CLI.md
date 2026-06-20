@@ -39,9 +39,10 @@ The two design invariants that make the CLI scriptable:
 
 ## 2. Global options
 
-These attach to the root group and apply to every subcommand. They must appear
-**before** the subcommand (`spacelabel --debug spaces`, not
-`spacelabel spaces --debug`).
+These attach to the root group and apply to every subcommand. `--verbose` and
+`--debug` work in **either** position — before *or* after the subcommand
+(`spacelabel --debug spaces` and `spacelabel spaces --debug` are equivalent).
+`--config` and `--version` must appear **before** the subcommand.
 
 | Option | Type | Default | Effect |
 |---|---|---|---|
@@ -101,6 +102,12 @@ real `$HOME` substituted into the absolute paths, creates
 `launchctl bootstrap gui/$UID` (DESIGN §9.2). `uninstall` runs
 `launchctl bootout …` and removes the plist.
 
+- **Requires the pipx install.** The login agent must point at the durable
+  `~/.local/bin/spacelabel` shim (launchd has no shell `$PATH`), so `install`
+  **refuses** (exit 1) unless that canonical shim exists — run
+  `pipx install spacelabel` first. It will never write a transient venv/dev-shell
+  path into the plist.
+
 - **`--no-load` (proposed):** write/refresh the plist but don't load it now
   (load happens at next login). Useful in dotfiles bootstrap.
 - `uninstall` never deletes `labels.json`/`config.json`; the `--keep-labels`
@@ -136,26 +143,33 @@ Reports whether the menu-bar agent / LaunchAgent is currently running.
 spacelabel spaces [--json] [--all-displays/--active-display]   (flags: proposed)
 ```
 
-Reads the live Space topology via the CGS path (DESIGN §3) and prints every
-labelable Space across all displays, marking the active one. **Data → stdout.**
+Reads the live Space topology via the CGS path (DESIGN §3) and prints the Spaces
+across all displays, marking each display's current one. **Data → stdout.**
 
-- **Default output** is one record per line, **tab-separated**, stable column
-  order, no decorative borders — parseable with `cut`/`awk`:
+- **Default output** is a **space-aligned table** (header on stdout), stable
+  column order, no decorative borders:
 
   ```text
-  CURRENT  DISPLAY                          SPACE_UUID                            LABEL
-  *        LG UltraFine (874A623F...)       6622AC87-2FD2-48E8-934D-F6EB303AC9BA  Email
-           LG UltraFine (874A623F...)       1A0F5C2E-...                          Code
-           DELL 4K (6FBB92D9...)            9C44E7B1-...                          (unlabeled)
+  CURRENT  DISPLAY           SPACE_UUID                            LABEL
+  *        LG UltraFine (1)  6622AC87-2FD2-48E8-934D-F6EB303AC9BA  Email
+           LG UltraFine (1)  1A0F5C2E-...                          Code
+  *        DELL 4K (2)       (none)                                (no UUID)
   ```
 
-  The header line is printed to stderr (not stdout) so a pipe stays pure data;
-  pass `--json` for a self-describing structure instead.
-- **`--json` (proposed):** array of objects
-  `[{"uuid","display_uuid","display_name","label":null,"current":true}, …]`.
-- **`--active-display` (proposed):** restrict to the menu-bar-owning display.
-- Special/fullscreen Spaces (`type != 0`, `TileLayoutManager`, empty `uuid`) are
-  **excluded** (DESIGN §3.4).
+  The columns are padded for readability, so this is **not** cleanly
+  `cut`/`awk`-parseable — pass **`--json`** for a self-describing structure that
+  scripts can consume.
+- **`--json`:** array of objects
+  `[{"uuid","display_uuid","display_name","label","current","labelable"}, …]`
+  (`uuid` is `null` and `labelable` is `false` for a Space with no assigned UUID).
+- **`--active-display`:** restrict to the menu-bar-owning display.
+- Special/fullscreen Spaces (`type != 0`, `TileLayoutManager`) are **excluded**.
+  An ordinary Space that macOS has **not yet assigned a UUID** (a display's single
+  default Space — empty `uuid`, often a `wsid` key) is **surfaced** as `(none)` /
+  `(no UUID)` so the display is visible, but it **cannot be labeled** until macOS
+  assigns a UUID (e.g. after you add a Space on that display). With separate Spaces
+  per display, each display marks its own current Space (so more than one `*` row
+  is normal). (DESIGN §3.4, DECISIONS §9.2 revised)
 - **Exit:** `0` on success; `1` if the CGS path **and** the plist fallback both
   fail (logged via the no-silent-except policy, DESIGN §8.2).
 
@@ -197,8 +211,9 @@ spacelabel label prune [--dry-run]                    (--dry-run: proposed)
   spacelabel label set current "Email"
   spacelabel label set 6622AC87-2FD2-48E8-934D-F6EB303AC9BA "Code review"
   ```
-- **`label list`** — print all stored labels. **Data → stdout**, default
-  tab-separated `UUID<TAB>LABEL` (optional `last_display` column under `--json`).
+- **`label list`** — print all stored labels. **Data → stdout** as a
+  space-aligned `SPACE_UUID` / `LABEL` table (header on stdout); pass `--json` for
+  a structured array (with `color`/`last_display`) that scripts can parse.
   This reads only `labels.json`, so it works even if the CGS path is unavailable.
 - **`label clear`** — remove one label. **Idempotent:** clearing a UUID with no
   stored label prints an informational note to **stderr** and still exits `0`,
@@ -239,6 +254,28 @@ spacelabel config set hud.position top-left
 - A running agent reloads on write (file-watch). **Exit:** `0` success;
   `1` unknown key or invalid value; `2` missing arguments.
 
+### 3.8 `display` — name displays
+
+```text
+spacelabel display set   {<uuid>|current} <name>
+spacelabel display list  [--json]
+spacelabel display clear {<uuid>|current}
+```
+
+Assign a custom name to a **display** (keyed by its stable display UUID, stored in
+`displays.json`). The custom name is shown in the menu's per-display headers, the
+Preferences display rows, and the `spaces` DISPLAY column; clearing reverts to the
+system name. `current` resolves to the active (menu-bar-owning) display.
+
+- **`display list`** — connected displays with UUID, resolved name, and source
+  (`system`/`custom`), marking the active one; `--json` →
+  `[{"uuid","name","custom","active"}, …]`. Falls back to stored names when the
+  live display topology is unavailable.
+- **Exit:** `0` success; `1` if `current` can't be resolved or a write fails;
+  `2` empty name / missing arguments.
+
+> Find a display's UUID with `spacelabel display list` (or use `current`).
+
 ---
 
 ## 4. Exit codes (whole-CLI contract)
@@ -264,12 +301,19 @@ Notes:
 
 | Channel | Carries | Examples |
 |---|---|---|
-| **stdout** | Machine-readable results only | `spaces`, `label list`, `config get`, `status` line / `--json` payloads, `--version` |
-| **stderr** | Everything else: log lines (all levels), warnings, errors, progress, table headers, the experimental-wallpaper caveat, idempotent-clear notes | `Error: …`, `INFO: reloaded config`, `WARNING: wallpaper mode is experimental` |
+| **stdout** | Command results: the aligned text table (incl. its header) or the `--json` payload; `config get`/`status` lines; `--version` | `spaces`, `label list`, `config get`, `status` |
+| **stderr** | Everything else: log lines (all levels), warnings, errors, progress, the experimental-wallpaper caveat, idempotent-clear notes | `Error: …`, `INFO: reloaded config`, `WARNING: wallpaper mode is experimental` |
 
-Consequence: any command's stdout can be redirected/piped and parsed without
-filtering log noise, at any `--verbose`/`--debug` level. `--json` variants exist
-specifically so consumers never have to parse human formatting.
+Consequence: stdout is free of **log noise** at any `--verbose`/`--debug` level, so
+diagnostics never corrupt a redirect. The default text tables are **aligned for
+humans, not for `cut`/`awk`** — **`--json`** is the machine-readable channel and
+exists on `spaces`/`label list`/`status`/`config get` specifically so consumers
+never parse the padded human formatting.
+
+**Color:** output is colorized **only on an interactive terminal** — a bold table
+header and a green current row on stdout, level-colored log lines on stderr. When
+stdout/stderr is piped or redirected (or `NO_COLOR` is set) all ANSI is stripped,
+so redirected output is plain text.
 
 ---
 

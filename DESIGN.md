@@ -290,12 +290,21 @@ Same non-activating, click-through, all-Spaces config as the HUD, but `level = N
   "modes": { "menubar": true, "hud": true, "overlay": false, "wallpaper": false },
   "menubar":  { "max_length": 24 },
   "hud":      { "duration_ms": 1100, "font_size": 42 },
-  "overlay":  { "corner": "top-right", "margin": 12, "font_size": 15 },
-  "wallpaper":{ "enabled_experimental": false },
+  "overlay":  { "corner": "top-right", "margin": 12, "font_size": 15, "bold": true },
+  "wallpaper":{ "position": "center" },
   "debounce_ms": 200,
   "log_level": "WARNING"
 }
 ```
+
+> Phase-4 updates: wallpaper is toggled solely by `modes.wallpaper` (uniform with
+> the other modes); the confusing `wallpaper.enabled_experimental` key was removed
+> and the `wallpaper` block now holds only the label `position` (one of the nine
+> anchors), composited onto the **real** desktop image (never a blank background,
+> never modifying the original file) and written to a purged cache. `overlay.bold`
+> draws the corner label (its title) in the bold system font. Wallpaper stays
+> cosmetic/best-effort (§6.4); the experimental framing is surfaced via the CLI
+> caveat and menu/prefs labels. (DECISIONS "Second/third review round".)
 
 ### 7.3 Persistence mechanics
 - **Atomic writes:** write to a sibling temp file in the same directory, `flush`+`os.fsync`, then `os.replace(tmp, target)` (atomic on the same filesystem). Readers therefore never observe a partial file.

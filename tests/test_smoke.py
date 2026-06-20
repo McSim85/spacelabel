@@ -33,8 +33,16 @@ def test_cli_version_matches() -> None:
     assert spacelabel.__version__ in result.output
 
 
-def test_unimplemented_command_errors_cleanly() -> None:
-    result = CliRunner().invoke(cli, ["spaces"])
-    # A clean ClickException (exit 1), not a traceback.
-    assert result.exit_code == 1
-    assert "not implemented" in result.output.lower()
+def test_cli_exposes_the_locked_command_tree() -> None:
+    # The command surface is locked (docs/CLI.md); --help must list every command.
+    result = CliRunner().invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    for command in ("agent", "install", "uninstall", "status", "spaces", "mode", "label", "config"):
+        assert command in result.output
+
+
+def test_label_group_lists_subcommands() -> None:
+    result = CliRunner().invoke(cli, ["label", "--help"])
+    assert result.exit_code == 0
+    for sub in ("set", "list", "clear", "prune"):
+        assert sub in result.output

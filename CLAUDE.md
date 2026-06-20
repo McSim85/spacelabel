@@ -29,18 +29,20 @@ authoritative design.
 src/spacelabel/
   cli.py              # click group + main(); dispatches subcommands (heavy imports stay lazy)
   logging_setup.py    # setup_logging(mode=...) — the ONE place handlers are attached
-  model.py            # dataclasses: Space, Display, Label, Config
-  store.py            # labels.json + config.json: atomic read/modify/write, watch/reload
-  install.py          # LaunchAgent plist install/uninstall via launchctl
+  model.py            # dataclasses: Space, Display, Label, Config (+ Menubar/Hud/Overlay/WallpaperConfig)
+  labeling.py         # PURE: title_for / pill_text / assign_ordinals / find_orphans (no I/O, no PyObjC)
+  store.py            # StorePaths + labels.json/config.json: atomic flock read-modify-write, prune, config schema
+  install.py          # LaunchAgent plist (built in code) install/uninstall/status via launchctl
   platform/
-    cgs.py            # CGS read path (connection, spaces, current-space, active display)
-    displays.py       # NSScreen <-> CGS display-id mapping; topology discovery
-    spaces_plist.py   # com.apple.spaces.plist fallback parser (topology/UUID only)
+    cgs.py            # CGS read path + PURE parse_spaces (connection, spaces, current-space, active display)
+    displays.py       # NSScreen <-> CGS display-id mapping (CGDisplayCreateUUIDFromDisplayID via ColorSync); topology
+    spaces_plist.py   # com.apple.spaces.plist fallback parser (topology/UUID only; PURE parse_spaces_plist)
     notifications.py  # activeSpaceDidChange + didChangeScreenParameters + debounce
     oslog_handler.py  # OPTIONAL os_log mirror (feature-detected)
   agent/
-    app.py            # NSApplication accessory app + AppDelegate + run loop
-    menubar.py menubar item    hud.py transient HUD    overlay.py corner overlay
+    app.py            # NSApplication accessory app + AppDelegate + run loop (single-instance flock; 1s mtime-poll reload)
+    geometry.py       # PURE: HUD/overlay font math + the nine-anchor placement grid (DESIGN §9.9)
+    menubar.py menubar item    hud.py transient HUD    overlay.py corner overlay (one per display)
     wallpaper.py experimental render+set    prefs.py NSOutlineView prefs window
 ```
 
@@ -58,6 +60,14 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   `CGS`-name-then-`SLS`-name; on miss raise the logged **`CGSUnavailableError`** and
   fall back to the spaces-plist parser. Never `CFRelease` a `Copy` result that
   PyObjC already owns (`already_retained`).
+- **Display UUID comes from `CGDisplayCreateUUIDFromDisplayID`, bound from
+  ColorSync — NOT Quartz/CoreGraphics** (Phase-4 finding, DECISIONS §3.6). On Tahoe
+  PyObjC's `Quartz` does not expose it and CoreGraphics does not export it; it lives
+  in `ColorSync.framework` (and ApplicationServices). `displays.display_uuid` binds
+  it via `objc.loadBundleFunctions` with `already_cfretained`. This CFUUID is the
+  join key across NSScreen ↔ the Spaces array ↔ the active-menubar display, so
+  `active_display_uuid()` normalizes the `"Main"` sentinel through the **same**
+  primary-UUID remap as `parse_spaces` (else the active-Space lookup misses).
 - **Notification-center footgun:** observe `activeSpaceDidChange` on the
   **workspace** notification center (`NSWorkspace.sharedWorkspace().notificationCenter()`),
   **not** the default center; the event carries no Space identity, so **re-read the
@@ -111,11 +121,14 @@ uv run spacelabel agent --debug    # run the agent in the foreground
 
 ## Testing reality
 
-Mocked unit tests run in CI. **Live CGS / Spaces / GUI behavior is local-only** —
-it cannot run on a CI runner (no window server, no real displays). The Phase-6
-read-only probe verifies the load-bearing empirical assumptions on hardware
-(uuid reboot-stability, flat RSS / CF ownership, the PyObjC↔CFArray bridge). See
-`DESIGN.md` §12.
+Mocked unit tests run in CI (the suite lives in `tests/`; pure logic sits behind
+functions that take plain data — `parse_spaces`, the config schema, the plist
+parser, the LaunchAgent builder, the CLI with live readers monkeypatched). **Live
+CGS / Spaces / GUI behavior is local-only** — it cannot run on a CI runner (no
+window server, no real displays). The Phase-6 read-only probe verifies the
+load-bearing empirical assumptions on hardware (uuid reboot-stability, flat RSS /
+CF ownership, the PyObjC↔CFArray bridge). See **[`docs/TESTING.md`](docs/TESTING.md)**
+for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
 
 ## Don'ts
 
