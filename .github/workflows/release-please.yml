@@ -30,4 +30,4 @@ jobs:
           # downstream workflow triggers (GitHub loop-prevention policy).
           # Create a fine-grained PAT with Contents + Pull Requests write,
           # add as repo secret RELEASE_PAT.
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ secrets.RELEASE_PAT || github.token }}
