@@ -108,6 +108,132 @@ def test_label_set_current_fails_when_no_active_space(runner, cfg, monkeypatch):
     assert "current" in r.stderr.lower()
 
 
+def test_label_list_omits_notes_only_entries(runner, cfg):
+    # A notes-only Space (no label) must not appear as a blank row in `label list`.
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "a"))
+    runner.invoke(cli, _base(cfg, "label", "set", U2, "Email"))
+    r = runner.invoke(cli, _base(cfg, "label", "list", "--json"))
+    assert [entry["uuid"] for entry in json.loads(r.stdout)] == [U2]
+
+
+# ---- note command group ----------------------------------------------------
+
+
+def test_note_add_list_done_json(runner, cfg):
+    assert runner.invoke(cli, _base(cfg, "note", "add", U1, "task A")).exit_code == 0
+    assert runner.invoke(cli, _base(cfg, "note", "add", U1, "task B")).exit_code == 0
+    assert runner.invoke(cli, _base(cfg, "note", "done", U1, "2")).exit_code == 0
+    r = runner.invoke(cli, _base(cfg, "note", "list", U1, "--json"))
+    assert r.exit_code == 0
+    assert json.loads(r.stdout) == [
+        {"index": 1, "text": "task A", "done": False},
+        {"index": 2, "text": "task B", "done": True},
+    ]
+
+
+def test_note_list_table_is_on_stdout(runner, cfg):
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "task A"))
+    r = runner.invoke(cli, _base(cfg, "note", "list", U1))
+    assert r.exit_code == 0
+    assert "TASK" in r.stdout and "task A" in r.stdout  # data on stdout
+
+
+def test_note_add_empty_text_is_usage_error(runner, cfg):
+    r = runner.invoke(cli, _base(cfg, "note", "add", U1, "   "))
+    assert r.exit_code == 2
+
+
+def test_note_undone(runner, cfg):
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "t"))
+    runner.invoke(cli, _base(cfg, "note", "done", U1, "1"))
+    assert runner.invoke(cli, _base(cfg, "note", "undone", U1, "1")).exit_code == 0
+    r = runner.invoke(cli, _base(cfg, "note", "list", U1, "--json"))
+    assert json.loads(r.stdout)[0]["done"] is False
+
+
+def test_note_bad_index_is_usage_error(runner, cfg):
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "t"))
+    assert runner.invoke(cli, _base(cfg, "note", "done", U1, "9")).exit_code == 2
+    assert runner.invoke(cli, _base(cfg, "note", "clear", U1, "9")).exit_code == 2
+
+
+def test_note_op_on_empty_queue_is_usage_error(runner, cfg):
+    # Any index against an empty queue is a usage error (exit 2), not a crash.
+    assert runner.invoke(cli, _base(cfg, "note", "done", U1, "1")).exit_code == 2
+
+
+def test_note_clear_one_and_all(runner, cfg):
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "a"))
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "b"))
+    assert runner.invoke(cli, _base(cfg, "note", "clear", U1, "1")).exit_code == 0
+    r = runner.invoke(cli, _base(cfg, "note", "list", U1, "--json"))
+    assert [n["text"] for n in json.loads(r.stdout)] == ["b"]
+    assert runner.invoke(cli, _base(cfg, "note", "clear", U1)).exit_code == 0
+    r = runner.invoke(cli, _base(cfg, "note", "list", U1, "--json"))
+    assert json.loads(r.stdout) == []
+
+
+def test_note_clear_empty_is_idempotent(runner, cfg):
+    # Clearing all on a Space with no tasks is a no-op success (mirrors label clear).
+    assert runner.invoke(cli, _base(cfg, "note", "clear", U1)).exit_code == 0
+
+
+def test_note_add_current_uses_live_read(runner, cfg, monkeypatch):
+    monkeypatch.setattr("spacelabel.platform.cgs.read_active_space_uuid", lambda: U2)
+    monkeypatch.setattr("spacelabel.platform.cgs.active_display_uuid", lambda: DISP_A)
+    assert runner.invoke(cli, _base(cfg, "note", "add", "current", "task")).exit_code == 0
+    r = runner.invoke(cli, _base(cfg, "note", "list", U2, "--json"))
+    assert [n["text"] for n in json.loads(r.stdout)] == ["task"]
+
+
+def test_note_add_rejects_non_uuid_target(runner, cfg):
+    # A transposed TARGET/TEXT (`note add list current`) must be a usage error (exit 2),
+    # not a silent entry on a Space "list" that can't exist.
+    r = runner.invoke(cli, _base(cfg, "note", "add", "list", "current"))
+    assert r.exit_code == 2
+    assert "not a Space UUID" in r.stderr
+    # ...and nothing was written.
+    assert runner.invoke(cli, _base(cfg, "note", "list", U1, "--json")).stdout.strip() == "[]"
+
+
+def test_label_set_rejects_non_uuid_target(runner, cfg):
+    # Same guard on the label group (shared target resolver).
+    r = runner.invoke(cli, _base(cfg, "label", "set", "notauuid", "Email"))
+    assert r.exit_code == 2
+
+
+def test_clear_can_remove_legacy_non_uuid_key(runner, cfg):
+    # The create guard (set/add) must NOT block clearing a PRE-EXISTING non-UUID key
+    # (a legacy typo/orphan); otherwise such entries become un-removable (codex review).
+    from pathlib import Path
+
+    (Path(cfg).parent / "labels.json").write_text(
+        json.dumps(
+            {"schema_version": 1, "labels": {"list": {"notes": [{"text": "x", "done": False}]}}}
+        ),
+        encoding="utf-8",
+    )
+    # inspect + remove the legacy key from the CLI
+    listed = runner.invoke(cli, _base(cfg, "note", "list", "list", "--json"))
+    assert [n["text"] for n in json.loads(listed.stdout)] == ["x"]
+    assert runner.invoke(cli, _base(cfg, "note", "clear", "list")).exit_code == 0
+    emptied = runner.invoke(cli, _base(cfg, "note", "list", "list", "--json"))
+    assert json.loads(emptied.stdout) == []
+    # ...but creating a NEW non-UUID entry is still rejected (exit 2)
+    assert runner.invoke(cli, _base(cfg, "note", "add", "list", "x")).exit_code == 2
+
+
+def test_note_list_no_target_enumerates_all_queues(runner, cfg):
+    # `note list` with no target lists every note-bearing entry, so a notes-only queue
+    # stays discoverable/recoverable even when its Space isn't live (codex review).
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "a"))
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "b"))
+    runner.invoke(cli, _base(cfg, "label", "set", U2, "Email"))  # labeled, no notes -> excluded
+    r = runner.invoke(cli, _base(cfg, "note", "list", "--json"))
+    assert r.exit_code == 0
+    assert json.loads(r.stdout) == [{"uuid": U1, "notes": 2}]
+
+
 # ---- config get / set ------------------------------------------------------
 
 
@@ -240,6 +366,23 @@ def test_spaces_json(runner, cfg, monkeypatch):
     assert len(data) == 2
     assert data[0]["current"] is True
     assert data[0]["display_name"] == "LG UltraFine"
+
+
+def test_spaces_reports_notes_only_space_as_unlabeled(runner, cfg, monkeypatch):
+    # `note add` on an unlabeled Space creates a notes-only entry (Label.text == "");
+    # `spaces` must still report it as UNLABELED, not as a blank label (DECISIONS 9.10).
+    monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", _fake_spaces)
+    monkeypatch.setattr("spacelabel.platform.displays.discover_topology", _fake_topology)
+    runner.invoke(cli, _base(cfg, "note", "add", U1, "a task"))
+    data = json.loads(runner.invoke(cli, _base(cfg, "spaces", "--json")).stdout)
+    u1 = next(d for d in data if d["uuid"] == U1)
+    assert u1["label"] is None  # notes-only -> null, NOT ""
+    assert u1["labelable"] is True
+    assert u1["notes"] == 1  # but the task queue is still discoverable here
+    # the table shows "(unlabeled)" + a NOTES column, never a blank LABEL cell
+    table = runner.invoke(cli, _base(cfg, "spaces")).stdout
+    assert "(unlabeled)" in table
+    assert "NOTES" in table
 
 
 def test_spaces_active_display_filter(runner, cfg, monkeypatch):
@@ -426,17 +569,17 @@ def test_status_json(runner, monkeypatch):
 
 def test_label_prune_dry_run_changes_nothing(runner, cfg, monkeypatch):
     runner.invoke(cli, _base(cfg, "label", "set", U1, "live"))
-    runner.invoke(cli, _base(cfg, "label", "set", "ORPHAN-UUID", "gone"))
+    runner.invoke(cli, _base(cfg, "label", "set", U2, "gone"))  # U2 not live -> orphan
     monkeypatch.setattr(
         "spacelabel.platform.cgs.enumerate_spaces",
         lambda **_kw: [Space(uuid=U1, display_uuid=DISP_A, is_current=True)],
     )
     r = runner.invoke(cli, _base(cfg, "label", "prune", "--dry-run"))
     assert r.exit_code == 0
-    assert "ORPHAN-UUID" in r.stdout
+    assert U2 in r.stdout
     # nothing removed
     r = runner.invoke(cli, _base(cfg, "label", "list"))
-    assert "ORPHAN-UUID" in r.stdout
+    assert U2 in r.stdout
 
 
 def test_label_prune_refuses_on_empty_live_read(runner, cfg, monkeypatch):
@@ -457,14 +600,14 @@ def test_label_prune_refuses_on_empty_live_read(runner, cfg, monkeypatch):
 
 def test_label_prune_removes_orphans(runner, cfg, monkeypatch):
     runner.invoke(cli, _base(cfg, "label", "set", U1, "live"))
-    runner.invoke(cli, _base(cfg, "label", "set", "ORPHAN-UUID", "gone"))
+    runner.invoke(cli, _base(cfg, "label", "set", U2, "gone"))  # U2 not live -> orphan
     monkeypatch.setattr(
         "spacelabel.platform.cgs.enumerate_spaces",
         lambda **_kw: [Space(uuid=U1, display_uuid=DISP_A, is_current=True)],
     )
     r = runner.invoke(cli, _base(cfg, "label", "prune"))
     assert r.exit_code == 0
-    assert "ORPHAN-UUID" in r.stdout
+    assert U2 in r.stdout
     r = runner.invoke(cli, _base(cfg, "label", "list"))
-    assert "ORPHAN-UUID" not in r.stdout
+    assert U2 not in r.stdout
     assert U1 in r.stdout

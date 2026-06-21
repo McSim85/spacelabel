@@ -10,9 +10,34 @@ from spacelabel.agent.geometry import (
     clamp,
     hud_font_size,
     overlay_font_size,
+    overlay_max_content_extent,
+    overlay_note_font_size,
     parse_anchor,
     short_side,
 )
+
+
+def test_overlay_note_font_size():
+    # "auto" sits a step (2pt) below the title with a 9pt floor; an int is verbatim.
+    assert overlay_note_font_size(15, "auto") == 13
+    assert overlay_note_font_size(10, "auto") == 9  # floor (10-2=8 -> 9)
+    assert overlay_note_font_size(9, "auto") == 9
+    assert overlay_note_font_size(20, 16) == 16
+
+
+def test_overlay_max_content_extent():
+    # content = available - 2*margin - 2*pad, so the panel (content + 2*pad) is inset
+    # by the margin on both sides and never exceeds the screen for ANY anchor.
+    assert overlay_max_content_extent(1000.0, 12.0, 14.0) == 1000.0 - 24.0 - 28.0
+    assert overlay_max_content_extent(200.0, 12.0, 14.0) == 200.0 - 24.0 - 28.0
+    # Degenerate (narrower than margins+padding): clamped to 0, never negative.
+    assert overlay_max_content_extent(30.0, 12.0, 14.0) == 0.0
+    # Invariant: an edge anchor subtracts one margin from the panel position, so the
+    # padded panel must fit within (available - margin) on every real display.
+    margin, pad = 12.0, 14.0
+    for available in (320.0, 768.0, 1080.0, 1920.0):
+        content = overlay_max_content_extent(available, margin, pad)
+        assert content + 2 * pad <= available - margin
 
 
 def test_clamp_bounds():

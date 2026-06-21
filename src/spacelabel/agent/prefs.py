@@ -330,15 +330,18 @@ class PrefsDataSource(NSObject):
         """
         well = _LabelColorWell.alloc().initWithFrame_(NSMakeRect(0.0, 0.0, 44.0, 18.0))
         label = self._labels.get(space.uuid)
-        color = label.color if label is not None else None
+        # A notes-only entry (Label.text == "") is unlabeled — color is a per-label
+        # attribute (DECISIONS 9.8/9.10), so treat empty text the same as no entry.
+        is_labeled = label is not None and bool(label.text)
+        color = label.color if (label is not None and is_labeled) else None
         parsed = _color_from_hex(color) if color else None
         well.setColor_(parsed if parsed is not None else NSColor.controlBackgroundColor())
-        if label is not None:
+        if is_labeled:
             well.set_space_uuid(space.uuid)
             well.setTarget_(self)
             well.setAction_("colorChanged:")
         else:
-            # Unlabeled: no label to attach a color to -> disabled (label it first).
+            # Unlabeled (incl. notes-only): no label to attach a color to -> disabled.
             well.setEnabled_(False)
         return well
 

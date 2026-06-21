@@ -32,6 +32,7 @@ from spacelabel.model import (
     HudConfig,
     Label,
     MenubarConfig,
+    Note,
     OverlayConfig,
     WallpaperConfig,
     default_modes,
@@ -42,9 +43,12 @@ __all__ = [
     "SCHEMA_VERSION",
     "ConfigKeyError",
     "ConfigValueError",
+    "NoteIndexError",
     "StoreError",
     "StorePaths",
+    "add_note",
     "clear_label",
+    "clear_note",
     "config_from_dict",
     "config_path",
     "config_to_dict",
@@ -60,6 +64,7 @@ __all__ = [
     "set_config_value",
     "set_display_label",
     "set_label",
+    "set_note_done",
 ]
 
 log = logging.getLogger(__name__)
@@ -181,6 +186,25 @@ class ConfigKeyError(StoreError):
 
 class ConfigValueError(StoreError):
     """A config value failed type/enum/range validation (CLI maps this to exit 1)."""
+
+
+class NoteIndexError(StoreError):
+    """A note index was out of range, or the Space has no notes (CLI maps to exit 2).
+
+    Carries ``count`` (the number of stored notes at the time of the locked check)
+    so the CLI can render a precise 1-based range in its usage error without an
+    unlocked pre-read that could race a concurrent writer or misread a corrupt file.
+    """
+
+    def __init__(self, count: int) -> None:
+        """Store ``count`` (notes present) and build the human-facing range message."""
+        self.count = count
+        message = (
+            "this Space has no tasks"
+            if count == 0
+            else f"task index out of range (expected 1..{count})"
+        )
+        super().__init__(message)
 
 
 # --------------------------------------------------------------------------- #
@@ -314,19 +338,56 @@ def _guard_before_rewrite(path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _label_from_entry(uuid: str, entry: object) -> Label | None:
-    """Build a :class:`Label` from one ``labels.json`` entry, or ``None`` if bad.
+def _notes_from_entry(uuid: str, raw: object) -> list[Note]:
+    """Parse the optional ``notes`` array of one ``labels.json`` entry (tolerant).
 
-    The on-disk key is ``label`` (DESIGN.md §7.1); ``color``/``last_display`` and
-    the timestamps are optional and forward-compatible. A non-dict entry or a
-    missing/empty ``label`` text is skipped (logged), never crashes the load.
+    Each item is a ``{text, done}`` object (DECISIONS.md 9.10). A non-list value or
+    a malformed item (non-object, missing/empty ``text``) is logged and skipped so a
+    hand-edited file never crashes the load; ``done`` defaults to ``False`` when
+    absent or non-bool. Order is preserved (the queue order).
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        log.warning("ignoring non-list 'notes' for %s", uuid)
+        return []
+    notes: list[Note] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            log.warning("skipping note for %s: not an object", uuid)
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text:
+            log.warning("skipping note for %s: missing/invalid 'text'", uuid)
+            continue
+        done = item.get("done")
+        notes.append(Note(text=text, done=done if isinstance(done, bool) else False))
+    return notes
+
+
+def _label_from_entry(uuid: str, entry: object) -> Label | None:
+    """Build a :class:`Label` from one ``labels.json`` entry, or ``None`` if empty.
+
+    The on-disk key is ``label`` (DESIGN.md §7.1); ``color``/``last_display``, the
+    timestamps and ``notes`` are optional and forward-compatible. A non-dict entry
+    is skipped (logged). A **notes-only** entry (empty/absent ``label`` but with at
+    least one note) is valid — a task list on an unlabeled Space (DECISIONS.md 9.10);
+    surfaces fall back to ``Desktop N``. An entry with neither a label nor any note
+    carries nothing and is skipped, never crashing the load.
     """
     if not isinstance(entry, Mapping):
         log.warning("skipping label entry for %s: not an object", uuid)
         return None
-    text = entry.get("label")
-    if not isinstance(text, str) or not text:
-        log.warning("skipping label entry for %s: missing/invalid 'label'", uuid)
+    raw_text = entry.get("label")
+    text = raw_text if isinstance(raw_text, str) else ""
+    notes = _notes_from_entry(uuid, entry.get("notes"))
+    if not text and not notes:
+        # Recover-don't-crash (DESIGN §8.2): an entry that yields neither a usable
+        # label nor any usable note carries nothing renderable, so it is skipped
+        # (logged), exactly as a malformed `label` is. Valid notes are always kept
+        # (see _notes_from_entry — only individually-unusable items are dropped),
+        # so this never discards a recoverable task list, only unparseable data.
+        log.warning("skipping entry for %s: no usable 'label' text and no usable 'notes'", uuid)
         return None
     return Label(
         text=text,
@@ -334,6 +395,7 @@ def _label_from_entry(uuid: str, entry: object) -> Label | None:
         last_display=_opt_str(entry.get("last_display")),
         created_at=_opt_str(entry.get("created_at")),
         updated_at=_opt_str(entry.get("updated_at")),
+        notes=notes,
     )
 
 
@@ -384,12 +446,15 @@ def load_labels(paths: StorePaths) -> dict[str, Label]:
 def _labels_to_payload(labels: Mapping[str, Label]) -> dict[str, object]:
     """Serialize the in-memory label map to the ``labels.json`` payload shape.
 
-    Optional fields (``color``/``last_display``/timestamps) are omitted when
-    ``None`` so the file stays minimal (DESIGN.md §7.1).
+    Optional fields (``color``/``last_display``/timestamps/``notes``) are omitted
+    when empty so the file stays minimal (DESIGN.md §7.1). ``label`` itself is
+    omitted when the text is empty (a notes-only entry, DECISIONS.md 9.10).
     """
     entries: dict[str, object] = {}
     for uuid, label in labels.items():
-        entry: dict[str, object] = {"label": label.text}
+        entry: dict[str, object] = {}
+        if label.text:
+            entry["label"] = label.text
         if label.color is not None:
             entry["color"] = label.color
         if label.last_display is not None:
@@ -398,6 +463,8 @@ def _labels_to_payload(labels: Mapping[str, Label]) -> dict[str, object]:
             entry["created_at"] = label.created_at
         if label.updated_at is not None:
             entry["updated_at"] = label.updated_at
+        if label.notes:
+            entry["notes"] = [{"text": note.text, "done": note.done} for note in label.notes]
         entries[uuid] = entry
     return {"schema_version": SCHEMA_VERSION, "labels": entries}
 
@@ -439,41 +506,170 @@ def set_label(
             last_display=new_last_display,
             created_at=created_at,
             updated_at=now,
+            notes=existing.notes if existing is not None else [],
         )
         labels[uuid] = label
         _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
     return label
 
 
-def clear_label(paths: StorePaths, uuid: str) -> bool:
-    """Remove the label for ``uuid`` via locked RMW; return ``True`` if it existed."""
+def clear_label(paths: StorePaths, uuid: str, *, timestamp: str | None = None) -> bool:
+    """Clear the label text for ``uuid`` via locked RMW; return ``True`` if one existed.
+
+    If the Space also has notes, the entry is **kept** as a notes-only entry — the
+    task queue must survive clearing the label (DECISIONS.md 9.10), so a `label clear`
+    never silently discards a task list; the entry is removed entirely when it has no
+    notes. On demotion the label-only attributes are dropped — ``color`` is cleared
+    (it is per-label, 9.8, and a notes-only Space is unlabeled everywhere else, so a
+    later `label set` must not inherit a stale color) and ``updated_at`` is refreshed.
+    Idempotent: returns ``False`` when there was no label text to clear.
+    """
     uuid = canonical_uuid(uuid)
     with _file_lock(paths.labels_lock):
         _guard_before_rewrite(paths.labels_file)
         labels = load_labels(paths)
-        if uuid not in labels:
+        existing = labels.get(uuid)
+        if existing is None or not existing.text:
             return False
-        del labels[uuid]
+        if existing.notes:
+            existing.text = ""  # demote to notes-only, keep the queue
+            existing.color = None  # color is a per-label tag; the entry is now unlabeled
+            existing.updated_at = _utcnow_iso(timestamp)
+        else:
+            del labels[uuid]
         _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
     return True
 
 
-def prune_labels(paths: StorePaths, live_uuids: set[str]) -> list[str]:
-    """Remove orphan labels (UUIDs absent from ``live_uuids``); return removed UUIDs.
+def prune_labels(
+    paths: StorePaths, live_uuids: set[str], *, timestamp: str | None = None
+) -> list[str]:
+    """Prune orphan **labels** (UUIDs absent from ``live_uuids``); return the pruned UUIDs.
 
-    Performs a locked read-modify-write and returns the removed UUIDs in store
-    order (DECISIONS.md 5.6 -- retain by default, explicit prune for removal).
+    Locked read-modify-write (DECISIONS.md 5.6 -- retain by default, explicit prune
+    for removal). ``label prune`` removes *labels*, not *notes*: an orphan that still
+    carries a task queue is **demoted to a notes-only entry** (label text + color
+    dropped, ``updated_at`` bumped) rather than deleted, so a maintenance prune never
+    silently destroys a Space's tasks (DECISIONS.md 9.10); an orphan with no notes is
+    deleted entirely. A notes-only orphan (no label to prune) is left untouched and
+    not reported. Returns the orphan UUIDs whose label was pruned, in store order.
     """
     with _file_lock(paths.labels_lock):
         _guard_before_rewrite(paths.labels_file)
         labels = load_labels(paths)
         orphans = find_orphans(labels, live_uuids)
-        if not orphans:
-            return []
+        pruned: list[str] = []
         for uuid in orphans:
-            del labels[uuid]
+            entry = labels[uuid]
+            if not entry.text:
+                continue  # notes-only orphan: no label to prune, keep its tasks
+            if entry.notes:
+                entry.text = ""  # demote: drop the label, preserve the task queue
+                entry.color = None
+                entry.updated_at = _utcnow_iso(timestamp)
+            else:
+                del labels[uuid]
+            pruned.append(uuid)
+        if not pruned:
+            return []
         _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
-    return orphans
+    return pruned
+
+
+# --------------------------------------------------------------------------- #
+# Notes (per-Space task queue, stored on the label entry — DECISIONS.md 9.10)
+# --------------------------------------------------------------------------- #
+
+
+def add_note(paths: StorePaths, uuid: str, text: str, *, timestamp: str | None = None) -> Label:
+    """Append a task to ``uuid``'s note queue via locked RMW; return the stored Label.
+
+    Creates a notes-only entry when the Space has no label yet (DECISIONS.md 9.10).
+    The existing label text/color/``created_at`` are preserved and ``updated_at`` is
+    refreshed. The new task starts ``done=False``.
+    """
+    uuid = canonical_uuid(uuid)
+    now = _utcnow_iso(timestamp)
+    with _file_lock(paths.labels_lock):
+        _guard_before_rewrite(paths.labels_file)
+        labels = load_labels(paths)
+        existing = labels.get(uuid)
+        if existing is None:
+            existing = Label(text="", created_at=now, updated_at=now)
+            labels[uuid] = existing
+        existing.notes.append(Note(text=text))
+        existing.updated_at = now
+        if existing.created_at is None:
+            existing.created_at = now
+        _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
+    return existing
+
+
+def set_note_done(
+    paths: StorePaths, uuid: str, index: int, done: bool, *, timestamp: str | None = None
+) -> Note:
+    """Set the ``done`` state of note ``index`` (0-based) via locked RMW; return it.
+
+    The range check runs **inside the lock** against the authoritative on-disk count,
+    so a concurrent edit can't make a validated index stale and a corrupt store
+    surfaces as a write/read failure (``StoreError``), never a spurious bad-index.
+
+    Raises:
+        NoteIndexError: if ``uuid`` has no entry or ``index`` is out of range.
+    """
+    uuid = canonical_uuid(uuid)
+    now = _utcnow_iso(timestamp)
+    with _file_lock(paths.labels_lock):
+        _guard_before_rewrite(paths.labels_file)
+        labels = load_labels(paths)
+        existing = labels.get(uuid)
+        count = len(existing.notes) if existing is not None else 0
+        if existing is None or not 0 <= index < count:
+            raise NoteIndexError(count)
+        existing.notes[index].done = done
+        existing.updated_at = now
+        _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
+        return existing.notes[index]
+
+
+def clear_note(
+    paths: StorePaths, uuid: str, index: int | None = None, *, timestamp: str | None = None
+) -> int:
+    """Remove one note (0-based ``index``) or all notes (``index=None``); return the count.
+
+    Done via locked RMW. ``index=None`` (clear all) is **idempotent**: a missing
+    entry or empty queue removes nothing and returns ``0`` (no raise), so a concurrent
+    clear can't turn the command into an error. A specific ``index`` is validated
+    inside the lock. When the entry is left with neither a label nor any note it is
+    removed entirely (mirrors :func:`clear_label`); otherwise ``updated_at`` is bumped.
+
+    Raises:
+        NoteIndexError: if ``index`` is given and ``uuid`` has no entry / it is out of range.
+    """
+    uuid = canonical_uuid(uuid)
+    now = _utcnow_iso(timestamp)
+    with _file_lock(paths.labels_lock):
+        _guard_before_rewrite(paths.labels_file)
+        labels = load_labels(paths)
+        existing = labels.get(uuid)
+        if index is None:
+            if existing is None or not existing.notes:
+                return 0  # idempotent: nothing to clear
+            removed = len(existing.notes)
+            existing.notes = []
+        else:
+            count = len(existing.notes) if existing is not None else 0
+            if existing is None or not 0 <= index < count:
+                raise NoteIndexError(count)
+            del existing.notes[index]
+            removed = 1
+        # Both surviving paths leave `existing` as a real entry.
+        if not existing.text and not existing.notes:
+            del labels[uuid]  # nothing left to store
+        else:
+            existing.updated_at = now
+        _atomic_write_json(paths.labels_file, _labels_to_payload(labels))
+    return removed
 
 
 # --------------------------------------------------------------------------- #
@@ -739,6 +935,20 @@ def _build_config_schema() -> dict[str, ConfigField]:
         "bool",
     )
     add(
+        "overlay.show_notes",
+        lambda raw: _parse_bool("overlay.show_notes", raw),
+        lambda c: c.overlay.show_notes,
+        lambda c, v: setattr(c.overlay, "show_notes", v),
+        "bool",
+    )
+    add(
+        "overlay.note_font_size",
+        lambda raw: _parse_int_or_auto("overlay.note_font_size", raw, minimum=1),
+        lambda c: c.overlay.note_font_size,
+        lambda c, v: setattr(c.overlay, "note_font_size", v),
+        'int >= 1 or "auto"',
+    )
+    add(
         "wallpaper.position",
         lambda raw: _parse_anchor("wallpaper.position", raw),
         lambda c: c.wallpaper.position,
@@ -795,6 +1005,8 @@ def config_to_dict(config: Config) -> dict[str, object]:
             "margin": config.overlay.margin,
             "font_size": config.overlay.font_size,
             "bold": config.overlay.bold,
+            "show_notes": config.overlay.show_notes,
+            "note_font_size": config.overlay.note_font_size,
         },
         "wallpaper": {
             "position": config.wallpaper.position,
@@ -880,6 +1092,10 @@ def config_from_dict(data: Mapping[str, object]) -> Config:
         margin=_coerce_int(raw_overlay.get("margin"), defaults.overlay.margin),
         font_size=_coerce_int_or_auto(raw_overlay.get("font_size"), defaults.overlay.font_size),
         bold=_coerce_bool(raw_overlay.get("bold"), defaults.overlay.bold),
+        show_notes=_coerce_bool(raw_overlay.get("show_notes"), defaults.overlay.show_notes),
+        note_font_size=_coerce_int_or_auto(
+            raw_overlay.get("note_font_size"), defaults.overlay.note_font_size
+        ),
     )
 
     raw_wallpaper = _as_mapping(data.get("wallpaper"))
