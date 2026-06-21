@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/McSim85/spacelabel/compare/v0.1.1...v0.2.0) (2026-06-21)
+
+
+### Features
+
+* **notes:** add per-Space task queue ([#17](https://github.com/McSim85/spacelabel/issues/17)) ([21fe24c](https://github.com/McSim85/spacelabel/commit/21fe24ce0a0f00cb67dca495218118e33fa6d3de))
+
 ## [0.1.1](https://github.com/McSim85/spacelabel/compare/v0.1.0...v0.1.1) (2026-06-21)
 
 
