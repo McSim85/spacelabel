@@ -27,8 +27,8 @@ CGS-read and JSON-store layers, then exits.
 The two design invariants that make the CLI scriptable:
 
 1. **stdout is the data channel; stderr is the diagnostics channel.** Anything a
-   script should parse (`spaces`, `label list`, `config get`, `status --json`)
-   is written to **stdout** via `click.echo`. Every log line, warning, error,
+   script should parse (`spaces`, `label list`, `note list`, `config get`,
+   `status --json`) is written to **stdout** via `click.echo`. Every log line, warning, error,
    and progress message goes to **stderr** (or the agent log file). You can
    always do `spacelabel spaces > spaces.txt` and get clean data with no log
    noise mixed in.
@@ -150,18 +150,21 @@ across all displays, marking each display's current one. **Data → stdout.**
   column order, no decorative borders:
 
   ```text
-  CURRENT  DISPLAY           SPACE_UUID                            LABEL
-  *        LG UltraFine (1)  6622AC87-2FD2-48E8-934D-F6EB303AC9BA  Email
-           LG UltraFine (1)  1A0F5C2E-...                          Code
+  CURRENT  DISPLAY           SPACE_UUID                            LABEL        NOTES
+  *        LG UltraFine (1)  6622AC87-2FD2-48E8-934D-F6EB303AC9BA  Email        2
+           LG UltraFine (1)  1A0F5C2E-...                          (unlabeled)  1
   *        DELL 4K (2)       (none)                                (no UUID)
   ```
 
   The columns are padded for readability, so this is **not** cleanly
   `cut`/`awk`-parseable — pass **`--json`** for a self-describing structure that
-  scripts can consume.
+  scripts can consume. The **`NOTES`** column is the task-queue size (blank when 0),
+  so a Space carrying notes — including a notes-only one shown `(unlabeled)` — is
+  visible here without probing each UUID with `note list` (DECISIONS 9.10).
 - **`--json`:** array of objects
-  `[{"uuid","display_uuid","display_name","label","current","labelable"}, …]`
-  (`uuid` is `null` and `labelable` is `false` for a Space with no assigned UUID).
+  `[{"uuid","display_uuid","display_name","label","notes","current","labelable"}, …]`
+  (`uuid` is `null` and `labelable` is `false` for a Space with no assigned UUID;
+  `label` is `null` for an unlabeled/notes-only Space; `notes` is the task count).
 - **`--active-display`:** restrict to the menu-bar-owning display.
 - Special/fullscreen Spaces (`type != 0`, `TileLayoutManager`) are **excluded**.
   An ordinary Space that macOS has **not yet assigned a UUID** (a display's single
@@ -193,7 +196,11 @@ state. The mode name is a `click.Choice` (invalid value → exit 2).
 
 The whole point of the tool. Labels are keyed by **Space UUID** (DECISIONS 1.4).
 `current` is a convenience target resolved to the active Space's UUID at call
-time via the live CGS read.
+time via the live CGS read. A literal `<uuid>` target must be a **well-formed UUID**
+(copy one from `spacelabel spaces`); any other value — e.g. a transposed
+`label set list "Email"` — is a **usage error (exit 2)**, not a silent write to a
+Space that can't exist. (A valid UUID for a currently-absent Space is still allowed —
+labels are retained for Spaces that aren't live right now, DECISIONS 5.6.)
 
 ```text
 spacelabel label set   {<uuid>|current} <text>
@@ -221,11 +228,63 @@ spacelabel label prune [--dry-run]                    (--dry-run: proposed)
 - **`label prune`** — drop labels whose UUID is absent from the **current**
   Spaces set (orphans). Requires a live read. **`--dry-run` (proposed)** lists
   what *would* be removed (to stdout) and changes nothing. Retain-by-default
-  policy means this is the explicit, opt-in cleanup (DECISIONS 5.6).
+  policy means this is the explicit, opt-in cleanup (DECISIONS 5.6). It prunes
+  **labels, not tasks**: an orphan that still has a note queue is demoted to a
+  notes-only entry (its tasks survive), so prune never silently deletes a task
+  list (DECISIONS 9.10); a notes-only orphan is left untouched.
 - **Exit:** `0` success (incl. idempotent clear); `1` if a required live read
   fails or `current` can't be resolved; `2` on missing arguments.
 
-### 3.7 `config` — read / write configuration
+### 3.7 `note` — per-Space task queue
+
+Each Space can carry a small **task queue** alongside its label, keyed by the same
+**Space UUID** (DECISIONS 9.10) so the list follows the Space through reorders — not
+by display. The corner overlay renders it as the bold label/`Desktop N` title above
+the task lines. The CLI is the edit surface; `current` resolves to the active Space, and
+a literal `<uuid>` target must be a well-formed Space UUID (a transposed
+`note add list current` is a usage error, exit 2 — same rule as `label`).
+
+> **Heads-up:** the corner overlay shows notes only when **overlay mode is on**
+> (`spacelabel mode overlay --on`; it's off by default). A `note add` reflects live
+> once the agent is running with that mode enabled.
+
+```text
+spacelabel note add    {<uuid>|current} <text>
+spacelabel note list   [{<uuid>|current}] [--json]    (--json)
+spacelabel note done   {<uuid>|current} <index>
+spacelabel note undone {<uuid>|current} <index>
+spacelabel note clear  {<uuid>|current} [<index>]
+```
+
+- **`note add`** — append a task. Creates the entry even if the Space has no label
+  yet (a **notes-only** entry is valid); empty text is rejected. The TARGET is
+  validated as a UUID-or-`current` (exit 2 otherwise). Confirmation → stderr.
+- **`note list`** — with a TARGET, print that queue: **data → stdout** as a `#` /
+  `DONE` / `TASK` table; `--json` → `[{"index","text","done"}, …]` (**1-based**
+  `index`). **With no TARGET**, list every Space that has notes (`SPACE_UUID` /
+  `NOTES` count; `--json` → `[{"uuid","notes"}, …]`) — so a notes-only queue stays
+  discoverable even when its Space isn't live (`spaces` shows only live Spaces).
+  Reads only `labels.json` (no live read for a literal UUID).
+- **`note done` / `note undone`** — set/clear the `done` flag of task `<index>`
+  (**1-based**, humans). The overlay shows `☑`/`☐` accordingly on its next refresh.
+- **`note clear`** — remove one task (`<index>`) or, with no index, the whole queue.
+  **Idempotent** when there is nothing to clear (note → stderr, exit `0`). An entry
+  left with neither a label nor any task is removed entirely.
+- A bad index — or any index against an empty queue — is a **usage error (exit 2)**.
+- **TARGET validation is create-only.** `note add` (like `label set`) rejects a
+  non-UUID literal, but `list`/`done`/`undone`/`clear` accept any **existing** key —
+  so a pre-existing legacy/typo entry (e.g. a stray `list`) can still be inspected
+  with `note list <key>` and removed with `note clear <key>`.
+- Notes live in `labels.json` next to the label, so a `note add` from the CLI is
+  reflected **live** by a running agent (the overlay re-renders on the file-watch).
+- The overlay checkboxes are **display-only** glyphs — the panel is click-through and
+  never captures clicks (DESIGN §6.3); toggling is done here via `note done`. And
+  `label clear` keeps any tasks (the entry becomes notes-only), so clearing a label
+  never discards its task list.
+- **Exit:** `0` success (incl. idempotent clear); `1` if `current` can't be resolved
+  or a write fails; `2` a bad/out-of-range index or missing arguments.
+
+### 3.8 `config` — read / write configuration
 
 ```text
 spacelabel config get [<key>]        (bare `get` dumps all — proposed)
@@ -234,7 +293,8 @@ spacelabel config set  <key> <value>
 
 Keys are **dotted paths** into `config.json` (DESIGN §7.2), e.g.
 `modes.hud`, `hud.position`, `hud.duration_ms`, `overlay.corner`,
-`menubar.show_buttons_row`, `debounce_ms`, `log_level`.
+`overlay.show_notes`, `overlay.note_font_size`, `menubar.show_buttons_row`,
+`debounce_ms`, `log_level`.
 
 ```sh
 # Move the HUD — any of the 9 anchors (default center):
@@ -254,7 +314,7 @@ spacelabel config set hud.position top-left
 - A running agent reloads on write (file-watch). **Exit:** `0` success;
   `1` unknown key or invalid value; `2` missing arguments.
 
-### 3.8 `display` — name displays
+### 3.9 `display` — name displays
 
 ```text
 spacelabel display set   {<uuid>|current} <name>

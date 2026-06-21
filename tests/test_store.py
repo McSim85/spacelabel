@@ -265,3 +265,209 @@ def test_write_oserror_surfaces_as_storeerror(paths, monkeypatch):
     monkeypatch.setattr(store.tempfile, "mkstemp", _boom)
     with pytest.raises(store.StoreError):
         store.set_label(paths, "u", "x")
+
+
+# ---- notes (per-Space task queue, keyed by Space UUID — DECISIONS.md 9.10) -
+
+
+def test_add_note_creates_notes_only_entry(paths):
+    label = store.add_note(paths, "u", "task A")
+    assert label.text == ""  # no label yet -> notes-only entry
+    assert [(n.text, n.done) for n in label.notes] == [("task A", False)]
+    reloaded = store.load_labels(paths)["u"]
+    assert reloaded.text == ""
+    assert [(n.text, n.done) for n in reloaded.notes] == [("task A", False)]
+
+
+def test_notes_only_entry_omits_label_key_on_disk(paths):
+    store.add_note(paths, "u", "a")
+    entry = json.loads(paths.labels_file.read_text(encoding="utf-8"))["labels"]["u"]
+    assert "label" not in entry  # notes-only -> no 'label' key written
+    assert entry["notes"] == [{"text": "a", "done": False}]
+
+
+def test_set_note_done_roundtrip(paths):
+    store.add_note(paths, "u", "a")
+    store.add_note(paths, "u", "b")
+    store.set_note_done(paths, "u", 1, True)
+    notes = store.load_labels(paths)["u"].notes
+    assert [(n.text, n.done) for n in notes] == [("a", False), ("b", True)]
+    store.set_note_done(paths, "u", 1, False)  # undone
+    assert store.load_labels(paths)["u"].notes[1].done is False
+
+
+def test_set_label_preserves_notes(paths):
+    store.add_note(paths, "u", "a")
+    store.set_label(paths, "u", "Email")
+    label = store.load_labels(paths)["u"]
+    assert label.text == "Email"
+    assert [n.text for n in label.notes] == ["a"]  # notes survive (re)labeling
+
+
+def test_clear_label_keeps_notes_as_notes_only(paths):
+    store.set_label(paths, "u", "Email")
+    store.add_note(paths, "u", "a")
+    assert store.clear_label(paths, "u") is True
+    label = store.load_labels(paths)["u"]  # entry survives as notes-only
+    assert label.text == ""
+    assert [n.text for n in label.notes] == ["a"]
+
+
+def test_clear_label_removes_entry_when_no_notes(paths):
+    store.set_label(paths, "u", "Email")
+    assert store.clear_label(paths, "u") is True
+    assert store.load_labels(paths) == {}  # no notes -> entry removed (legacy behavior)
+
+
+def test_clear_label_demotion_drops_color_and_bumps_updated_at(paths):
+    # Demoting a colored, noted label to notes-only must drop the color (per-label
+    # tag; the entry is now unlabeled) and refresh updated_at (codex review).
+    store.set_label(paths, "u", "Email", color="#3b82f6", timestamp="2026-01-01T00:00:00Z")
+    store.add_note(paths, "u", "a", timestamp="2026-01-02T00:00:00Z")
+    store.clear_label(paths, "u", timestamp="2026-03-03T00:00:00Z")
+    demoted = store.load_labels(paths)["u"]
+    assert demoted.text == ""
+    assert demoted.color is None  # stale color must not survive onto a notes-only entry
+    assert demoted.updated_at == "2026-03-03T00:00:00Z"  # bumped
+    assert [n.text for n in demoted.notes] == ["a"]  # queue preserved
+    # A later re-label must NOT inherit the old color.
+    relabeled = store.set_label(paths, "u", "Inbox", timestamp="2026-04-04T00:00:00Z")
+    assert relabeled.color is None
+
+
+def test_clear_note_one_then_all_removes_notes_only_entry(paths):
+    store.add_note(paths, "u", "a")
+    store.add_note(paths, "u", "b")
+    assert store.clear_note(paths, "u", 0) == 1
+    assert [n.text for n in store.load_labels(paths)["u"].notes] == ["b"]
+    assert store.clear_note(paths, "u") == 1  # clear remaining
+    assert store.load_labels(paths) == {}  # notes-only entry with no notes is dropped
+
+
+def test_clear_all_notes_keeps_labeled_entry(paths):
+    store.set_label(paths, "u", "Email")
+    store.add_note(paths, "u", "a")
+    store.clear_note(paths, "u")
+    label = store.load_labels(paths)["u"]  # labeled entry kept, notes emptied
+    assert label.text == "Email"
+    assert label.notes == []
+
+
+def test_note_ops_validate_index_and_missing_entry(paths):
+    store.add_note(paths, "u", "a")
+    # Out-of-range index and a missing entry both raise NoteIndexError (CLI -> exit 2),
+    # validated INSIDE the lock so a corrupt store/concurrent edit can't misclassify it.
+    with pytest.raises(store.NoteIndexError):
+        store.set_note_done(paths, "u", 5, True)
+    with pytest.raises(store.NoteIndexError):
+        store.clear_note(paths, "u", 5)
+    with pytest.raises(store.NoteIndexError):
+        store.set_note_done(paths, "missing", 0, True)
+    with pytest.raises(store.NoteIndexError):
+        store.clear_note(paths, "missing", 0)
+
+
+def test_clear_all_notes_is_idempotent_on_missing_entry(paths):
+    # Clear-all never raises on a missing/empty queue (idempotent, returns 0) so a
+    # concurrent clear can't turn `note clear` into an error (codex review).
+    assert store.clear_note(paths, "missing") == 0
+    store.set_label(paths, "u", "Email")  # labeled, no notes
+    assert store.clear_note(paths, "u") == 0
+    assert store.load_labels(paths)["u"].text == "Email"  # entry untouched
+
+
+def test_notes_only_entry_survives_partial_malformed_notes(paths):
+    # A notes-only entry keeps its valid notes even when some items are malformed;
+    # only unusable items are dropped, so a later write never erases a recoverable
+    # task list (codex review — valid data is preserved across the rewrite).
+    paths.directory.mkdir(parents=True, exist_ok=True)
+    paths.labels_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "labels": {"u": {"notes": [{"text": "keep me"}, {"bad": 1}, "x"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    label = store.load_labels(paths)["u"]  # entry survives (notes-only)
+    assert label.text == ""
+    assert [n.text for n in label.notes] == ["keep me"]
+    store.add_note(paths, "u", "added")  # a write round-trips the surviving note
+    assert [n.text for n in store.load_labels(paths)["u"].notes] == ["keep me", "added"]
+
+
+def test_prune_keeps_notes_only_entry(paths):
+    store.add_note(paths, "notes-only-live", "a")  # notes-only but its Space is live
+    store.set_label(paths, "orphan", "x")
+    removed = store.prune_labels(paths, {"notes-only-live"})
+    assert removed == ["orphan"]
+    assert set(store.load_labels(paths)) == {"notes-only-live"}
+
+
+def test_prune_never_deletes_task_queues(paths):
+    # `label prune` prunes LABELS, not NOTES (codex review): an orphan that still has
+    # tasks is demoted to notes-only (label+color dropped, updated_at bumped, tasks
+    # kept), an orphan with no tasks is deleted, and a notes-only orphan is untouched.
+    store.set_label(paths, "noted", "Email", color="#3b82f6", timestamp="2026-01-01T00:00:00Z")
+    store.add_note(paths, "noted", "task", timestamp="2026-01-02T00:00:00Z")
+    store.set_label(paths, "bare", "Bare")  # label, no notes -> deleted
+    store.add_note(paths, "tasksonly", "keep me")  # notes-only orphan -> untouched
+    store.set_label(paths, "live", "Live")  # not an orphan
+    pruned = store.prune_labels(paths, {"live"}, timestamp="2026-03-03T00:00:00Z")
+    assert set(pruned) == {"noted", "bare"}  # only entries whose LABEL was pruned
+    labels = store.load_labels(paths)
+    assert "bare" not in labels  # deleted (no tasks to keep)
+    assert labels["noted"].text == ""  # demoted to notes-only
+    assert labels["noted"].color is None  # per-label color dropped
+    assert labels["noted"].updated_at == "2026-03-03T00:00:00Z"  # bumped
+    assert [n.text for n in labels["noted"].notes] == ["task"]  # task queue SURVIVED prune
+    assert [n.text for n in labels["tasksonly"].notes] == ["keep me"]  # notes-only orphan kept
+    assert labels["live"].text == "Live"
+
+
+def test_notes_canonical_uuid_matching(paths):
+    lower = "6622ac87-2fd2-48e8-934d-f6eb303ac9ba"
+    store.add_note(paths, lower, "a")  # write with a lowercase UUID
+    labels = store.load_labels(paths)
+    assert lower.upper() in labels  # read back under the canonical (uppercase) key
+    assert [n.text for n in labels[lower.upper()].notes] == ["a"]
+
+
+def test_load_skips_entry_with_no_label_and_no_notes(paths):
+    paths.directory.mkdir(parents=True, exist_ok=True)
+    paths.labels_file.write_text(
+        json.dumps({"schema_version": 1, "labels": {"u": {"label": "", "notes": []}}}),
+        encoding="utf-8",
+    )
+    assert store.load_labels(paths) == {}  # carries nothing -> skipped
+
+
+def test_load_tolerates_malformed_notes(paths):
+    paths.directory.mkdir(parents=True, exist_ok=True)
+    paths.labels_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "labels": {
+                    "u": {
+                        "label": "Email",
+                        "notes": [{"text": "ok"}, {"bad": 1}, "x", {"text": ""}],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = store.load_labels(paths)["u"].notes
+    assert [(n.text, n.done) for n in notes] == [("ok", False)]  # only the valid item
+
+
+def test_overlay_notes_config_roundtrip(paths):
+    store.set_config_value(paths, "overlay.show_notes", "false")
+    assert store.set_config_value(paths, "overlay.note_font_size", "11") == 11
+    cfg = store.load_config(paths)
+    assert cfg.overlay.show_notes is False
+    assert cfg.overlay.note_font_size == 11
+    assert store.set_config_value(paths, "overlay.note_font_size", "auto") == "auto"
+    assert store.load_config(paths).overlay.note_font_size == "auto"

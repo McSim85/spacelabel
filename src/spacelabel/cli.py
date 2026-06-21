@@ -298,12 +298,19 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
         records: list[dict[str, object]] = []
         for space in live:
             label = labels.get(space.uuid) if space.uuid else None
+            # A notes-only entry (Label.text == "") is NOT a label — report it as
+            # unlabeled (null), so `note add` on an unlabeled Space never makes it
+            # look labeled (DECISIONS.md 9.10).
+            label_text = label.text if (label is not None and label.text) else None
             records.append(
                 {
                     "uuid": space.uuid or None,
                     "display_uuid": space.display_uuid,
                     "display_name": display_names.get(space.display_uuid),
-                    "label": label.text if label is not None else None,
+                    "label": label_text,
+                    # Task-queue size, so a notes-only Space is discoverable here
+                    # rather than only via `note list <uuid>` (DECISIONS.md 9.10).
+                    "notes": len(label.notes) if label is not None else 0,
                     "current": space.is_current,
                     "labelable": bool(space.uuid),
                 }
@@ -313,10 +320,13 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
 
     rows: list[list[str]] = []
     for space in live:
+        notes_count = 0
         if space.uuid:
             label = labels.get(space.uuid)
             uuid_cell = space.uuid
-            label_cell = label.text if label is not None else "(unlabeled)"
+            # Empty text == notes-only == unlabeled (DECISIONS.md 9.10), not a blank label.
+            label_cell = label.text if (label is not None and label.text) else "(unlabeled)"
+            notes_count = len(label.notes) if label is not None else 0
         else:
             uuid_cell = "(none)"
             label_cell = "(no UUID)"
@@ -326,9 +336,10 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
                 display_names.get(space.display_uuid) or space.display_uuid,
                 uuid_cell,
                 label_cell,
+                str(notes_count) if notes_count else "",  # blank for the common no-notes case
             ]
         )
-    _echo_table(["CURRENT", "DISPLAY", "SPACE_UUID", "LABEL"], rows, color_current=True)
+    _echo_table(["CURRENT", "DISPLAY", "SPACE_UUID", "LABEL", "NOTES"], rows, color_current=True)
 
 
 @cli.command()
@@ -371,7 +382,7 @@ def label_set(ctx: AppContext, target: str, text: str) -> None:
             "label text must not be empty (use 'label clear').", param_hint="TEXT"
         )
 
-    uuid, last_display = _resolve_target(target)
+    uuid, last_display = _resolve_target(target, validate=True)
     paths = _paths(ctx)
     try:
         store.set_label(paths, uuid, text, last_display=last_display)
@@ -385,9 +396,13 @@ def label_set(ctx: AppContext, target: str, text: str) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON array to stdout.")
 @click.pass_obj
 def label_list(ctx: AppContext, as_json: bool) -> None:
-    """List all stored labels (machine-readable, to stdout)."""
+    """List all stored labels (machine-readable, to stdout).
+
+    Notes-only entries (a task queue on an unlabeled Space, DECISIONS.md 9.10) are
+    omitted here — they carry no label; surface them via ``note list``.
+    """
     paths = _paths(ctx)
-    labels = store.load_labels(paths)
+    labels = {uuid: entry for uuid, entry in store.load_labels(paths).items() if entry.text}
     if as_json:
         records = [
             {
@@ -465,6 +480,144 @@ def label_prune(ctx: AppContext, dry_run: bool) -> None:
 
 
 @cli.group()
+def note() -> None:
+    """Manage a Space's task queue (notes), keyed by Space UUID like labels."""
+
+
+def _load_notes(paths: store.StorePaths, uuid: str) -> list[model.Note]:
+    """Return the stored notes for ``uuid`` (canonicalized), or ``[]`` if none.
+
+    Used by the read-only ``note list``; the mutating commands validate the index
+    inside the store's locked read-modify-write (see :class:`store.NoteIndexError`)
+    rather than pre-reading here, so a corrupt store or a concurrent edit can't
+    misclassify the exit code (DECISIONS.md 9.1/9.10).
+    """
+    entry = store.load_labels(paths).get(labeling.canonical_uuid(uuid))
+    return entry.notes if entry is not None else []
+
+
+@note.command("add")
+@click.argument("target")
+@click.argument("text")
+@click.pass_obj
+def note_add(ctx: AppContext, target: str, text: str) -> None:
+    """Append a task to a Space's queue (UUID or 'current')."""
+    if not text.strip():
+        raise click.BadParameter("note text must not be empty.", param_hint="TEXT")
+    uuid, _ = _resolve_target(target, validate=True)
+    paths = _paths(ctx)
+    try:
+        label = store.add_note(paths, uuid, text)
+    except store.StoreError as exc:
+        log.error("could not add note for %s: %s", uuid, exc)
+        raise click.ClickException(str(exc)) from exc
+    _diag(f"Added task #{len(label.notes)} to {uuid}: {text}")
+
+
+@note.command("list")
+@click.argument("target", required=False)
+@click.option("--json", "as_json", is_flag=True, help="Emit a JSON array to stdout.")
+@click.pass_obj
+def note_list(ctx: AppContext, target: str | None, as_json: bool) -> None:
+    """List a Space's task queue, or with no TARGET every Space that has notes.
+
+    With no TARGET this enumerates all note-bearing entries (UUID + task count) so a
+    notes-only queue stays discoverable and recoverable even when its Space is not
+    live (``spaces`` shows only live Spaces; DECISIONS.md 9.10). stdout = data.
+    """
+    paths = _paths(ctx)
+    if target is None:
+        entries = {u: e for u, e in store.load_labels(paths).items() if e.notes}
+        if as_json:
+            summary = [{"uuid": u, "notes": len(e.notes)} for u, e in sorted(entries.items())]
+            click.echo(json.dumps(summary))
+            return
+        rows = [[u, str(len(e.notes))] for u, e in sorted(entries.items())]
+        _echo_table(["SPACE_UUID", "NOTES"], rows)
+        return
+    uuid, _ = _resolve_target(target)
+    notes = _load_notes(paths, uuid)
+    if as_json:
+        records = [
+            {"index": index, "text": item.text, "done": item.done}
+            for index, item in enumerate(notes, start=1)
+        ]
+        click.echo(json.dumps(records))
+        return
+    rows = [
+        [str(index), "[x]" if item.done else "[ ]", item.text]
+        for index, item in enumerate(notes, start=1)
+    ]
+    _echo_table(["#", "DONE", "TASK"], rows)
+
+
+def _set_note_done(ctx: AppContext, target: str, index: int, done: bool) -> None:
+    """Shared body for ``note done``/``note undone`` (mark task ``index`` done state).
+
+    ``index`` is the human 1-based value; the store validates it (0-based) inside the
+    lock. A bad/out-of-range index → usage error (exit 2); a store failure → exit 1.
+    """
+    uuid, _ = _resolve_target(target)
+    paths = _paths(ctx)
+    try:
+        item = store.set_note_done(paths, uuid, index - 1, done)
+    except store.NoteIndexError as exc:
+        raise click.BadParameter(str(exc), param_hint="INDEX") from exc
+    except store.StoreError as exc:
+        log.error("could not update note %d for %s: %s", index, uuid, exc)
+        raise click.ClickException(f"could not update task #{index} for {uuid}.") from exc
+    _diag(f"Task #{index} for {uuid} marked {'done' if item.done else 'not done'}: {item.text}")
+
+
+@note.command("done")
+@click.argument("target")
+@click.argument("index", type=int)
+@click.pass_obj
+def note_done(ctx: AppContext, target: str, index: int) -> None:
+    """Mark task INDEX (1-based) done."""
+    _set_note_done(ctx, target, index, True)
+
+
+@note.command("undone")
+@click.argument("target")
+@click.argument("index", type=int)
+@click.pass_obj
+def note_undone(ctx: AppContext, target: str, index: int) -> None:
+    """Mark task INDEX (1-based) not done."""
+    _set_note_done(ctx, target, index, False)
+
+
+@note.command("clear")
+@click.argument("target")
+@click.argument("index", type=int, required=False)
+@click.pass_obj
+def note_clear(ctx: AppContext, target: str, index: int | None) -> None:
+    """Remove one task (INDEX, 1-based) or, with no INDEX, the whole queue."""
+    uuid, _ = _resolve_target(target)
+    paths = _paths(ctx)
+    if index is None:
+        # Clear-all is idempotent (decided + counted inside the store lock).
+        try:
+            removed = store.clear_note(paths, uuid)
+        except store.StoreError as exc:
+            log.error("could not clear notes for %s: %s", uuid, exc)
+            raise click.ClickException(str(exc)) from exc
+        if removed:
+            _diag(f"Cleared {removed} task(s) for {uuid}.")
+        else:
+            _diag(f"No tasks stored for {uuid}; nothing to clear.")
+        return
+    try:
+        store.clear_note(paths, uuid, index - 1)
+    except store.NoteIndexError as exc:
+        raise click.BadParameter(str(exc), param_hint="INDEX") from exc
+    except store.StoreError as exc:
+        log.error("could not remove note %d for %s: %s", index, uuid, exc)
+        raise click.ClickException(f"could not remove task #{index} for {uuid}.") from exc
+    _diag(f"Removed task #{index} for {uuid}.")
+
+
+@cli.group()
 def config() -> None:
     """Read and write configuration values."""
 
@@ -517,7 +670,7 @@ def display_set(ctx: AppContext, target: str, name: str) -> None:
         raise click.BadParameter(
             "display name must not be empty (use 'display clear').", param_hint="NAME"
         )
-    uuid = _resolve_display_target(target)
+    uuid = _resolve_display_target(target, validate=True)
     paths = _paths(ctx)
     try:
         store.set_display_label(paths, uuid, name)
@@ -596,14 +749,22 @@ def display_clear(ctx: AppContext, target: str) -> None:
         _diag(f"No custom name stored for display {uuid}; nothing to clear.")
 
 
-def _resolve_display_target(target: str) -> str:
+def _resolve_display_target(target: str, *, validate: bool = False) -> str:
     """Resolve a ``display`` TARGET ('current' -> active display UUID, else literal).
 
     A literal UUID is canonicalized so it matches the canonical stored keys
     (``display clear``'s ``existed`` pre-check and ``display set``'s diagnostics
     compare against ``load_display_labels``, which canonicalizes on read).
+    ``validate=True`` (``display set``) rejects a non-UUID literal; ``display clear``
+    leaves it off so a legacy non-UUID display key can still be cleared.
     """
     if target != "current":
+        if validate and not labeling.is_uuid(target):
+            raise click.BadParameter(
+                f"{target!r} is not a display UUID or 'current' "
+                "(list display UUIDs with `spacelabel display list`).",
+                param_hint="TARGET",
+            )
         return labeling.canonical_uuid(target)
     import spacelabel.platform.cgs as cgs_mod
 
@@ -637,17 +798,29 @@ def _active_display_uuid_or_none() -> str | None:
         return None
 
 
-def _resolve_target(target: str) -> tuple[str, str | None]:
+def _resolve_target(target: str, *, validate: bool = False) -> tuple[str, str | None]:
     """Resolve a ``label`` TARGET to a (uuid, active_display_uuid) pair.
 
     ``current`` resolves to the live active Space UUID via the CGS read (its
     display becomes ``last_display``); any other value is treated as a literal
     UUID. A failed/empty live read for ``current`` is a runtime error (exit 1).
+
+    ``validate=True`` (the create paths — ``label set`` / ``note add``) rejects a
+    literal that is not a well-formed UUID (e.g. a transposed ``note add list
+    current``) as a usage error. The operate/read paths (``clear``/``done``/``list``)
+    pass ``validate=False`` so a **pre-existing** non-UUID key (a legacy typo/orphan
+    like ``list``) can still be inspected or removed from the CLI (DECISIONS.md 9.10).
     """
     import spacelabel.platform.cgs as cgs_mod
 
     if target != "current":
-        return target, None
+        if validate and not labeling.is_uuid(target):
+            raise click.BadParameter(
+                f"{target!r} is not a Space UUID or 'current' "
+                "(list Space UUIDs with `spacelabel spaces`).",
+                param_hint="TARGET",
+            )
+        return labeling.canonical_uuid(target), None
 
     try:
         uuid = cgs_mod.read_active_space_uuid()

@@ -6,6 +6,7 @@ from spacelabel.labeling import (
     assign_ordinals,
     canonical_uuid,
     find_orphans,
+    is_uuid,
     ordinal_for_uuid,
     pill_text,
     title_for,
@@ -16,6 +17,14 @@ from spacelabel.model import Label, Space
 
 def _space(uuid, display="D1", current=False):
     return Space(uuid=uuid, display_uuid=display, is_current=current)
+
+
+def test_is_uuid():
+    assert is_uuid("6622AC87-2FD2-48E8-934D-F6EB303AC9BA")
+    assert is_uuid("6622ac87-2fd2-48e8-934d-f6eb303ac9ba")  # any case
+    assert not is_uuid("list")  # a transposed TARGET/TEXT, not a UUID
+    assert not is_uuid("current")  # the sentinel is resolved separately, not a UUID
+    assert not is_uuid("")
 
 
 def test_assign_ordinals_is_one_based_keyed_by_identity():

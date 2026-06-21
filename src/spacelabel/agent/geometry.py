@@ -15,9 +15,16 @@ __all__ = [
     "clamp",
     "hud_font_size",
     "overlay_font_size",
+    "overlay_max_content_extent",
+    "overlay_note_font_size",
     "parse_anchor",
     "short_side",
 ]
+
+#: Floor for the auto-computed overlay notes-body font (points).
+_NOTE_FONT_MIN = 9
+#: How far below the title the auto notes-body font sits (points).
+_NOTE_FONT_STEP = 2
 
 #: The nine valid anchor names (a 3x3 grid) for ``hud.position``/``overlay.corner``.
 ANCHORS: frozenset[str] = frozenset(
@@ -72,6 +79,33 @@ def overlay_font_size(size_pt: tuple[float, float], configured: int | str) -> in
     if isinstance(configured, int):
         return configured
     return int(clamp(round(short_side(size_pt) * 0.018), 12, 28))
+
+
+def overlay_max_content_extent(available: float, margin: float, pad: float) -> float:
+    """Max overlay text extent (points) along one axis so the anchored panel fits.
+
+    Used for BOTH width (``pad`` = horizontal padding) and height (``pad`` = vertical).
+    The panel is the content extent plus ``pad`` on each side and is placed up to
+    ``margin`` from the anchored edge (:func:`anchor_origin`). Reserving the margin on
+    **both** sides (``available - 2*margin - 2*pad``) keeps the panel within
+    ``available`` for every anchor — an edge anchor leaves a full margin on the far
+    side, a centered one has even more room (DECISIONS.md 9.10). Clamped at ``0``: a
+    display narrower than the panel's own padding+margin can't be honored, but no real
+    display is that small (the padding alone is a couple dozen points).
+    """
+    return max(0.0, available - 2.0 * margin - 2.0 * pad)
+
+
+def overlay_note_font_size(title_font: int, configured: int | str) -> int:
+    """Overlay notes-body font in points.
+
+    A configured int is used verbatim; the literal ``"auto"`` sits one step
+    (``_NOTE_FONT_STEP`` pt) below the resolved ``title_font`` so the task list
+    reads as smaller than the bold title, with a small floor (DECISIONS.md 9.10).
+    """
+    if isinstance(configured, int):
+        return configured
+    return max(_NOTE_FONT_MIN, title_font - _NOTE_FONT_STEP)
 
 
 def parse_anchor(position: str) -> tuple[str, str]:

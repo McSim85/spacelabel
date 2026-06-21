@@ -15,6 +15,7 @@ __all__ = [
     "HudConfig",
     "Label",
     "MenubarConfig",
+    "Note",
     "OverlayConfig",
     "Space",
     "WallpaperConfig",
@@ -57,11 +58,27 @@ class Display:
 
 
 @dataclass(slots=True)
-class Label:
-    """A user-assigned label bound to a Space UUID (DESIGN.md §7.1, DECISIONS.md 9.8).
+class Note:
+    """One task in a Space's note queue (DECISIONS.md 9.10).
 
-    Only ``text`` is required; the rest are informational/forward-compatible and
-    are never part of the key (the Space ``uuid`` is the sole key).
+    ``text`` is the task line; ``done`` is the checkbox state. Modeled as
+    ``{text, done}`` so the state is captured even if an overlay build only draws
+    bullets — the overlay renders a glyph reflecting ``done`` (display-only, never
+    an interactive control: the panel is click-through, DESIGN.md §6.3).
+    """
+
+    text: str
+    done: bool = False
+
+
+@dataclass(slots=True)
+class Label:
+    """A user-assigned label bound to a Space UUID (DESIGN.md §7.1, DECISIONS.md 9.8/9.10).
+
+    Only the per-Space ``uuid`` is the key; every field here is value data. ``text``
+    may be empty when the entry holds only ``notes`` (a task list on an unlabeled
+    Space) — surfaces then fall back to ``Desktop N`` (DECISIONS.md 9.10). ``color``,
+    ``last_display`` and the timestamps are informational/forward-compatible.
     """
 
     text: str
@@ -69,6 +86,9 @@ class Label:
     last_display: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    #: Per-Space task queue; follows the Space through reorders like the label
+    #: (keyed by ``uuid``, never display). Empty when the Space has no tasks.
+    notes: list[Note] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -104,6 +124,10 @@ class OverlayConfig:
     margin: int = 12
     font_size: int | str = 15  # int point size or "auto"
     bold: bool = True  # draw the overlay label (title) bold
+    show_notes: bool = True  # render the per-Space notes list beneath the title
+    #: Notes-body point size: an int, or ``"auto"`` = one step below the title
+    #: (computed in :mod:`spacelabel.agent.geometry`) so the body reads as smaller.
+    note_font_size: int | str = "auto"
 
 
 @dataclass(slots=True)

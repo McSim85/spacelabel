@@ -124,6 +124,26 @@ def test_prefs_color_well_persists_to_store(tmp_path):
     assert data_source._color_cell(None, unlabeled).isEnabled() is False
 
 
+def test_prefs_color_well_disabled_for_notes_only_space(tmp_path):
+    # A notes-only Space (notes but no label, Label.text == "") is unlabeled: the
+    # color well must stay disabled — color is a per-label attribute (DECISIONS 9.10).
+    from spacelabel import labeling, store
+    from spacelabel.agent.prefs import PrefsDataSource, _DisplayNode
+    from spacelabel.model import Display, Space
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    uuid = "6622AC87-2FD2-48E8-934D-F6EB303AC9BA"
+    store.add_note(paths, uuid, "a task")  # notes-only entry (no label)
+
+    data_source = PrefsDataSource.alloc().init()
+    space = Space(uuid=uuid, display_uuid="D1")
+    node = _DisplayNode(Display(uuid="D1", cg_display_id=1), "D1", [space])
+    data_source.set_nodes(
+        [node], store.load_labels(paths), labeling.assign_ordinals([space]), paths
+    )
+    assert data_source._color_cell(None, space).isEnabled() is False
+
+
 def test_wallpaper_purge_keeps_only_current_outputs(tmp_path):
     # The cache purge must delete only stale per-display PNGs we wrote -- never the
     # current outputs, and never non-PNG/other files (originals live elsewhere).
@@ -167,6 +187,16 @@ def test_wallpaper_skips_when_original_unknown(monkeypatch):
 
     renderer.render_and_set("Email", screen=object())
     assert calls == []  # neither rendered nor set -> the real wallpaper is untouched
+
+
+def test_overlay_exposes_set_content_and_distinct_glyphs():
+    # Overlay rendering needs a WindowServer (the panel creates its window device),
+    # so it is import-smoke only (docs/TESTING.md). Verify the notes-render entry
+    # point exists and the two checkbox glyphs differ, without building the panel.
+    from spacelabel.agent import overlay as overlay_mod
+
+    assert callable(overlay_mod.Overlay.set_content)
+    assert overlay_mod._GLYPH_DONE != overlay_mod._GLYPH_TODO
 
 
 def test_expected_public_classes_exist():

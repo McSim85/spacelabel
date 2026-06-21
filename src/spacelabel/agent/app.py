@@ -638,7 +638,13 @@ class AppDelegate(NSObject):
             text = labeling.title_for(
                 current, self._labels, ordinal, max_length=config.menubar.max_length
             )
+            # Per-Space notes ride on the label entry, keyed by the Space UUID
+            # (DECISIONS.md 9.10); show them under the title unless overlay.show_notes
+            # is off. An unlabeled Space with notes shows "Desktop N" as the title.
+            label = self._labels.get(current.uuid)
+            notes = label.notes if (label is not None and config.overlay.show_notes) else []
             font = geometry.overlay_font_size(display.size_pt, config.overlay.font_size)
+            note_font = geometry.overlay_note_font_size(font, config.overlay.note_font_size)
             overlay: Overlay | None = self._overlays.get(display.uuid)
             if overlay is None:
                 overlay = Overlay(font_size=font, bold=config.overlay.bold)
@@ -648,7 +654,7 @@ class AppDelegate(NSObject):
                 overlay.set_font(font, config.overlay.bold)
             screen = screens_by_uuid.get(display.uuid) or NSScreen.mainScreen()
             overlay.reposition(screen, config.overlay.corner, config.overlay.margin)
-            overlay.set_text(text)
+            overlay.set_content(text, notes, note_font_size=note_font)
 
     @objc.python_method
     def _update_wallpaper(self, title: str) -> None:

@@ -17,11 +17,26 @@ __all__ = [
     "assign_ordinals",
     "canonical_uuid",
     "find_orphans",
+    "is_uuid",
     "ordinal_for_uuid",
     "pill_text",
     "title_for",
     "truncate",
 ]
+
+
+def is_uuid(value: str) -> bool:
+    """Return ``True`` if ``value`` is a well-formed UUID string (any case/format).
+
+    Used to reject a literal CLI target that is neither ``current`` nor a real Space
+    UUID (e.g. a transposed ``note add list current``) before it silently creates an
+    entry for a Space that cannot exist.
+    """
+    try:
+        uuid_module.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 def canonical_uuid(value: str) -> str:
