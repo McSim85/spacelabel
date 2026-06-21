@@ -19,12 +19,19 @@ __all__ = [
     "overlay_note_font_size",
     "parse_anchor",
     "short_side",
+    "wallpaper_font_size",
 ]
 
 #: Floor for the auto-computed overlay notes-body font (points).
 _NOTE_FONT_MIN = 9
 #: How far below the title the auto notes-body font sits (points).
 _NOTE_FONT_STEP = 2
+#: Auto wallpaper-label proportion of the short side, and its clamp (points).
+#: 0.12 preserves the mode's long-standing prominent size; the renderer multiplies
+#: the returned point size by the display's backingScaleFactor for the pixel canvas.
+_WALLPAPER_FONT_FACTOR = 0.12
+_WALLPAPER_FONT_MIN = 24
+_WALLPAPER_FONT_MAX = 320
 
 #: The nine valid anchor names (a 3x3 grid) for ``hud.position``/``overlay.corner``.
 ANCHORS: frozenset[str] = frozenset(
@@ -106,6 +113,20 @@ def overlay_note_font_size(title_font: int, configured: int | str) -> int:
     if isinstance(configured, int):
         return configured
     return max(_NOTE_FONT_MIN, title_font - _NOTE_FONT_STEP)
+
+
+def wallpaper_font_size(size_pt: tuple[float, float], configured: int | str) -> int:
+    """Wallpaper label font in points (the renderer multiplies by ``scale``).
+
+    A configured int is used verbatim; the literal ``"auto"`` keys to the
+    display's short side like the HUD/overlay helpers —
+    ``clamp(round(S * 0.12), 24, 320)`` — preserving the mode's long-standing
+    prominent size (DESIGN.md §6.4 / §9.9).
+    """
+    if isinstance(configured, int):
+        return configured
+    scaled = round(short_side(size_pt) * _WALLPAPER_FONT_FACTOR)
+    return int(clamp(scaled, _WALLPAPER_FONT_MIN, _WALLPAPER_FONT_MAX))
 
 
 def parse_anchor(position: str) -> tuple[str, str]:

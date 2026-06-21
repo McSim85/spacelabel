@@ -144,28 +144,15 @@ def test_prefs_color_well_disabled_for_notes_only_space(tmp_path):
     assert data_source._color_cell(None, space).isEnabled() is False
 
 
-def test_wallpaper_purge_keeps_only_current_outputs(tmp_path):
-    # The cache purge must delete only stale per-display PNGs we wrote -- never the
-    # current outputs, and never non-PNG/other files (originals live elsewhere).
+def test_wallpaper_is_ours_distinguishes_cache_from_real(tmp_path):
+    # _is_ours distinguishes our cache composites/copies from the user's real
+    # wallpaper file -- the guard behind the label-on-label / recovery logic. The
+    # full TTL-eviction + restart-recovery behavior is covered in test_wallpaper.py.
     from spacelabel.agent.wallpaper import WallpaperRenderer
 
-    renderer = WallpaperRenderer()
-    renderer._cache_dir = tmp_path
-    keep = tmp_path / "display-1.png"
-    keep.write_bytes(b"x")
-    stale = tmp_path / "display-2.png"
-    stale.write_bytes(b"x")
-    other = tmp_path / "notes.txt"
-    other.write_bytes(b"x")
-    renderer._outputs = {"display-1": keep}
-
-    renderer._purge()
-
-    assert keep.exists()  # current output kept
-    assert not stale.exists()  # stale output removed
-    assert other.exists()  # non-PNG untouched
-    # _is_ours distinguishes our composites from the user's real wallpaper file.
-    assert renderer._is_ours(str(keep))
+    renderer = WallpaperRenderer(cache_dir=tmp_path)
+    assert renderer._is_ours(str(tmp_path / "display-1.png"))
+    assert renderer._is_ours(str(tmp_path / "original-UUID-A.png"))
     assert not renderer._is_ours("/Users/me/Pictures/wallpaper.jpg")
 
 
