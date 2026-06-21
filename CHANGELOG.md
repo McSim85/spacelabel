@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/McSim85/spacelabel/compare/v0.1.0...v0.1.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **ci:** trigger publish.yml via PAT + workflow_dispatch fallback ([#14](https://github.com/McSim85/spacelabel/issues/14)) ([6e3e081](https://github.com/McSim85/spacelabel/commit/6e3e0818ac1266fec665214f9c2a9c5cb9d956f0))
+
 ## 0.1.0 (2026-06-20)
 
 
