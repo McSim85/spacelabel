@@ -233,6 +233,7 @@ def discover_topology() -> list[dict]:
 - Observe `NSWorkspaceActiveSpaceDidChangeNotification` on `NSWorkspace.sharedWorkspace().notificationCenter()` — **not** the default center. The notification **carries no Space identity**; re-read the UUID every fire.
 - **Debounce (trailing edge, ~200ms):** rapid Space switching is the common case. Coalesce a burst of notifications and re-read the CGS path **once** after quiescence. Mechanism: cancel-and-reschedule a single timer (`NSTimer` invalidated/rescheduled on each fire, or a trailing-edge dispatch). The debounced callback does the off-main CGS read, then marshals the UI update (menu-bar/HUD/overlay/wallpaper) back to the main thread.
 - This is the "notification-center footgun" Phase 4 must get right: wrong center → no events; no debounce → thrash.
+- **Hybrid: events + a 1 s liveness poll (DECISIONS §4.3).** A Mission Control **reorder** fires neither `activeSpaceDidChange` (active Space unchanged) nor `didChangeScreenParameters`, so the existing 1 s `_poll_reload` also reads a cheap live CGS **topology signature** (ordered `(display_uuid, uuid, is_current)` tuples) and refreshes when it differs from the last tick — catching reorder, create, and delete uniformly. Live CGS only (the plist can't show reorder, §3.4); an unreadable tick is skipped so a transient hiccup never spuriously refreshes.
 
 ---
 
