@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/McSim85/spacelabel/compare/v0.5.0...v0.6.0) (2026-06-22)
+
+
+### Features
+
+* **agent:** live pill/overlay refresh on Space reorder ([#25](https://github.com/McSim85/spacelabel/issues/25)) ([b10b159](https://github.com/McSim85/spacelabel/commit/b10b15934917580bb6f3beb908caca1f51ac4892))
+
 ## [0.5.0](https://github.com/McSim85/spacelabel/compare/v0.4.0...v0.5.0) (2026-06-22)
 
 
