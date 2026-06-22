@@ -97,6 +97,18 @@ def test_truncate_boot_log_inplace_keeps_open_fd(tmp_path):
     assert boot.read_text(encoding="utf-8") == "after\n"
 
 
+def test_truncate_boot_log_also_caps_legacy_err_log(tmp_path):
+    # Upgrade path: an old plist still feeds agent.err.log until it is refreshed, so
+    # truncate_boot_log must cap it too (keeps the original unbounded bug fixed).
+    boot = tmp_path / "agent.boot.log"
+    boot.write_bytes(b"x" * (_BOOT_LOG_MAX_BYTES + 1))
+    legacy = tmp_path / "agent.err.log"
+    legacy.write_bytes(b"y" * (_BOOT_LOG_MAX_BYTES + 1))
+    truncate_boot_log(tmp_path)
+    assert boot.stat().st_size == 0
+    assert legacy.stat().st_size == 0
+
+
 def test_truncate_boot_log_swallows_errors(tmp_path):
     # A non-existent log dir must not raise (best-effort housekeeping).
     truncate_boot_log(tmp_path / "does-not-exist")

@@ -92,27 +92,33 @@ def run_agent(
     Raises:
         SystemExit: If another agent instance already holds the lock (exit 1).
     """
-    # Configure stderr logging up front so the single-instance rejection below is
-    # visible, and route uncaught exceptions through the logger from the very start.
-    setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
-    install_logging_excepthook()
-
-    # Single-instance lock FIRST: a rejected duplicate exits here (exit 1) without
-    # touching the shared log files.
-    lock_handle = _acquire_single_instance_lock(config_path)
-
-    # Cap launchd's boot-catch file as the lock winner, BEFORE the crash-prone agent
-    # setup below — each KeepAlive restart re-enters right here, so a post-lock crash
-    # loop stays bounded (a pre-run_agent import crash is the only inherent residual).
-    truncate_boot_log()
-
-    # Switch to the quiet, rotated agent file sink unless this is a foreground/dev run
-    # (the early CLI setup above already applied --verbose/--debug). config.log_level
-    # is read here, after the lock+truncate, so it never gates the boot-log cap.
-    if not (verbose or debug):
+    # Configure the real sink first so EVERY startup failure (incl. the
+    # single-instance rejection below) lands in the inspectable log: the rotated
+    # agent.log for the launchd agent, stderr for a foreground/dev run. load_config
+    # never raises (recovers to defaults), so it can't crash before the lock.
+    if verbose or debug:
+        setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
+    else:
         config = store.load_config(store.StorePaths.resolve(config_path))
         agent_level = getattr(logging, config.log_level, logging.WARNING)
         setup_logging(LogMode.AGENT, agent_level=agent_level)
+
+    # Route uncaught (top-level) exceptions into the configured sink, not raw stderr.
+    install_logging_excepthook()
+
+    # Single-instance lock: a rejected duplicate has logged the reason and exits here.
+    lock_handle = _acquire_single_instance_lock(config_path)
+
+    # Lock winner only: cap the unrotated launchd capture file(s), and — for the real
+    # LaunchAgent run — migrate a stale on-disk plist so the log-path/single-writer
+    # fix rolls out on upgrade without a manual `spacelabel install` (applies next
+    # login). truncate runs before the AppKit run loop so each KeepAlive restart
+    # bounds the file even if startup later crashes.
+    truncate_boot_log()
+    if not (verbose or debug):
+        from spacelabel import install as install_mod
+
+        install_mod.refresh_plist_if_stale()
 
     app = NSApplication.sharedApplication()
     delegate = AppDelegate.alloc().initWithConfigPath_(config_path)
@@ -191,16 +197,26 @@ class AppDelegate(NSObject):
         self._lock_handle = handle
 
     def applicationDidFinishLaunching_(self, _notification: object) -> None:  # noqa: N802
-        """Set accessory policy, build surfaces, wire the observer, start polling."""
-        NSApplication.sharedApplication().setActivationPolicy_(
-            NSApplicationActivationPolicyAccessory
-        )
-        self._config = self._load_config()
-        self._labels = self._load_labels()
-        self._build_surfaces()
-        self._start_observer()
-        self._start_reload_timer()
-        self._refresh()
+        """Set accessory policy, build surfaces, wire the observer, start polling.
+
+        Wrapped in a last-resort guard: this is an AppKit delegate callback, so an
+        unexpected exception here would go to raw stderr (the bounded boot-catch file)
+        rather than the rotated ``agent.log`` operators inspect. On failure it is
+        logged with a traceback and the process kept alive (an idle-but-diagnosable
+        agent beats a silent vanish to stderr).
+        """
+        try:
+            NSApplication.sharedApplication().setActivationPolicy_(
+                NSApplicationActivationPolicyAccessory
+            )
+            self._config = self._load_config()
+            self._labels = self._load_labels()
+            self._build_surfaces()
+            self._start_observer()
+            self._start_reload_timer()
+            self._refresh()
+        except Exception:  # deliberate last-resort guard at the AppKit callback boundary
+            log.critical("unexpected error during agent startup", exc_info=True)
 
     # -- construction -----------------------------------------------------------
 
@@ -396,6 +412,25 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _refresh(self) -> None:
+        """Refresh every surface, guarding against unexpected callback exceptions.
+
+        Every steady-state AppKit callback (the NSTimer poll, the space/display
+        notifications, menu actions) funnels through here, but exceptions raised in a
+        PyObjC callback don't reach :func:`sys.excepthook` — PyObjC would print them
+        to raw stderr (the bounded boot-catch file), outside the rotated ``agent.log``
+        operators inspect. This last-resort guard logs any unexpected error to
+        ``agent.log`` with a traceback and keeps the run loop alive with the previous
+        surfaces. Expected failures are already handled specifically inside
+        :meth:`_refresh_impl` (per the no-silent-except policy); this only catches the
+        truly unexpected, and it logs rather than swallows silently.
+        """
+        try:
+            self._refresh_impl()
+        except Exception:  # deliberate last-resort guard at the AppKit callback boundary
+            log.critical("unexpected error refreshing surfaces", exc_info=True)
+
+    @objc.python_method
+    def _refresh_impl(self) -> None:
         """Read the active Space, resolve its title, and update every surface."""
         # Include unlabelable Spaces so the menu/overlays surface every display.
         spaces = self._read_spaces(include_unlabelable=True)

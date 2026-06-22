@@ -18,6 +18,7 @@ import plistlib
 import re
 import subprocess
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from spacelabel import BUNDLE_ID
 
@@ -127,6 +128,48 @@ def render_plist(home: Path, shim: Path) -> bytes:
     :param shim: Absolute path to the ``spacelabel`` console-script shim.
     """
     return plistlib.dumps(build_launch_agent(home, shim))
+
+
+def refresh_plist_if_stale() -> bool:
+    """Rewrite an installed LaunchAgent plist when it differs from the template.
+
+    Lets a package upgrade roll out plist changes (e.g. the log-path / single-writer
+    migration) **without** the user re-running ``spacelabel install``: the agent
+    calls this at startup, and a stale on-disk plist is rewritten so the corrected
+    config applies on the next login or ``launchctl kickstart``. The existing
+    program path (the user's actual shim) is preserved, so this never repoints the
+    agent. No-op when not installed or already current.
+
+    Best-effort: a read/parse/write failure is logged and returns ``False`` rather
+    than raising — a logging-housekeeping refresh must never block agent startup.
+
+    Returns:
+        ``True`` if the plist was rewritten, else ``False``.
+    """
+    path = plist_path()
+    if not path.exists():
+        return False
+    try:
+        current = plistlib.loads(path.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ExpatError) as exc:
+        # ExpatError: a detected-as-XML plist that is syntactically broken (e.g. a
+        # truncated hand edit) — plistlib lets expat's error propagate. Best-effort.
+        log.warning("could not read installed plist %s to refresh it: %s", path, exc)
+        return False
+    program = current.get("ProgramArguments") if isinstance(current, dict) else None
+    if not (isinstance(program, list) and program and isinstance(program[0], str)):
+        log.warning("installed plist %s has no usable ProgramArguments; not refreshing", path)
+        return False
+    shim = Path(program[0])
+    if current == build_launch_agent(Path.home(), shim):
+        return False  # already current
+    try:
+        path.write_bytes(render_plist(Path.home(), shim))
+    except OSError as exc:
+        log.warning("could not refresh stale plist %s: %s", path, exc)
+        return False
+    log.info("refreshed stale LaunchAgent plist %s; applies on next login or reload", path)
+    return True
 
 
 def _launchctl(args: list[str], *, check: bool = False) -> subprocess.CompletedProcess[str]:

@@ -65,6 +65,11 @@ _AGENT_LOG_BACKUP_COUNT = 3
 #: so it stays near-empty and is truncated when it exceeds :data:`_BOOT_LOG_MAX_BYTES`
 #: — see :func:`truncate_boot_log`.
 _AGENT_BOOT_LOG_NAME = "agent.boot.log"
+#: Pre-0.5 launchd ``StandardErrorPath`` file. Still written by launchd on an
+#: *upgraded* install whose on-disk plist hasn't been refreshed yet, so it is capped
+#: alongside the boot file until the plist migration (``install.refresh_plist_if_stale``)
+#: takes effect on the next login.
+_LEGACY_ERR_LOG_NAME = "agent.err.log"
 _BOOT_LOG_MAX_BYTES = 256_000
 
 #: Timestamped formatter shared by the agent's file/os_log/fallback sinks.
@@ -88,7 +93,7 @@ def _default_agent_log_dir() -> Path:
 
 
 def truncate_boot_log(log_dir: Path | None = None) -> None:
-    """Truncate the launchd boot-catch file at agent startup if it is oversized.
+    """Cap the launchd capture file(s) at agent startup if oversized (best-effort).
 
     launchd points both ``StandardOutPath`` and ``StandardErrorPath`` at
     ``agent.boot.log`` — a near-empty safety net for catastrophic output that can't
@@ -97,17 +102,27 @@ def truncate_boot_log(log_dir: Path | None = None) -> None:
     :class:`~logging.handlers.RotatingFileHandler`, so a crash loop (launchd
     ``KeepAlive``) could grow it; this caps it at :data:`_BOOT_LOG_MAX_BYTES`.
 
-    Truncates **in place** (``os.truncate``), never rename: launchd holds this file
-    open as fd 1 *and* fd 2 (``O_APPEND``), so a rename would leave those fds writing
-    to the renamed backup; truncating keeps the inode launchd writes to, reset to
-    empty. Best-effort housekeeping — every filesystem error is caught, logged at
-    ``DEBUG``, and ignored so it never blocks startup.
+    Also caps the legacy ``agent.err.log`` (:data:`_LEGACY_ERR_LOG_NAME`): an
+    *upgraded* install keeps launchd writing it until the plist is refreshed, so
+    capping it here keeps the original unbounded-growth bug fixed in the meantime.
+
+    Each file is truncated **in place** (``os.truncate``), never renamed: launchd
+    holds them open (``O_APPEND``), so a rename would leave its fds writing to the
+    renamed backup; truncating keeps the inode launchd writes to, reset to empty.
+    Best-effort housekeeping — every filesystem error is caught, logged at ``DEBUG``,
+    and ignored so it never blocks startup.
 
     Args:
         log_dir: Override for the agent log directory; defaults to
             ``~/Library/Logs/spacelabel`` (the launchd plist's log root).
     """
-    path = (log_dir if log_dir is not None else _default_agent_log_dir()) / _AGENT_BOOT_LOG_NAME
+    base = log_dir if log_dir is not None else _default_agent_log_dir()
+    for name in (_AGENT_BOOT_LOG_NAME, _LEGACY_ERR_LOG_NAME):
+        _truncate_if_oversized(base / name)
+
+
+def _truncate_if_oversized(path: Path) -> None:
+    """Truncate ``path`` to empty in place if it exceeds the cap (best-effort)."""
     try:
         if path.exists() and path.stat().st_size > _BOOT_LOG_MAX_BYTES:
             os.truncate(path, 0)

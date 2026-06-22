@@ -42,6 +42,61 @@ def test_packaging_template_stays_in_sync():
     assert parsed == build_launch_agent(HOME, SHIM)
 
 
+def _stale_plist_bytes(home: Path, shim: Path) -> bytes:
+    """Return a pre-migration plist (old split log paths) for ``shim``."""
+    d = build_launch_agent(home, shim)
+    d["StandardOutPath"] = str(home / "Library/Logs/spacelabel/agent.log")
+    d["StandardErrorPath"] = str(home / "Library/Logs/spacelabel/agent.err.log")
+    return plistlib.dumps(d)
+
+
+def test_refresh_plist_noop_when_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "plist_path", lambda: tmp_path / "absent.plist")
+    assert install.refresh_plist_if_stale() is False
+
+
+def test_refresh_plist_rewrites_stale_preserving_shim(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))  # Path.home() -> tmp_path
+    home = Path(tmp_path)
+    shim = home / ".local" / "bin" / "spacelabel"
+    plist = tmp_path / "agent.plist"
+    plist.write_bytes(_stale_plist_bytes(home, shim))
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+
+    assert install.refresh_plist_if_stale() is True
+    refreshed = plistlib.loads(plist.read_bytes())
+    assert refreshed == build_launch_agent(home, shim)  # migrated to agent.boot.log
+    assert refreshed["ProgramArguments"][0] == str(shim)  # shim preserved, not repointed
+    assert install.refresh_plist_if_stale() is False  # idempotent
+
+
+def test_refresh_plist_noop_when_current(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    home = Path(tmp_path)
+    shim = home / ".local" / "bin" / "spacelabel"
+    plist = tmp_path / "agent.plist"
+    plist.write_bytes(render_plist(home, shim))  # already current
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+    assert install.refresh_plist_if_stale() is False
+
+
+def test_refresh_plist_handles_unparseable_plist(tmp_path, monkeypatch):
+    plist = tmp_path / "agent.plist"
+    plist.write_bytes(b"not a plist")  # no format detected -> InvalidFileException
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+    assert install.refresh_plist_if_stale() is False  # logged, not raised
+    assert plist.read_bytes() == b"not a plist"  # left intact
+
+
+def test_refresh_plist_handles_truncated_xml_plist(tmp_path, monkeypatch):
+    # Detected-as-XML but syntactically broken -> expat ExpatError (not
+    # InvalidFileException); must still be best-effort, not a startup crash.
+    plist = tmp_path / "agent.plist"
+    plist.write_bytes(b'<?xml version="1.0"?>\n<plist version="1.0"><dict><key>Label')
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+    assert install.refresh_plist_if_stale() is False
+
+
 def test_resolve_install_shim_requires_canonical_pipx_path(monkeypatch):
     canonical = Path.home() / ".local" / "bin" / "spacelabel"
     # Canonical pipx shim exists -> use it.
