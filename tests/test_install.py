@@ -23,8 +23,10 @@ def test_build_launch_agent_shape():
     assert d["RunAtLoad"] is True
     assert d["KeepAlive"] == {"SuccessfulExit": False}
     assert d["ProcessType"] == "Interactive"
-    assert d["StandardOutPath"] == str(HOME / "Library/Logs/spacelabel/agent.log")
-    assert d["StandardErrorPath"] == str(HOME / "Library/Logs/spacelabel/agent.err.log")
+    # Both streams -> the single boot-catch file (NOT agent.log, which the
+    # RotatingFileHandler owns alone — no launchd double-writer).
+    assert d["StandardOutPath"] == str(HOME / "Library/Logs/spacelabel/agent.boot.log")
+    assert d["StandardErrorPath"] == str(HOME / "Library/Logs/spacelabel/agent.boot.log")
 
 
 def test_render_plist_roundtrips():

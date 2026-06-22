@@ -111,8 +111,12 @@ def build_launch_agent(home: Path, shim: Path) -> dict[str, object]:
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ProcessType": "Interactive",
-        "StandardOutPath": str(log_root / "agent.log"),
-        "StandardErrorPath": str(log_root / "agent.err.log"),
+        # Both streams go to a single boot-catch file (NOT agent.log): agent.log is
+        # owned solely by the RotatingFileHandler, so launchd never double-writes the
+        # file the handler rotates. agent.boot.log only catches catastrophic output
+        # before logging is up; run_agent caps it (DECISIONS 2.6 / DESIGN §9.2).
+        "StandardOutPath": str(log_root / "agent.boot.log"),
+        "StandardErrorPath": str(log_root / "agent.boot.log"),
     }
 
 

@@ -364,12 +364,13 @@ Machine-readable output (`spaces`, `label list`) goes to **stdout** via `click.e
 <key>RunAtLoad</key>              <true/>
 <key>KeepAlive</key>              <dict><key>SuccessfulExit</key><false/></dict>  <!-- restart on crash only; a menu Quit stays stopped -->
 <key>ProcessType</key>           <string>Interactive</string>
-<key>StandardOutPath</key>        <string>/Users/<you>/Library/Logs/spacelabel/agent.log</string>
-<key>StandardErrorPath</key>      <string>/Users/<you>/Library/Logs/spacelabel/agent.err.log</string>
+<key>StandardOutPath</key>        <string>/Users/<you>/Library/Logs/spacelabel/agent.boot.log</string>
+<key>StandardErrorPath</key>      <string>/Users/<you>/Library/Logs/spacelabel/agent.boot.log</string>
 ```
 - `launchctl print gui/$UID` on the reference machine reports `session = Aqua` — a daemon (system domain) would have **no** window-server access and the status item would never appear.
 - Manage with **launchctl 2.0** (not the deprecated `load -w`): `launchctl bootstrap gui/$(id -u) "$PLIST"`; `launchctl kickstart -k gui/$(id -u)/dev.mcsim.spacelabel`; `launchctl bootout gui/$(id -u)/dev.mcsim.spacelabel` to unload (bootout → bootstrap to apply edits).
 - **`install.py` must:** template the real `$HOME` into the absolute paths; `mkdir -p ~/Library/Logs/spacelabel` **before** first load (else launchd can't open the log paths); ensure exactly one instance.
+- **Single rotated log + a bounded boot-catch file (one managed log; no double-writer):** `agent.log` is owned **solely** by the `RotatingFileHandler` (1 MB × 4) — launchd does **not** also write it. Both launchd streams (`StandardOutPath` *and* `StandardErrorPath`) go to a separate **`agent.boot.log`**, a near-empty safety net for catastrophic output that can't reach the logger (interpreter/import failure before `setup_logging`). `run_agent` (a) installs a `sys.excepthook` (`logging_setup.install_logging_excepthook()`) so uncaught tracebacks are logged at CRITICAL into the rotated `agent.log` rather than raw stderr, and (b) **right after winning the single-instance lock and before the crash-prone agent/config setup**, calls `logging_setup.truncate_boot_log()` which truncates `agent.boot.log` **in place** (launchd holds it open as fd 1 & 2, so never rename) once it exceeds 256 KB. Order matters: lock-first means a rejected duplicate never truncates the live agent's file; truncate-before-setup means each `KeepAlive` restart bounds the file even if the agent then crashes during startup (the only inherent residual is a crash *before* `run_agent` runs, e.g. an import error, which no in-process code can catch). This supersedes the earlier split `agent.log`/`agent.err.log` (which had two writers on `agent.log` and an unbounded `agent.err.log`). (A `newsyslog` drop-in was rejected: `~/Library/newsyslog.d/` does not exist on Tahoe and `/etc/newsyslog.d/` needs root — see DECISIONS 2.6.)
 - Interpreter pinning caveat: the pipx/uv venvs are pinned to Homebrew `python@3.14`; after a `brew upgrade python` minor bump, `pipx reinstall spacelabel` (and recreate the uv `.venv`).
 
 ### 9.3 uv (dev) — coexists with pipx, never shares an env

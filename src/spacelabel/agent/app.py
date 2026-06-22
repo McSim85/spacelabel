@@ -34,7 +34,12 @@ from PyObjCTools import AppHelper
 
 from spacelabel import labeling, store
 from spacelabel.agent import geometry
-from spacelabel.logging_setup import LogMode, setup_logging
+from spacelabel.logging_setup import (
+    LogMode,
+    install_logging_excepthook,
+    setup_logging,
+    truncate_boot_log,
+)
 
 if TYPE_CHECKING:
     from spacelabel.agent.hud import Hud
@@ -87,15 +92,27 @@ def run_agent(
     Raises:
         SystemExit: If another agent instance already holds the lock (exit 1).
     """
-    if verbose or debug:
-        setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
-    else:
-        # Honor config.log_level for the agent's file sink (takes effect at start).
+    # Configure stderr logging up front so the single-instance rejection below is
+    # visible, and route uncaught exceptions through the logger from the very start.
+    setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
+    install_logging_excepthook()
+
+    # Single-instance lock FIRST: a rejected duplicate exits here (exit 1) without
+    # touching the shared log files.
+    lock_handle = _acquire_single_instance_lock(config_path)
+
+    # Cap launchd's boot-catch file as the lock winner, BEFORE the crash-prone agent
+    # setup below — each KeepAlive restart re-enters right here, so a post-lock crash
+    # loop stays bounded (a pre-run_agent import crash is the only inherent residual).
+    truncate_boot_log()
+
+    # Switch to the quiet, rotated agent file sink unless this is a foreground/dev run
+    # (the early CLI setup above already applied --verbose/--debug). config.log_level
+    # is read here, after the lock+truncate, so it never gates the boot-log cap.
+    if not (verbose or debug):
         config = store.load_config(store.StorePaths.resolve(config_path))
         agent_level = getattr(logging, config.log_level, logging.WARNING)
         setup_logging(LogMode.AGENT, agent_level=agent_level)
-
-    lock_handle = _acquire_single_instance_lock(config_path)
 
     app = NSApplication.sharedApplication()
     delegate = AppDelegate.alloc().initWithConfigPath_(config_path)

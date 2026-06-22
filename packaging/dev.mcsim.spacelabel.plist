@@ -43,10 +43,13 @@
     <key>ProcessType</key>
     <string>Interactive</string>
 
+    <!-- Both streams -> a single boot-catch file, NOT agent.log: agent.log is owned
+         solely by the RotatingFileHandler (no launchd double-writer). This file only
+         catches catastrophic output before logging is up; run_agent caps its size. -->
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/spacelabel/agent.log</string>
+    <string>__HOME__/Library/Logs/spacelabel/agent.boot.log</string>
 
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/spacelabel/agent.err.log</string>
+    <string>__HOME__/Library/Logs/spacelabel/agent.boot.log</string>
 </dict>
 </plist>

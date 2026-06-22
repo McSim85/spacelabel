@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-__all__ = ["LogMode", "setup_logging"]
+__all__ = ["LogMode", "install_logging_excepthook", "setup_logging", "truncate_boot_log"]
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +59,14 @@ class _ColorFormatter(logging.Formatter):
 _AGENT_LOG_MAX_BYTES = 1_000_000
 _AGENT_LOG_BACKUP_COUNT = 3
 
+#: launchd boot-catch file: ``StandardOutPath`` AND ``StandardErrorPath`` point here
+#: (set by ``install.py``). It only ever catches catastrophic output that can't reach
+#: the rotated ``agent.log`` (interpreter/import failure before :func:`setup_logging`),
+#: so it stays near-empty and is truncated when it exceeds :data:`_BOOT_LOG_MAX_BYTES`
+#: — see :func:`truncate_boot_log`.
+_AGENT_BOOT_LOG_NAME = "agent.boot.log"
+_BOOT_LOG_MAX_BYTES = 256_000
+
 #: Timestamped formatter shared by the agent's file/os_log/fallback sinks.
 _TIMESTAMPED_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
@@ -77,6 +85,59 @@ def _default_agent_log_dir() -> Path:
         The per-user log directory the agent rotates its file sink into.
     """
     return Path.home() / "Library" / "Logs" / "spacelabel"
+
+
+def truncate_boot_log(log_dir: Path | None = None) -> None:
+    """Truncate the launchd boot-catch file at agent startup if it is oversized.
+
+    launchd points both ``StandardOutPath`` and ``StandardErrorPath`` at
+    ``agent.boot.log`` — a near-empty safety net for catastrophic output that can't
+    reach the rotated ``agent.log`` (an interpreter/import failure before
+    :func:`setup_logging` runs). It is not managed by
+    :class:`~logging.handlers.RotatingFileHandler`, so a crash loop (launchd
+    ``KeepAlive``) could grow it; this caps it at :data:`_BOOT_LOG_MAX_BYTES`.
+
+    Truncates **in place** (``os.truncate``), never rename: launchd holds this file
+    open as fd 1 *and* fd 2 (``O_APPEND``), so a rename would leave those fds writing
+    to the renamed backup; truncating keeps the inode launchd writes to, reset to
+    empty. Best-effort housekeeping — every filesystem error is caught, logged at
+    ``DEBUG``, and ignored so it never blocks startup.
+
+    Args:
+        log_dir: Override for the agent log directory; defaults to
+            ``~/Library/Logs/spacelabel`` (the launchd plist's log root).
+    """
+    path = (log_dir if log_dir is not None else _default_agent_log_dir()) / _AGENT_BOOT_LOG_NAME
+    try:
+        if path.exists() and path.stat().st_size > _BOOT_LOG_MAX_BYTES:
+            os.truncate(path, 0)
+    except OSError as exc:
+        log.debug("could not truncate %s: %s", path, exc)
+
+
+def install_logging_excepthook() -> None:
+    """Route uncaught exceptions into the package logger so they land in ``agent.log``.
+
+    Sets ``sys.excepthook`` so a crash's traceback is logged at ``CRITICAL`` through
+    the rotated file sink instead of only hitting raw stderr (the bounded
+    boot-catch file). ``KeyboardInterrupt`` is delegated to the default hook so a
+    foreground/dev ``Ctrl-C`` stays clean.
+    """
+
+    def _hook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: object,
+    ) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)  # type: ignore[arg-type]
+            return
+        logging.getLogger(_ROOT_LOGGER_NAME).critical(
+            "uncaught exception",
+            exc_info=(exc_type, exc_value, exc_tb),  # type: ignore[arg-type]
+        )
+
+    sys.excepthook = _hook
 
 
 def _attach_stderr_fallback(root: logging.Logger) -> None:
