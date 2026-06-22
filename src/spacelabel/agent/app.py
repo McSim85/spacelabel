@@ -276,17 +276,21 @@ class AppDelegate(NSObject):
         # A non-managed startup failure is stashed here (PyObjC swallows a re-raise
         # from the callback); run_agent re-raises it after the loop stops.
         self._startup_error: BaseException | None = None
-        # Last live Space-topology signature; the poll refreshes when it changes
-        # (catches a Mission Control reorder that fires no notification). DECISIONS 4.3.
+        # Last live Space-topology signature; the (3 s) CGS poll refreshes when it
+        # changes — catches a Mission Control reorder, which fires no notification and
+        # is invisible in the spaces plist (DECISIONS 4.3).
         self._topology_sig: tuple[tuple[str, str, bool], ...] | None = None
-        # Spaces-plist mtime, used only as the create/delete fallback while CGS is down.
+        # Spaces-plist path + last mtime: a cheap stat() watched every 1 s tick for
+        # create/delete (the plist flushes on those — §3.4), independent of CGS.
+        from spacelabel.platform import spaces_plist
+
+        self._spaces_plist_path = spaces_plist.plist_path()
         self._spaces_plist_mtime: float = 0.0
-        # Tick counter so the CGS topology read runs every _TOPOLOGY_POLL_EVERY_TICKS,
-        # not every 1 s tick (the mtime checks stay at 1 s).
+        # Tick counter so the EXPENSIVE CGS topology read runs every
+        # _TOPOLOGY_POLL_EVERY_TICKS, not every 1 s tick (cheap mtime checks stay at 1 s).
         self._topology_poll_ticks: int = 0
-        # Last CGS-topology read result: True until a read returns None. While False
-        # (CGS down) the cheap spaces-plist mtime fallback runs every 1 s tick.
-        self._cgs_topology_ok: bool = True
+        # One-shot guard so an UNEXPECTED topology-read error warns once, not per tick.
+        self._topology_read_warned: bool = False
         # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
         # reactively (on a pill click) and on a fresh opt-in; a failure disables
         # capture with a surfaced reason rather than a silent no-op.
@@ -538,33 +542,28 @@ class AppDelegate(NSObject):
             # Display names are reloaded fresh in _rebuild_menu; just trigger a refresh.
             self._displays_mtime = displays_mtime
             changed = True
-        # Live-topology diff: a Mission Control reorder (and create/delete) fires no
-        # Space/screen notification, so detect it by comparing a cheap CGS signature
-        # (DECISIONS 4.3). The CGS read (~1 ms, ~6 ms p99) is the only EXPENSIVE part,
-        # so it runs every ~3 s (decoupled from the 1 s mtime poll) on the AppKit main
-        # thread (off-main deferred — 4.2). Reorder freshness ≤3 s is imperceptible.
+        # Cheap create/delete signal (every 1 s tick, like config/labels/displays): the
+        # spaces plist flushes on Space create/delete (§3.4), so its mtime is a stat()-
+        # cost watch that works whether or not CGS is available. Reorder is invisible
+        # there — that needs the CGS read below.
+        # Detect only — do NOT commit the baseline here; _refresh_impl commits it on a
+        # successful render, so a failed render retries on the next tick (codex P2),
+        # consistent with the CGS topology baseline below.
+        if _mtime(self._spaces_plist_path) != self._spaces_plist_mtime:
+            changed = True
+        # Live-topology diff for REORDER: a Mission Control reorder fires no
+        # notification and is invisible in the plist, so compare a live CGS signature
+        # (DECISIONS 4.3). The CGS read (~1 ms, ~6 ms p99) is the one EXPENSIVE part, so
+        # it runs every ~3 s on the AppKit main thread (off-main deferred — 4.2);
+        # reorder freshness ≤3 s is imperceptible. The baseline is committed by
+        # _refresh_impl only on a successful render, so a failed render retries on the
+        # next ~3 s tick (codex P1; the cadence bounds the retry — no tight loop).
         self._topology_poll_ticks += 1
         if self._topology_poll_ticks >= _TOPOLOGY_POLL_EVERY_TICKS:
             self._topology_poll_ticks = 0
             topology_sig = self._live_topology_signature()
-            self._cgs_topology_ok = topology_sig is not None
             if topology_sig is not None and topology_sig != self._topology_sig:
-                # Advance the baseline now (not only on a successful render): a
-                # persistently-failing refresh must not become a retry loop (codex P1).
-                # A one-off failed refresh leaves surfaces briefly stale, recovered on
-                # the next event or topology change.
-                log.debug("space topology changed (reorder/create/delete); refreshing")
-                self._topology_sig = topology_sig
-                changed = True
-        # CGS-down create/delete fallback: the spaces plist is just a stat(), so check
-        # it on EVERY 1 s tick (not the 3 s CGS cadence) while CGS is unavailable — it
-        # flushes on create/delete (§3.4; reorder is invisible there and needs CGS).
-        if not self._cgs_topology_ok:
-            from spacelabel.platform import spaces_plist
-
-            spaces_plist_mtime = _mtime(spaces_plist.plist_path())
-            if spaces_plist_mtime != self._spaces_plist_mtime:
-                self._spaces_plist_mtime = spaces_plist_mtime
+                log.debug("space topology changed (reorder); refreshing")
                 changed = True
         if changed:
             self._refresh()
@@ -631,13 +630,21 @@ class AppDelegate(NSObject):
         self._update_hud(title)
         self._update_overlays(spaces, ordinals)
         self._update_wallpaper(title)
-        # Resync the topology baseline AFTER a successful render — but only from a live
-        # CGS read (not the plist fallback, whose ordering/current-Space is stale and
-        # would spuriously diff vs the next CGS poll — codex P2). Every refresh
-        # (observer- or poll-driven) lands here, so an ordinary space switch doesn't
-        # make the next poll fire a redundant refresh (codex P2).
+        # Resync the change-detection baselines AFTER a render, so the next poll doesn't
+        # re-fire for what we just reflected (codex P2):
+        #  - CGS topology signature: only from a LIVE CGS read (`from_cgs`). The plist
+        #    fallback's order/current is stale and would spuriously diff vs the next CGS
+        #    poll; `enumerate_spaces` raises on a nil/empty result, so `from_cgs` implies
+        #    real data.
+        #  - spaces-plist mtime: always. `read_spaces()` is self-recovering (returns []
+        #    for a missing/corrupt plist, never raises), so an empty result is a STABLE
+        #    "nothing parseable" state, not a transient one — committing the mtime
+        #    consumes the signal and avoids a 1 Hz re-fire loop on a corrupt plist. A
+        #    genuine mid-write is self-correcting: cfprefsd writes atomically and the
+        #    write's completion bumps the mtime again, so it's re-detected next tick.
         if from_cgs:
             self._topology_sig = _topology_signature(spaces)
+        self._spaces_plist_mtime = _mtime(self._spaces_plist_path)
 
     @objc.python_method
     def _title_for_active(self, active_space: Space | None, ordinals: dict[int, int]) -> str:
@@ -1060,13 +1067,23 @@ class AppDelegate(NSObject):
 
         try:
             spaces = cgs.enumerate_spaces(include_unlabelable=True)
-        except Exception as exc:
-            # Last-resort: this runs in the NSTimer callback BEFORE _refresh()'s guard,
-            # so any failure (CGSUnavailableError, ImportError, or an OSError/runtime
-            # error from the AppKit/CoreFoundation display discovery enumerate_spaces
-            # also does) must degrade to "no info this tick", never break the poll.
-            log.debug("topology poll: read unavailable: %s", exc)
+        except (cgs.CGSUnavailableError, ImportError) as exc:
+            # Expected degradation (CGS symbols unavailable / PyObjC absent): quiet.
+            log.debug("topology poll: CGS unavailable: %s", exc)
             return None
+        except Exception:
+            # Unexpected (e.g. a display-discovery bug): never break the NSTimer
+            # callback, but surface it at WARNING ONCE — reorder detection lives only
+            # here, so a silently-disabled feature must be diagnosable, not a DEBUG-only
+            # black hole (codex P3). Re-armed once a read succeeds again.
+            if not self._topology_read_warned:
+                self._topology_read_warned = True
+                log.warning(
+                    "topology poll: unexpected read error; reorder detection degraded",
+                    exc_info=True,
+                )
+            return None
+        self._topology_read_warned = False  # recovered -> re-arm the one-shot warning
         return _topology_signature(spaces)
 
     @objc.python_method
