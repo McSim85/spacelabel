@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import click
 
-from spacelabel import __version__, labeling, model, store
+from spacelabel import __version__, completion, labeling, model, store
 from spacelabel.logging_setup import LogMode, setup_logging
 
 log = logging.getLogger(__name__)
@@ -372,7 +373,7 @@ def label() -> None:
 
 
 @label.command("set")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_space_target)
 @click.argument("text")
 @click.pass_obj
 def label_set(ctx: AppContext, target: str, text: str) -> None:
@@ -420,7 +421,7 @@ def label_list(ctx: AppContext, as_json: bool) -> None:
 
 
 @label.command("clear")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_label_clear_target)
 @click.pass_obj
 def label_clear(ctx: AppContext, target: str) -> None:
     """Clear the label for a Space UUID (or 'current')."""
@@ -497,7 +498,7 @@ def _load_notes(paths: store.StorePaths, uuid: str) -> list[model.Note]:
 
 
 @note.command("add")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_note_target)
 @click.argument("text")
 @click.pass_obj
 def note_add(ctx: AppContext, target: str, text: str) -> None:
@@ -515,7 +516,7 @@ def note_add(ctx: AppContext, target: str, text: str) -> None:
 
 
 @note.command("list")
-@click.argument("target", required=False)
+@click.argument("target", required=False, shell_complete=completion.complete_note_target)
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON array to stdout.")
 @click.pass_obj
 def note_list(ctx: AppContext, target: str | None, as_json: bool) -> None:
@@ -570,7 +571,7 @@ def _set_note_done(ctx: AppContext, target: str, index: int, done: bool) -> None
 
 
 @note.command("done")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_note_target)
 @click.argument("index", type=int)
 @click.pass_obj
 def note_done(ctx: AppContext, target: str, index: int) -> None:
@@ -579,7 +580,7 @@ def note_done(ctx: AppContext, target: str, index: int) -> None:
 
 
 @note.command("undone")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_note_target)
 @click.argument("index", type=int)
 @click.pass_obj
 def note_undone(ctx: AppContext, target: str, index: int) -> None:
@@ -588,7 +589,7 @@ def note_undone(ctx: AppContext, target: str, index: int) -> None:
 
 
 @note.command("clear")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_note_target)
 @click.argument("index", type=int, required=False)
 @click.pass_obj
 def note_clear(ctx: AppContext, target: str, index: int | None) -> None:
@@ -623,7 +624,7 @@ def config() -> None:
 
 
 @config.command("get", epilog=_CONFIG_KEYS_EPILOG)
-@click.argument("key", required=False)
+@click.argument("key", required=False, shell_complete=completion.complete_config_key)
 @click.pass_obj
 def config_get(ctx: AppContext, key: str | None) -> None:
     """Print a single configuration value, or the whole config as JSON if no key."""
@@ -641,7 +642,7 @@ def config_get(ctx: AppContext, key: str | None) -> None:
 
 
 @config.command("set", epilog=_CONFIG_KEYS_EPILOG)
-@click.argument("key")
+@click.argument("key", shell_complete=completion.complete_config_key)
 @click.argument("value")
 @click.pass_obj
 def config_set(ctx: AppContext, key: str, value: str) -> None:
@@ -661,7 +662,7 @@ def display() -> None:
 
 
 @display.command("set")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_display_target)
 @click.argument("name")
 @click.pass_obj
 def display_set(ctx: AppContext, target: str, name: str) -> None:
@@ -731,7 +732,7 @@ def display_list(ctx: AppContext, as_json: bool) -> None:
 
 
 @display.command("clear")
-@click.argument("target")
+@click.argument("target", shell_complete=completion.complete_display_target)
 @click.pass_obj
 def display_clear(ctx: AppContext, target: str) -> None:
     """Clear a display's custom name (revert to the system name)."""
@@ -897,6 +898,63 @@ def _display_names(paths: store.StorePaths) -> dict[str, str]:
     for disp in topology:
         names[disp.uuid] = displays.resolved_name(disp, overrides)
     return names
+
+
+@cli.group("completion")
+def completion_group() -> None:
+    """Manage shell tab-completion (zsh/bash/fish)."""
+
+
+@completion_group.command("install")
+@click.option(
+    "--shell",
+    "shell",
+    type=click.Choice(["auto", *completion.SHELLS]),
+    default="auto",
+    help="Target shell (default: auto-detect from $SHELL).",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="Print the activation snippet (to stdout) without writing any file.",
+)
+def completion_install(shell: str, dry_run: bool) -> None:
+    """Enable tab-completion by adding click's activation snippet to your shell rc.
+
+    The snippet is printed on stdout (the data channel) so ``--dry-run`` output can
+    be piped or eval'd; all human guidance goes to stderr. The write is idempotent.
+    """
+    if shell == "auto":
+        try:
+            shell = completion.detect_shell(os.environ.get("SHELL", ""))
+        except completion.UnknownShellError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    try:
+        home = Path.home()
+    except RuntimeError as exc:  # home dir can't be resolved (unusual launch context)
+        log.error("could not resolve home directory for completion install: %s", exc)
+        raise click.ClickException(f"could not resolve your home directory: {exc}") from exc
+
+    snippet = completion.completion_snippet(shell)
+    target = completion.completion_rc_path(shell, home)
+
+    if dry_run:
+        click.echo(snippet)
+        _diag(f"Would add the above to {target} (run without --dry-run to apply).")
+        return
+
+    try:
+        added = completion.ensure_line(target, snippet)
+    except OSError as exc:
+        log.error("could not write completion snippet to %s: %s", target, exc)
+        raise click.ClickException(f"could not enable completion: {exc}") from exc
+
+    if added:
+        _diag(f"Enabled {shell} completion in {target}. Restart your shell or source it.")
+    else:
+        _diag(f"{shell} completion already enabled in {target}; nothing to do.")
 
 
 def main() -> None:

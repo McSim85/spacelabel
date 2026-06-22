@@ -161,6 +161,7 @@ spacelabel [--config PATH] [--verbose] [--debug] [--version]
   label prune                   drop labels for Spaces that no longer exist
   display set <uuid|current> <name> | display list | display clear <uuid|current>
   config get <key> | config set <key> <value>
+  completion install [--shell auto|zsh|bash|fish] [--dry-run]   # shell tab-completion
 ```
 
 Example — label the current Space and list them all:

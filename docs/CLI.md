@@ -22,7 +22,8 @@ spacelabel [GLOBAL OPTIONS] COMMAND [ARGS...]
 (`spacelabel = "spacelabel.cli:main"`). The long-lived menu-bar agent is the
 **`agent`** subcommand (what the LaunchAgent runs). **There is no `run`
 subcommand** — every other subcommand is a one-shot action that shares the same
-CGS-read and JSON-store layers, then exits.
+CGS-read and JSON-store layers, then exits. Shell tab-completion is available via
+`spacelabel completion install` (§3.10).
 
 The two design invariants that make the CLI scriptable:
 
@@ -336,6 +337,42 @@ system name. `current` resolves to the active (menu-bar-owning) display.
   `2` empty name / missing arguments.
 
 > Find a display's UUID with `spacelabel display list` (or use `current`).
+
+---
+
+### 3.10 `completion` — shell tab-completion
+
+```text
+spacelabel completion install [--shell {auto|zsh|bash|fish}] [--dry-run]
+```
+
+Enable tab-completion for the `spacelabel` CLI. Completion is powered by click's
+built-in support; `completion install` writes the one-line activation snippet into
+the right rc file for your shell (idempotently). `--shell auto` (the default)
+detects the shell from `$SHELL`.
+
+- **`--dry-run`** — print the activation snippet to **stdout** (the data channel)
+  and the target path to stderr, without writing anything. Pipe or `eval` it
+  yourself, or just copy it.
+- **Where it writes:** zsh → `~/.zshrc`; bash → `~/.bash_profile` (bash on macOS
+  is a login shell, which sources `~/.bash_profile`/`~/.profile`, not `~/.bashrc`;
+  an existing `~/.profile` is used if present); fish →
+  `~/.config/fish/completions/spacelabel.fish`. Re-running is a no-op once present.
+  Restart your shell (or `source` the file) to activate.
+- **Exit:** `0` success (including the idempotent no-op); `1` if `$SHELL` can't be
+  detected (pass `--shell`) or the rc file can't be written.
+
+**Dynamic completions** (beyond command/option names): the `{<uuid>|current}`
+arguments of `label set/clear`, `note …`, and `display set/clear` complete to
+`current` plus live Space/display UUIDs (labeled or note-bearing UUIDs are added
+for the `clear`/operate paths so an offline entry stays completable); `config
+get/set` keys complete from the live config schema; `mode` names complete from the
+fixed choice set. All completion reads are best-effort — if the live CGS/display
+read is unavailable, completion degrades to `current` (and any stored UUIDs)
+rather than erroring.
+
+> Manual activation without the installer (zsh):
+> `eval "$(_SPACELABEL_COMPLETE=zsh_source spacelabel)"`.
 
 ---
 
