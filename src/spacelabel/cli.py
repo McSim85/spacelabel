@@ -917,13 +917,15 @@ def completion_group() -> None:
     "--dry-run",
     "dry_run",
     is_flag=True,
-    help="Print the activation snippet (to stdout) without writing any file.",
+    help="Print the generated completion script (to stdout) without writing any file.",
 )
 def completion_install(shell: str, dry_run: bool) -> None:
-    """Enable tab-completion by adding click's activation snippet to your shell rc.
+    """Install tab-completion by writing the generated script to your shell's dir.
 
-    The snippet is printed on stdout (the data channel) so ``--dry-run`` output can
-    be piped or eval'd; all human guidance goes to stderr. The write is idempotent.
+    Writes click's generated completion script into the shell's auto-load directory
+    (fish/bash need no rc edit; zsh drops ``_spacelabel`` onto ``$fpath``). The
+    script is printed on stdout (the data channel) for ``--dry-run`` so it can be
+    piped/redirected; all human guidance goes to stderr. Writing is idempotent.
     """
     if shell == "auto":
         try:
@@ -932,29 +934,30 @@ def completion_install(shell: str, dry_run: bool) -> None:
             raise click.ClickException(str(exc)) from exc
 
     try:
-        home = Path.home()
-    except RuntimeError as exc:  # home dir can't be resolved (unusual launch context)
-        log.error("could not resolve home directory for completion install: %s", exc)
-        raise click.ClickException(f"could not resolve your home directory: {exc}") from exc
-
-    snippet = completion.completion_snippet(shell)
-    target = completion.completion_rc_path(shell, home)
+        script = completion.generate_script(shell)
+    except completion.CompletionError as exc:
+        log.error("could not generate completion script: %s", exc)
+        raise click.ClickException(str(exc)) from exc
 
     if dry_run:
-        click.echo(snippet)
-        _diag(f"Would add the above to {target} (run without --dry-run to apply).")
+        # The script itself never needs $HOME; print it, then show the target
+        # best-effort so a home-less context still emits the script (exit 0).
+        click.echo(script)
+        try:
+            target = completion.completion_target(shell)
+            _diag(f"Would write the above to {target} (run without --dry-run to apply).")
+        except completion.CompletionError as exc:
+            _diag(f"Would write the above to your {shell} completion dir (target n/a: {exc}).")
         return
 
     try:
-        added = completion.ensure_line(target, snippet)
-    except OSError as exc:
-        log.error("could not write completion snippet to %s: %s", target, exc)
-        raise click.ClickException(f"could not enable completion: {exc}") from exc
+        result = completion.install_completion(shell)
+    except completion.CompletionError as exc:
+        log.error("completion install failed: %s", exc)
+        raise click.ClickException(str(exc)) from exc
 
-    if added:
-        _diag(f"Enabled {shell} completion in {target}. Restart your shell or source it.")
-    else:
-        _diag(f"{shell} completion already enabled in {target}; nothing to do.")
+    verb = "Wrote" if result.changed else "Already up to date —"
+    _diag(f"{verb} {result.shell} completion at {result.path}. {result.hint}")
 
 
 def main() -> None:
