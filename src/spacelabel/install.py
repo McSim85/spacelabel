@@ -182,9 +182,11 @@ def refresh_plist_if_stale() -> bool:
     Lets a package upgrade roll out plist changes (e.g. the log-path / single-writer
     migration) **without** the user re-running ``spacelabel install``: the agent
     calls this at startup, and a stale on-disk plist is rewritten so the corrected
-    config applies on the next login or ``launchctl kickstart``. The existing
-    program path (the user's actual shim) is preserved, so this never repoints the
-    agent. No-op when not installed or already current.
+    config applies on the next login or ``launchctl kickstart``. Only the keys this
+    migration changes (the std-stream paths) are patched — ``ProgramArguments``
+    (including any ``--config``/extra args) and every other key are preserved, so it
+    never repoints the agent or drops customizations. No-op when not installed or
+    already current.
 
     Best-effort: a read/parse/write failure is logged and returns ``False`` rather
     than raising — a logging-housekeeping refresh must never block agent startup.
@@ -206,11 +208,15 @@ def refresh_plist_if_stale() -> bool:
     if not (isinstance(program, list) and program and isinstance(program[0], str)):
         log.warning("installed plist %s has no usable ProgramArguments; not refreshing", path)
         return False
-    shim = Path(program[0])
-    if current == build_launch_agent(Path.home(), shim):
-        return False  # already current
+    # Patch ONLY the std-stream paths; keep ProgramArguments + any other keys as-is.
+    expected = build_launch_agent(Path.home(), Path(program[0]))
+    updated = dict(current)
+    updated["StandardOutPath"] = expected["StandardOutPath"]
+    updated["StandardErrorPath"] = expected["StandardErrorPath"]
+    if updated == current:
+        return False  # std paths already current
     try:
-        _atomic_write_bytes(path, render_plist(Path.home(), shim))
+        _atomic_write_bytes(path, plistlib.dumps(updated))
     except OSError as exc:
         log.warning("could not refresh stale plist %s: %s", path, exc)
         return False

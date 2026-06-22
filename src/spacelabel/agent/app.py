@@ -14,9 +14,12 @@ visibility loop. Config/labels live-reload via a 1.0s mtime-poll ``NSTimer``
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import logging
 import os
+import sys
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,6 +60,52 @@ log = logging.getLogger(__name__)
 
 #: Live-reload poll interval (seconds) for config.json / labels.json mtimes.
 _RELOAD_INTERVAL = 1.0
+
+#: How often (in poll ticks ~= seconds) the managed agent re-caps the launchd boot
+#: log, so recurring AppKit/PyObjC stderr can't grow it unbounded mid-session.
+_BOOT_CAP_EVERY_TICKS = 60
+
+
+def _is_interactive() -> bool:
+    """Whether any standard stream is a TTY (a manual terminal run, not launchd).
+
+    A ``None``, closed, or detached stream counts as non-interactive: ``isatty()``
+    raises ``ValueError`` on a closed file (and ``OSError`` on some detached ones),
+    which must be treated as "no usable terminal", never crash startup.
+    """
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            if stream is not None and stream.isatty():
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+def _is_managed_run(
+    config_path: Path | None, *, verbose: bool, debug: bool, interactive: bool
+) -> bool:
+    """Whether this is the launchd-managed production run (PURE given ``interactive``).
+
+    Requires **all** of: default config (no ``--config``), no ``--verbose``/``--debug``,
+    and **no controlling TTY**. A launchd LaunchAgent has its std streams wired to
+    files (not a terminal), so ``interactive`` is False; a manual ``spacelabel agent``
+    from a shell is a TTY and must NOT be treated as the managed agent (no plist
+    rewrite / boot-log truncation / ``os._exit`` hard-exit). The TTY check is a
+    **fail-safe** launchd proxy: a wrong env-var positive (e.g. ``XPC_SERVICE_NAME``)
+    that the real agent must satisfy could silently disable the migration, whereas a
+    LaunchAgent reliably has no TTY, so this heuristic never breaks the real agent.
+
+    Residual: a *manual* non-TTY run (``nohup``/redirected/CI) also passes this and is
+    treated as managed. The harm is bounded — these actions run only **after** the
+    single-instance lock, so only the lock winner acts, and a non-TTY run that wins
+    the lock is the de-facto agent (truncate/refresh are idempotent/beneficial,
+    ``os._exit`` just exits non-zero with output already redirected). A *verified*
+    launchd signal is deferred to Phase 6 (it can't be validated against real launchd
+    here, and a wrong positive would be worse than this bounded misclassification).
+    """
+    return config_path is None and not (verbose or debug) and not interactive
+
 
 #: Menu checkmark states (NSControlStateValue*).
 _STATE_ON = NSControlStateValueOn
@@ -110,13 +159,18 @@ def run_agent(
     # Single-instance lock: a rejected duplicate has logged the reason and exits here.
     lock_handle = _acquire_single_instance_lock(config_path)
 
-    # Lock winner only: cap the unrotated launchd capture file(s), and — for the real
-    # LaunchAgent run — migrate a stale on-disk plist so the log-path/single-writer
-    # fix rolls out on upgrade without a manual `spacelabel install` (applies next
-    # login). truncate runs before the AppKit run loop so each KeepAlive restart
-    # bounds the file even if startup later crashes.
-    truncate_boot_log()
-    if not (verbose or debug):
+    # Only the production login agent (default config, no dev flags) touches the
+    # shared/installed artifacts: a `--config` or `--debug`/`--verbose` foreground run
+    # must NOT zero the real agent's boot log or rewrite the user's installed plist.
+    managed = _is_managed_run(
+        config_path, verbose=verbose, debug=debug, interactive=_is_interactive()
+    )
+    if managed:
+        # Cap the unrotated launchd capture file(s), and migrate a stale on-disk plist
+        # so the log-path/single-writer fix rolls out on upgrade without a manual
+        # `spacelabel install` (applies next login). Before the run loop so each
+        # KeepAlive restart bounds the file even if startup later crashes.
+        truncate_boot_log()
         from spacelabel import install as install_mod
 
         install_mod.refresh_plist_if_stale()
@@ -125,11 +179,23 @@ def run_agent(
     delegate = AppDelegate.alloc().initWithConfigPath_(config_path)
     # Keep the lock file handle alive for the process lifetime via the delegate.
     delegate.retainLockHandle_(lock_handle)
+    delegate.set_managed_run(managed)
     app.setDelegate_(delegate)
     log.info("starting spacelabel agent run loop")
     # installInterrupt=True wires a SIGINT handler so Ctrl-C stops the AppKit run
     # loop during a foreground/dev run (the LaunchAgent stops via the menu Quit).
     AppHelper.runEventLoop(installInterrupt=True)
+
+    # A non-managed startup failure stops the loop and stashes the error here (PyObjC
+    # swallows a re-raise inside the callback). It was already logged; surface the
+    # STANDARD traceback on stderr (the logging sys.excepthook would suppress it) and
+    # exit non-zero via SystemExit (which bypasses the excepthook, no double-logging).
+    if delegate._startup_error is not None:
+        # stderr may be closed/detached; the failure was already logged at startup, so
+        # a failed print here must not mask it.
+        with contextlib.suppress(ValueError, OSError):
+            traceback.print_exception(delegate._startup_error)
+        raise SystemExit(1)
 
 
 def _acquire_single_instance_lock(config_path: Path | None) -> object:
@@ -183,6 +249,13 @@ class AppDelegate(NSObject):
         self._config_mtime: float = 0.0
         self._labels_mtime: float = 0.0
         self._displays_mtime: float = 0.0
+        # Set by run_agent: True only for the launchd-managed production run (gates
+        # the startup hard-exit and the periodic boot-log cap below).
+        self._is_managed_run: bool = False
+        self._boot_cap_ticks: int = 0
+        # A non-managed startup failure is stashed here (PyObjC swallows a re-raise
+        # from the callback); run_agent re-raises it after the loop stops.
+        self._startup_error: BaseException | None = None
         # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
         # reactively (on a pill click) and on a fresh opt-in; a failure disables
         # capture with a surfaced reason rather than a silent no-op.
@@ -197,17 +270,25 @@ class AppDelegate(NSObject):
         """Keep the single-instance lock handle alive for the process lifetime."""
         self._lock_handle = handle
 
+    @objc.python_method
+    def set_managed_run(self, managed: bool) -> None:
+        """Record whether this is the launchd-managed production run (see run_agent)."""
+        self._is_managed_run = managed
+
     def applicationDidFinishLaunching_(self, _notification: object) -> None:  # noqa: N802
         """Set accessory policy, build surfaces, wire the observer, start polling.
 
-        On an unexpected startup failure, **fail fast**: log a traceback to
-        ``agent.log``, then ``os._exit(1)`` so launchd (``KeepAlive``) restarts the
-        agent and the single-instance lock is released. Swallowing-and-continuing
-        instead would leave the agent alive but un-initialized while still holding
-        the lock, so launchd would not restart it and every later ``spacelabel
-        agent`` would exit "already running" — a wedged agent (codex P1). The log
-        goes to the rotated ``agent.log`` (PyObjC would otherwise route a raw
-        callback exception to stderr / the boot file).
+        On an unexpected startup failure, log a traceback to the configured sink
+        first (PyObjC would otherwise route a raw callback exception only to stderr /
+        the boot file). Then, for the **launchd-managed** run, ``os._exit(1)`` so
+        launchd (``KeepAlive``) restarts the agent and releases the single-instance
+        lock — swallowing-and-continuing would wedge it (un-initialized, holding the
+        lock, never restarted; codex P1). For a **foreground/dev or ``--config``
+        run**, a plain ``raise`` would be *swallowed by PyObjC* at this callback
+        boundary (same reason :meth:`_refresh` documents), leaving a wedged process;
+        so the error is stashed and the run loop is stopped, and :func:`run_agent`
+        re-raises it from a normal frame for a clean terminal traceback + non-zero
+        exit (with normal Python/atexit cleanup, not an abrupt ``os._exit``).
         """
         try:
             NSApplication.sharedApplication().setActivationPolicy_(
@@ -219,16 +300,17 @@ class AppDelegate(NSObject):
             self._start_observer()
             self._start_reload_timer()
             # Call the UNGUARDED impl: the first paint is part of startup, so a
-            # failure here must reach this fail-fast handler (the guarded _refresh
-            # would swallow it and leave the agent wedged — codex P1).
+            # failure here must reach this handler (the guarded _refresh would
+            # swallow it and leave the agent wedged — codex P1).
             self._refresh_impl()
-        except Exception:
-            # Last-resort startup guard: log to agent.log, then exit non-zero so
-            # launchd restarts us cleanly (releasing the lock) instead of wedging.
-            log.critical(
-                "unexpected error during agent startup; exiting for restart", exc_info=True
-            )
-            os._exit(1)
+        except Exception as exc:
+            log.critical("unexpected error during agent startup", exc_info=True)
+            if self._is_managed_run:
+                os._exit(1)  # launchd-managed: fail fast for a clean KeepAlive restart
+            # Foreground/dev or --config: PyObjC would swallow a re-raise here, so
+            # stash it and stop the loop; run_agent re-raises it from a normal frame.
+            self._startup_error = exc
+            AppHelper.stopEventLoop()
 
     # -- construction -----------------------------------------------------------
 
@@ -395,6 +477,15 @@ class AppDelegate(NSObject):
     @objc.python_method
     def _poll_reload(self, _timer: object) -> None:
         """Reload config/labels if either file's mtime changed (live reload)."""
+        # Periodically re-cap the launchd boot log so recurring AppKit/PyObjC stderr
+        # warnings can't grow it unbounded across a long-lived session (it is
+        # otherwise capped only at startup). Managed run only — a dev/--config run
+        # must not zero the real agent's boot log.
+        if self._is_managed_run:
+            self._boot_cap_ticks += 1
+            if self._boot_cap_ticks >= _BOOT_CAP_EVERY_TICKS:
+                self._boot_cap_ticks = 0
+                truncate_boot_log()
         config_mtime = _mtime(self._paths.config_file)
         labels_mtime = _mtime(self._paths.labels_file)
         displays_mtime = _mtime(self._paths.displays_file)

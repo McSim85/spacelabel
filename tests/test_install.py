@@ -71,6 +71,28 @@ def test_refresh_plist_rewrites_stale_preserving_shim(tmp_path, monkeypatch):
     assert install.refresh_plist_if_stale() is False  # idempotent
 
 
+def test_refresh_plist_preserves_extra_program_arguments(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    home = Path(tmp_path)
+    shim = home / ".local" / "bin" / "spacelabel"
+    plist = tmp_path / "agent.plist"
+    d = build_launch_agent(home, shim)
+    # A hand-edited plist with extra ProgramArguments + the old (pre-migration) paths.
+    d["ProgramArguments"] = [str(shim), "agent", "--config", "/etc/spacelabel.json"]
+    d["StandardOutPath"] = str(home / "Library/Logs/spacelabel/agent.log")
+    d["StandardErrorPath"] = str(home / "Library/Logs/spacelabel/agent.err.log")
+    plist.write_bytes(plistlib.dumps(d))
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+
+    assert install.refresh_plist_if_stale() is True
+    refreshed = plistlib.loads(plist.read_bytes())
+    # Extra args preserved; only the std-stream paths migrated.
+    assert refreshed["ProgramArguments"] == [str(shim), "agent", "--config", "/etc/spacelabel.json"]
+    boot = str(home / "Library/Logs/spacelabel/agent.boot.log")
+    assert refreshed["StandardOutPath"] == boot
+    assert refreshed["StandardErrorPath"] == boot
+
+
 def test_refresh_plist_noop_when_current(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     home = Path(tmp_path)
