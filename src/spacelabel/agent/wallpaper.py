@@ -5,12 +5,17 @@ per-``NSScreen``, and on Sonoma+/Tahoe ``WallpaperAgent`` owns wallpaper state,
 self-reverts programmatic sets, and silently flips "Show on all spaces" off on
 repeated sets (DESIGN.md §6.4, DECISIONS.md §7). So this is cosmetic/best-effort.
 
-We never modify the user's wallpaper file. We capture the current desktop image as
-a per-display *base*, composite the label onto a COPY at a configurable anchor, and
-write it to a managed cache (``~/Library/Caches/spacelabel/wallpaper/``, one PNG per
-display, overwritten in place, stale files swept). To avoid compositing a label onto
-our own previous output (label-on-label), a base whose path is inside our cache is
-ignored in favour of the remembered original.
+The user's original wallpaper file is only ever *read* (loaded as the compositing
+base) -- it is **never written**. We capture the current desktop image as a
+per-display *base*, composite the label onto it, and write the result to our own
+managed cache as a per-display composite
+(``~/Library/Caches/spacelabel/wallpaper/display-<id>.png`` -- a stable filename
+rewritten at the same path on each render, written atomically; stale files swept);
+**that cache file** is then set as the desktop image via
+``setDesktopImageURL:forScreen:``. "Rewritten in place" therefore refers to the
+cache composite at its stable path, not the user's original. To avoid compositing a
+label onto our own previous output (label-on-label), a base whose path is inside our
+cache is ignored in favour of the remembered original.
 
 To survive an agent restart -- when the system reports *our own* composite as the
 current wallpaper and the live original is no longer discoverable -- the captured
