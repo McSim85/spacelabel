@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/McSim85/spacelabel/compare/v0.2.0...v0.3.0) (2026-06-22)
+
+
+### Features
+
+* **wallpaper:** persist originals across restarts + font size & TTL eviction ([#19](https://github.com/McSim85/spacelabel/issues/19)) ([bf5c808](https://github.com/McSim85/spacelabel/commit/bf5c8084c81592a7b170686b17789da207c8d2a7))
+
 ## [0.2.0](https://github.com/McSim85/spacelabel/compare/v0.1.1...v0.2.0) (2026-06-21)
 
 
