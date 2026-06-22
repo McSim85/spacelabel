@@ -22,7 +22,8 @@ spacelabel [GLOBAL OPTIONS] COMMAND [ARGS...]
 (`spacelabel = "spacelabel.cli:main"`). The long-lived menu-bar agent is the
 **`agent`** subcommand (what the LaunchAgent runs). **There is no `run`
 subcommand** — every other subcommand is a one-shot action that shares the same
-CGS-read and JSON-store layers, then exits.
+CGS-read and JSON-store layers, then exits. Shell tab-completion is available via
+`spacelabel completion install` (§3.10).
 
 The two design invariants that make the CLI scriptable:
 
@@ -336,6 +337,52 @@ system name. `current` resolves to the active (menu-bar-owning) display.
   `2` empty name / missing arguments.
 
 > Find a display's UUID with `spacelabel display list` (or use `current`).
+
+---
+
+### 3.10 `completion` — shell tab-completion
+
+```text
+spacelabel completion install [--shell {auto|zsh|bash|fish}] [--dry-run]
+```
+
+Enable tab-completion for the `spacelabel` CLI. `completion install` writes click's
+**generated completion script** into your shell's auto-load directory (so the shell
+picks it up automatically — it does not run `spacelabel` on every startup, and for
+fish/bash it needs no rc edit). `--shell auto` (the default) detects the shell from
+`$SHELL`. Writing is idempotent (rewrites only when the script changes).
+
+- **`--dry-run`** — print the generated completion script to **stdout** (the data
+  channel) and the target path to stderr, without writing anything. Works even
+  when `$HOME` can't be resolved (the script itself needs no home dir).
+- **Where it writes:**
+  - **fish** → `~/.config/fish/completions/spacelabel.fish` (auto-loaded; honors
+    `$XDG_CONFIG_HOME`). No rc edit.
+  - **bash** → `~/.local/share/bash-completion/completions/spacelabel` (auto-loaded
+    by bash-completion v2; honors `$BASH_COMPLETION_USER_DIR`/`$XDG_DATA_HOME`). No
+    rc edit. **Requires bash ≥ 4.4 + bash-completion v2** — the macOS system bash
+    3.2 cannot use click completion (install Homebrew `bash` + `bash-completion@2`).
+  - **zsh** → `_spacelabel` dropped into a dedicated completion directory already on
+    your `$fpath` (prefers `~/.zfunc`, then a `…/completions` dir, then a
+    `…/site-functions` dir; framework plugin/cache dirs are never used). If no
+    suitable `$fpath` directory exists, it creates `~/.zfunc` and adds it to `fpath`
+    in `~/.zshrc` (one time). After install, restart the shell or run
+    `autoload -Uz compinit && compinit` (if it doesn't appear, `rm -f ~/.zcompdump*`
+    and restart).
+- **Exit:** `0` success (including the idempotent no-op); `1` if `$SHELL` can't be
+  detected (pass `--shell`) or the target can't be written.
+
+**Dynamic completions** (beyond command/option names): the `{<uuid>|current}`
+arguments of `label set/clear`, `note …`, and `display set/clear` complete to
+`current` plus live Space/display UUIDs (stored labeled/note-bearing UUIDs are also
+offered on the `clear`/operate paths so an offline entry stays completable);
+`config get/set` keys complete from the live config schema; `mode` names complete
+from the fixed choice set. All completion reads are best-effort — if the live
+CGS/display read is unavailable, completion degrades to `current` (and any stored
+UUIDs) rather than erroring, and never prints to your shell.
+
+> Prefer not to install a file? Activate for the current shell only (zsh):
+> `eval "$(_SPACELABEL_COMPLETE=zsh_source spacelabel)"`.
 
 ---
 
