@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/McSim85/spacelabel/compare/v0.4.0...v0.5.0) (2026-06-22)
+
+
+### Features
+
+* **agent:** single rotated log + bounded boot-catch file ([#23](https://github.com/McSim85/spacelabel/issues/23)) ([18784f6](https://github.com/McSim85/spacelabel/commit/18784f6c7a51760fb535700e37020fee2365f79d))
+
 ## [0.4.0](https://github.com/McSim85/spacelabel/compare/v0.3.0...v0.4.0) (2026-06-22)
 
 
