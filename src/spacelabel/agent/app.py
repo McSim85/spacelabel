@@ -44,6 +44,7 @@ from spacelabel.logging_setup import (
     setup_logging,
     truncate_boot_log,
 )
+from spacelabel.platform.cgs import CGSUnavailableError  # exception class only (no objc at import)
 
 if TYPE_CHECKING:
     from spacelabel.agent.hud import Hud
@@ -73,17 +74,28 @@ _BOOT_CAP_EVERY_TICKS = 60
 _TOPOLOGY_POLL_EVERY_TICKS = 3
 
 
-def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, bool], ...]:
+def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, int], ...]:
     """Ordered signature of the live Space topology for change detection (PURE).
 
-    A ``(display_uuid, uuid, is_current)`` tuple per Space, **in order**. Compared
+    A ``(display_uuid, uuid, id64)`` tuple per Space, **in order**. Compared
     tick-to-tick by the poll so a Mission Control **reorder** — which fires neither
-    ``activeSpaceDidChange`` nor ``didChangeScreenParameters`` (the active Space is
-    unchanged) — is still detected, alongside create/delete (length changes) and a
-    current-Space change. Order is preserved (no sorting): a reorder permutes the
-    tuple even when the set of UUIDs is identical. (DECISIONS.md §4.3.)
+    ``activeSpaceDidChange`` nor ``didChangeScreenParameters`` — is detected,
+    alongside create/delete (length changes). Order is preserved (no sorting): a
+    reorder permutes the tuple even when the set is identical. (DECISIONS.md §4.3.)
+
+    Field choices:
+    * **No ``is_current``:** an active-Space change is the observer's job
+      (``activeSpaceDidChange``), not the poll's, and ``is_current`` is unreliable
+      per-tick — ``enumerate_spaces`` degrades to no-current-marked for a display
+      whose ``CGSManagedDisplayGetCurrentSpace`` read fails, which would otherwise
+      flip the signature and trigger a bogus "topology changed" every few seconds.
+    * **``id64`` included:** with ``include_unlabelable=True`` several Spaces on a
+      display can share ``uuid == ""`` (no persistent UUID yet); ``id64`` keeps them
+      distinct so reordering two no-UUID desktops still changes the signature. This
+      is an in-memory, tick-to-tick, never-persisted value — *not* a label key — so
+      the "never key on id64" invariant (DECISIONS 1.4) does not apply.
     """
-    return tuple((space.display_uuid, space.uuid, space.is_current) for space in spaces)
+    return tuple((space.display_uuid, space.uuid, space.id64) for space in spaces)
 
 
 def _is_interactive() -> bool:
@@ -279,7 +291,7 @@ class AppDelegate(NSObject):
         # Last live Space-topology signature; the (3 s) CGS poll refreshes when it
         # changes — catches a Mission Control reorder, which fires no notification and
         # is invisible in the spaces plist (DECISIONS 4.3).
-        self._topology_sig: tuple[tuple[str, str, bool], ...] | None = None
+        self._topology_sig: tuple[tuple[str, str, int], ...] | None = None
         # Spaces-plist path + last mtime: a cheap stat() watched every 1 s tick for
         # create/delete (the plist flushes on those — §3.4), independent of CGS.
         from spacelabel.platform import spaces_plist
@@ -600,6 +612,12 @@ class AppDelegate(NSObject):
     @objc.python_method
     def _refresh_impl(self) -> None:
         """Read the active Space, resolve its title, and update every surface."""
+        # Capture the spaces-plist mtime BEFORE reading topology, so the baseline we
+        # commit corresponds to the data we read. If cfprefsd atomically replaces the
+        # plist during this refresh, the on-disk mtime moves past this value and the
+        # next poll re-detects it — committing a post-read mtime would instead swallow
+        # that create/delete (codex P1 TOCTOU).
+        plist_mtime_at_read = _mtime(self._spaces_plist_path)
         # Include unlabelable Spaces so the menu/overlays surface every display.
         spaces, from_cgs = self._read_spaces_with_source(include_unlabelable=True)
         ordinals = labeling.assign_ordinals(spaces)
@@ -644,7 +662,7 @@ class AppDelegate(NSObject):
         #    write's completion bumps the mtime again, so it's re-detected next tick.
         if from_cgs:
             self._topology_sig = _topology_signature(spaces)
-        self._spaces_plist_mtime = _mtime(self._spaces_plist_path)
+        self._spaces_plist_mtime = plist_mtime_at_read
 
     @objc.python_method
     def _title_for_active(self, active_space: Space | None, ordinals: dict[int, int]) -> str:
@@ -1045,7 +1063,11 @@ class AppDelegate(NSObject):
 
         try:
             return cgs.enumerate_spaces(include_unlabelable=include_unlabelable), True
-        except (cgs.CGSUnavailableError, ImportError) as exc:  # ImportError == PyObjC absent
+        except cgs.CGSUnavailableError as exc:
+            # Only the expected CGS-symbol absence falls back. An ImportError here is a
+            # real import regression (the agent is macOS-only with PyObjC as a hard dep),
+            # so let it propagate -> CRITICAL via _refresh's guard / startup fail-fast,
+            # rather than silently switching to the stale plist (codex P2).
             log.warning("CGS unavailable; falling back to plist: %s", exc)
         try:
             return spaces_plist.read_spaces(), False
@@ -1054,7 +1076,7 @@ class AppDelegate(NSObject):
             return [], False
 
     @objc.python_method
-    def _live_topology_signature(self) -> tuple[tuple[str, str, bool], ...] | None:
+    def _live_topology_signature(self) -> tuple[tuple[str, str, int], ...] | None:
         """Live CGS topology signature for the poll, or ``None`` if unreadable.
 
         Live CGS **only** (no plist fallback): a reorder is invisible in the stale
@@ -1063,19 +1085,21 @@ class AppDelegate(NSObject):
         the tick rather than mistaking a transient CGS hiccup for a topology change
         (which would spuriously refresh). Logged at DEBUG only — not per-second WARNs.
         """
-        from spacelabel.platform import cgs
-
         try:
+            from spacelabel.platform import cgs
+
             spaces = cgs.enumerate_spaces(include_unlabelable=True)
-        except (cgs.CGSUnavailableError, ImportError) as exc:
-            # Expected degradation (CGS symbols unavailable / PyObjC absent): quiet.
+        except CGSUnavailableError as exc:  # module-level name (not the in-try import)
+            # Expected degradation (CGS symbols unavailable): quiet.
             log.debug("topology poll: CGS unavailable: %s", exc)
             return None
         except Exception:
-            # Unexpected (e.g. a display-discovery bug): never break the NSTimer
-            # callback, but surface it at WARNING ONCE — reorder detection lives only
-            # here, so a silently-disabled feature must be diagnosable, not a DEBUG-only
-            # black hole (codex P3). Re-armed once a read succeeds again.
+            # Anything else must NOT escape this NSTimer callback — including an
+            # ImportError from the cgs import line above, or a real bug in the
+            # CGS/display stack (the agent is macOS-only with PyObjC as a hard dep, so
+            # these are regressions, not expected absences). Surface ONCE at WARNING:
+            # reorder detection lives only here, so a silently-disabled feature must be
+            # diagnosable, not a DEBUG black hole (codex P2/P3). Re-armed on recovery.
             if not self._topology_read_warned:
                 self._topology_read_warned = True
                 log.warning(

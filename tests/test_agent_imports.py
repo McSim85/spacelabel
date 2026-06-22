@@ -217,30 +217,50 @@ def test_is_managed_run_only_default_config_nondev_noninteractive():
     assert _is_managed_run(Path("/tmp/x.json"), **base) is False
 
 
-def test_topology_signature_detects_reorder_create_delete_current():
+def test_topology_signature_detects_reorder_create_delete():
     from spacelabel.agent.app import _topology_signature
     from spacelabel.model import Space
 
     d = "DISP-UUID"
-    a = Space(uuid="A", display_uuid=d, is_current=True)
-    b = Space(uuid="B", display_uuid=d)
-    c = Space(uuid="C", display_uuid=d)
+    a = Space(uuid="A", display_uuid=d, id64=1, is_current=True)
+    b = Space(uuid="B", display_uuid=d, id64=2)
+    c = Space(uuid="C", display_uuid=d, id64=3)
 
     base = _topology_signature([a, b, c])
-    # Same topology, same objects/order -> equal signature (no refresh).
-    assert _topology_signature([a, b, c]) == base
-    # Reorder (same set of UUIDs, different order) -> different signature.
-    assert _topology_signature([b, a, c]) != base
-    # Create / delete (membership change) -> different signature.
-    assert _topology_signature([a, b]) != base
-    assert _topology_signature([a, b, c, Space(uuid="D", display_uuid=d)]) != base
-    # Current-Space change only -> different signature.
-    moved_current = [
-        Space(uuid="A", display_uuid=d),
-        Space(uuid="B", display_uuid=d, is_current=True),
-        Space(uuid="C", display_uuid=d),
+    assert _topology_signature([a, b, c]) == base  # stable -> no refresh
+    assert _topology_signature([b, a, c]) != base  # reorder
+    assert _topology_signature([a, b]) != base  # delete
+    assert _topology_signature([a, b, c, Space(uuid="D", display_uuid=d, id64=4)]) != base  # create
+
+
+def test_topology_signature_ignores_current_space_change():
+    # A pure active-Space change must NOT change the signature: space switches are the
+    # observer's (activeSpaceDidChange) job, and is_current is unreliable per-tick.
+    from spacelabel.agent.app import _topology_signature
+    from spacelabel.model import Space
+
+    d = "DISP-UUID"
+    before = [
+        Space(uuid="A", display_uuid=d, id64=1, is_current=True),
+        Space(uuid="B", display_uuid=d, id64=2),
     ]
-    assert _topology_signature(moved_current) != base
+    after = [
+        Space(uuid="A", display_uuid=d, id64=1),
+        Space(uuid="B", display_uuid=d, id64=2, is_current=True),
+    ]
+    assert _topology_signature(after) == _topology_signature(before)
+
+
+def test_topology_signature_distinguishes_unlabelable_by_id64():
+    # Two no-UUID (uuid == "") desktops on one display stay distinct via id64, so
+    # reordering them is still detected (uuid alone would collapse them).
+    from spacelabel.agent.app import _topology_signature
+    from spacelabel.model import Space
+
+    d = "DISP-UUID"
+    u1 = Space(uuid="", display_uuid=d, id64=10)
+    u2 = Space(uuid="", display_uuid=d, id64=11)
+    assert _topology_signature([u1, u2]) != _topology_signature([u2, u1])
 
 
 def test_is_interactive_tolerates_closed_stream(monkeypatch):
