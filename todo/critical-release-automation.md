@@ -4,6 +4,10 @@
 before running.
 **Run in a fresh session.**
 
+> **Status (2026-06-22):** release-please + Renovate are **shipped** and releasing (currently v0.6.1); the repo is now **public**. Two things are **deferred — pipx-only for now** (Max's call: fewer manual/maintenance steps until the product is stable):
+> - **PyPI publish (§3):** keep the workflow staged but **do not flip it on** until the product is stable. Teammates install via `pipx install git+https://github.com/McSim85/spacelabel`.
+> - **Homebrew tap (§4): DEFERRED to post-PyPI / v1.0.** When revived, change the plan below: use an **in-repo self-tap** (`Formula/spacelabel.rb` in *this* repo, mirroring quiknode-labs `optic`/`ssh-mcp`) rather than a separate `McSim85/homebrew-spacelabel` repo; ship a Python `virtualenv_install_with_resources` formula (not a frozen binary); and **land the `_resolve_install_shim` brew-path fix FIRST** (prerequisite — `spacelabel install` must resolve the real brew bin path, not the hardcoded `~/.local/bin/spacelabel` pipx shim, or the agent can't be installed under a brew install). Cross-refs: phase-6 §1C (deferred), `todo/uninstall-purge.md`.
+
 ---
 
 ## Shared Baseline
@@ -89,7 +93,7 @@ Create `.github/workflows/publish.yml`:
   sdist are architecture-independent from pip's perspective; the macOS-specific
   PyObjC wheels are already on PyPI and are resolved at install time, not build time)
 
-### 4. Homebrew tap
+### 4. Homebrew tap — DEFERRED (post-PyPI / v1.0; see Status callout above)
 
 Create (or document) a tap repo update step:
 - After a successful PyPI publish, bump the `url:` + `sha256:` in the Homebrew
