@@ -80,6 +80,17 @@ def _live_space_uuids() -> list[str]:
     return [space.uuid for space in spaces if space.uuid]
 
 
+def _current_space_uuid() -> str | None:
+    """Live current-Space UUID via CGS; ``None`` on any failure (never raises)."""
+    import spacelabel.platform.cgs as cgs_mod
+
+    try:
+        return cgs_mod.read_active_space_uuid() or None
+    except (cgs_mod.CGSUnavailableError, ImportError) as exc:  # ImportError == PyObjC absent
+        log.debug("completion: current Space read failed: %s", exc)
+        return None
+
+
 def _live_display_uuids() -> list[str]:
     """Live display UUIDs via topology discovery; ``[]`` on any failure."""
     from spacelabel.platform import displays as displays_mod
@@ -168,14 +179,34 @@ def complete_label_clear_target(
 
 
 def complete_note_target(ctx: click.Context, param: click.Parameter, incomplete: str) -> list[str]:
-    """Complete a ``note`` TARGET: ``current`` + live + any stored (labeled/noted) UUID.
+    """Complete a ``note add``/``note list`` TARGET: ``current`` + live + any stored UUID.
 
-    ``note add`` on a labeled-but-offline Space is valid, so labeled UUIDs are
-    offered too, not only note-bearing ones.
+    ``note add`` on a labeled-but-offline Space is valid (it grows the first task),
+    and ``note list`` works on any Space, so labeled UUIDs are offered too — not
+    only note-bearing ones.
     """
     del param
     stored = _stored_uuids(ctx, want_text=True, want_notes=True)
     return _filter(["current", *_live_space_uuids(), *stored], incomplete)
+
+
+def complete_noted_space_target(
+    ctx: click.Context, param: click.Parameter, incomplete: str
+) -> list[str]:
+    """Complete a ``note done``/``undone``/``clear`` TARGET: ``current`` + live + note-bearing.
+
+    These operate on an existing task, so any target without notes would raise
+    ``NoteIndexError``. Only note-bearing stored UUIDs are offered (a note-bearing
+    Space is in the store whether or not it is currently live), and ``current`` is
+    offered only when the live current Space actually has notes.
+    """
+    del param
+    noted = _stored_uuids(ctx, want_text=False, want_notes=True)
+    candidates = list(noted)
+    current = _current_space_uuid()
+    if current is not None and any(current.upper() == uuid.upper() for uuid in noted):
+        candidates.insert(0, "current")
+    return _filter(candidates, incomplete)
 
 
 def complete_display_target(
@@ -259,6 +290,34 @@ def _fish_completion_path() -> Path:
     """Auto-loaded fish completion file (honors ``$XDG_CONFIG_HOME``)."""
     base = os.environ.get("XDG_CONFIG_HOME") or str(_home() / ".config")
     return Path(base) / "fish" / "completions" / f"{_PROG}.fish"
+
+
+def _bash_too_old() -> bool:
+    """Return whether the ``bash`` on PATH is known to be older than 4.4.
+
+    click cannot generate working completion for bash < 4.4 (macOS ships 3.2).
+    Best-effort: if ``bash`` can't be found or its version can't be parsed, returns
+    ``False`` so we don't block a user whose target bash lives elsewhere.
+    """
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("completion: could not determine bash version: %s", exc)
+        return False
+    parts = proc.stdout.split()
+    if len(parts) < 2:
+        return False
+    try:
+        version = (int(parts[0]), int(parts[1]))
+    except ValueError:
+        return False
+    return version < (4, 4)
 
 
 def _bash_completion_path() -> Path:
@@ -434,33 +493,40 @@ def ensure_zsh_fpath(rc: Path, directory: Path) -> bool:
     """Idempotently put ``directory`` on ``fpath`` + run ``compinit`` via ``rc``.
 
     Used only when no writable directory was found on the live ``$fpath``. Appends
-    a single marked block (matched by an exact marker line, under an exclusive
-    ``flock`` with flush+fsync so concurrent installs can't double-append). Returns
-    ``True`` if it wrote the block, ``False`` if the marker was already present.
+    a single block under an exclusive ``flock`` (flush+fsync so concurrent installs
+    can't double-append). Returns ``True`` if it wrote, ``False`` if the wiring is
+    already present. Raises :class:`CompletionError` if ``rc`` can't be opened or
+    written (e.g. it is a directory or read-only) — never a raw ``OSError``.
+
+    Idempotency keys on the **functional** ``fpath=(…)`` line, not the marker
+    comment: a stray leftover comment from a partial edit must not make us skip the
+    actual wiring (which would write ``_spacelabel`` yet never load it).
     """
     # Shell-quote the path so a home dir with spaces/glob chars doesn't break the
     # fpath assignment when .zshrc is sourced.
     quoted = shlex.quote(str(directory))
-    block = f"{_HEADER}\nfpath=({quoted} $fpath)\nautoload -Uz compinit && compinit\n"
-    rc.parent.mkdir(parents=True, exist_ok=True)
-    # "a+" creates the file if absent; O_APPEND keeps writes at EOF after seek(0).
-    with rc.open("a+", encoding="utf-8", errors="surrogateescape") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            handle.seek(0)
-            existing = handle.read()
-            # Exact-line marker match (not substring) so the marker inside a comment
-            # or quoted example does not count as installed.
-            if any(line.strip() == _HEADER for line in existing.splitlines()):
-                return False
-            if existing and not existing.endswith("\n"):
-                handle.write("\n")
-            handle.write(block)
-            handle.flush()
-            os.fsync(handle.fileno())
-            return True
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    fpath_line = f"fpath=({quoted} $fpath)"
+    block = f"{_HEADER}\n{fpath_line}\nautoload -Uz compinit && compinit\n"
+    try:
+        rc.parent.mkdir(parents=True, exist_ok=True)
+        # "a+" creates the file if absent; O_APPEND keeps writes at EOF after seek(0).
+        with rc.open("a+", encoding="utf-8", errors="surrogateescape") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                existing = handle.read()
+                if any(line.strip() == fpath_line for line in existing.splitlines()):
+                    return False
+                if existing and not existing.endswith("\n"):
+                    handle.write("\n")
+                handle.write(block)
+                handle.flush()
+                os.fsync(handle.fileno())
+                return True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError as exc:
+        raise CompletionError(f"could not update {rc}: {exc}") from exc
 
 
 def install_completion(shell: str) -> InstallResult:
@@ -477,12 +543,13 @@ def install_completion(shell: str) -> InstallResult:
         target = _fish_completion_path()
         hint = "Restart your shell; fish auto-loads the file."
     elif shell == "bash":
+        if _bash_too_old():
+            raise CompletionError(
+                "the `bash` on PATH is older than 4.4 (macOS ships 3.2), which cannot "
+                "use click completion. Install Homebrew bash + bash-completion@2, then retry."
+            )
         target = _bash_completion_path()
-        hint = (
-            "Restart your shell. Requires bash >= 4.4 with bash-completion v2 "
-            "(macOS system bash 3.2 cannot use it — install Homebrew bash + "
-            "bash-completion@2)."
-        )
+        hint = "Restart your shell. Requires bash-completion v2 to be sourced."
     else:  # zsh
         target, needs_rc = _zsh_completion_path()
         hint = (

@@ -571,7 +571,7 @@ def _set_note_done(ctx: AppContext, target: str, index: int, done: bool) -> None
 
 
 @note.command("done")
-@click.argument("target", shell_complete=completion.complete_note_target)
+@click.argument("target", shell_complete=completion.complete_noted_space_target)
 @click.argument("index", type=int)
 @click.pass_obj
 def note_done(ctx: AppContext, target: str, index: int) -> None:
@@ -580,7 +580,7 @@ def note_done(ctx: AppContext, target: str, index: int) -> None:
 
 
 @note.command("undone")
-@click.argument("target", shell_complete=completion.complete_note_target)
+@click.argument("target", shell_complete=completion.complete_noted_space_target)
 @click.argument("index", type=int)
 @click.pass_obj
 def note_undone(ctx: AppContext, target: str, index: int) -> None:
@@ -589,7 +589,7 @@ def note_undone(ctx: AppContext, target: str, index: int) -> None:
 
 
 @note.command("clear")
-@click.argument("target", shell_complete=completion.complete_note_target)
+@click.argument("target", shell_complete=completion.complete_noted_space_target)
 @click.argument("index", type=int, required=False)
 @click.pass_obj
 def note_clear(ctx: AppContext, target: str, index: int | None) -> None:
@@ -933,15 +933,14 @@ def completion_install(shell: str, dry_run: bool) -> None:
         except completion.UnknownShellError as exc:
             raise click.ClickException(str(exc)) from exc
 
-    try:
-        script = completion.generate_script(shell)
-    except completion.CompletionError as exc:
-        log.error("could not generate completion script: %s", exc)
-        raise click.ClickException(str(exc)) from exc
-
     if dry_run:
-        # The script itself never needs $HOME; print it, then show the target
-        # best-effort so a home-less context still emits the script (exit 0).
+        # Generate once here (the script itself never needs $HOME); print it, then
+        # show the target best-effort so a home-less context still emits it (exit 0).
+        try:
+            script = completion.generate_script(shell)
+        except completion.CompletionError as exc:
+            log.error("could not generate completion script: %s", exc)
+            raise click.ClickException(str(exc)) from exc
         click.echo(script)
         try:
             target = completion.completion_target(shell)
@@ -950,6 +949,8 @@ def completion_install(shell: str, dry_run: bool) -> None:
             _diag(f"Would write the above to your {shell} completion dir (target n/a: {exc}).")
         return
 
+    # install_completion is the sole generator on the write path (no double work,
+    # and no duplicated click bash-version warning).
     try:
         result = completion.install_completion(shell)
     except completion.CompletionError as exc:

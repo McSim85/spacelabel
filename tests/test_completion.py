@@ -114,6 +114,32 @@ def test_complete_note_target_includes_labeled_and_noted(ctx, monkeypatch) -> No
     assert U1 in out  # live
 
 
+def test_complete_noted_space_target_only_note_bearing(ctx, monkeypatch) -> None:
+    monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", lambda **_: _spaces())
+    monkeypatch.setattr(completion, "_current_space_uuid", lambda: U3)  # current has notes
+    labels = {
+        U3: Label(text="", notes=[Note(text="task")]),  # note-bearing
+        U1: Label(text="Email"),  # live but no notes
+        "LABEL-ONLY-0000-0000-0000-000000000000": Label(text="Reading"),  # offline, no notes
+    }
+    monkeypatch.setattr(store, "load_labels", lambda _paths: labels)
+    out = _run(completion.complete_noted_space_target, ctx)
+    assert U3 in out  # note-bearing -> valid `note done/clear` target
+    assert "current" in out  # the current Space (U3) has notes
+    assert U1 not in out  # live but note-less -> would NoteIndexError
+    assert "LABEL-ONLY-0000-0000-0000-000000000000" not in out  # offline label-only
+
+
+def test_complete_noted_space_target_excludes_current_without_notes(ctx, monkeypatch) -> None:
+    monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", lambda **_: _spaces())
+    monkeypatch.setattr(completion, "_current_space_uuid", lambda: U1)  # current has NO notes
+    labels = {U3: Label(text="", notes=[Note(text="t")])}
+    monkeypatch.setattr(store, "load_labels", lambda _paths: labels)
+    out = _run(completion.complete_noted_space_target, ctx)
+    assert U3 in out
+    assert "current" not in out  # current Space has no notes -> not offered
+
+
 def test_complete_display_target(ctx, monkeypatch) -> None:
     topo = [Display(uuid=DISP_A, cg_display_id=1), Display(uuid=DISP_B, cg_display_id=2)]
     monkeypatch.setattr("spacelabel.platform.displays.discover_topology", lambda: topo)
@@ -309,6 +335,22 @@ def test_ensure_zsh_fpath_quotes_paths_with_spaces(tmp_path) -> None:
     assert "Home Dir" in body and "fpath=(/" not in body  # the raw unquoted form is absent
 
 
+def test_ensure_zsh_fpath_rewires_when_only_comment_present(tmp_path) -> None:
+    rc = tmp_path / ".zshrc"
+    # A stray marker comment from a partial edit must NOT count as installed.
+    rc.write_text(f"{completion._HEADER}\n# (fpath line was removed)\n", encoding="utf-8")
+    directory = tmp_path / ".zfunc"
+    assert completion.ensure_zsh_fpath(rc, directory) is True
+    assert f"fpath=({shlex.quote(str(directory))} $fpath)" in rc.read_text(encoding="utf-8")
+
+
+def test_ensure_zsh_fpath_unwritable_rc_is_completion_error(tmp_path) -> None:
+    rc = tmp_path / ".zshrc"
+    rc.mkdir()  # rc is a directory -> open() raises -> clean CompletionError
+    with pytest.raises(completion.CompletionError):
+        completion.ensure_zsh_fpath(rc, tmp_path / ".zfunc")
+
+
 # ---- install_completion (library) ------------------------------------------
 
 
@@ -321,6 +363,40 @@ def test_install_completion_fish_writes_generated_script(tmp_path, monkeypatch) 
     assert "complete --no-files --command spacelabel" in result.path.read_text(encoding="utf-8")
     # Second call is idempotent (script unchanged).
     assert completion.install_completion("fish").changed is False
+
+
+class _FakeProc:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+
+def test_bash_too_old_parses_version(monkeypatch) -> None:
+    monkeypatch.setattr(completion.subprocess, "run", lambda *a, **k: _FakeProc("3 2\n"))
+    assert completion._bash_too_old() is True
+    monkeypatch.setattr(completion.subprocess, "run", lambda *a, **k: _FakeProc("5 2\n"))
+    assert completion._bash_too_old() is False
+    monkeypatch.setattr(completion.subprocess, "run", lambda *a, **k: _FakeProc(""))
+    assert completion._bash_too_old() is False  # unparseable -> best-effort, don't block
+
+
+def test_install_bash_rejects_old_bash(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(completion, "_bash_too_old", lambda: True)
+    with pytest.raises(completion.CompletionError):
+        completion.install_completion("bash")
+
+
+def test_install_bash_writes_with_new_bash(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("BASH_COMPLETION_USER_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(completion, "_bash_too_old", lambda: False)
+    result = completion.install_completion("bash")
+    assert result.path == (
+        tmp_path / ".local" / "share" / "bash-completion" / "completions" / "spacelabel"
+    )
+    assert result.changed is True
+    assert "_spacelabel_completion" in result.path.read_text(encoding="utf-8")
 
 
 def test_install_completion_zsh_into_fpath_dir_no_rc_edit(tmp_path, monkeypatch) -> None:
