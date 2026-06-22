@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import io
 import logging
+import sys
 
-from spacelabel.logging_setup import _ColorFormatter, _use_color
+from spacelabel.logging_setup import (
+    _BOOT_LOG_MAX_BYTES,
+    _ColorFormatter,
+    _use_color,
+    install_logging_excepthook,
+    truncate_boot_log,
+)
 
 
 class _Tty(io.StringIO):
@@ -54,3 +61,88 @@ def test_use_color_requires_tty_and_no_no_color(monkeypatch):
     assert _use_color(io.StringIO()) is False  # not a tty
     monkeypatch.setenv("NO_COLOR", "1")
     assert _use_color(_Tty()) is False  # honors NO_COLOR
+
+
+# ---- agent.boot.log truncation (launchd boot-catch file) -------------------
+
+
+def test_truncate_boot_log_noop_when_small(tmp_path):
+    boot = tmp_path / "agent.boot.log"
+    boot.write_text("ok", encoding="utf-8")
+    truncate_boot_log(tmp_path)
+    assert boot.read_text(encoding="utf-8") == "ok"  # under cap -> untouched
+
+
+def test_truncate_boot_log_noop_when_absent(tmp_path):
+    truncate_boot_log(tmp_path)  # no file present -> no error, nothing created
+    assert not (tmp_path / "agent.boot.log").exists()
+
+
+def test_truncate_boot_log_truncates_when_large(tmp_path):
+    boot = tmp_path / "agent.boot.log"
+    boot.write_bytes(b"x" * (_BOOT_LOG_MAX_BYTES + 1))
+    truncate_boot_log(tmp_path)
+    assert boot.exists() and boot.stat().st_size == 0  # truncated in place
+
+
+def test_truncate_boot_log_inplace_keeps_open_fd(tmp_path):
+    # launchd holds the boot file open as fd 1/2 (O_APPEND); an in-place truncate
+    # means that fd keeps writing to the SAME inode, now reset.
+    boot = tmp_path / "agent.boot.log"
+    boot.write_bytes(b"x" * (_BOOT_LOG_MAX_BYTES + 1))
+    with boot.open("a", encoding="utf-8") as held:
+        truncate_boot_log(tmp_path)
+        held.write("after\n")
+        held.flush()
+    assert boot.read_text(encoding="utf-8") == "after\n"
+
+
+def test_truncate_boot_log_also_caps_legacy_err_log(tmp_path):
+    # Upgrade path: an old plist still feeds agent.err.log until it is refreshed, so
+    # truncate_boot_log must cap it too (keeps the original unbounded bug fixed).
+    boot = tmp_path / "agent.boot.log"
+    boot.write_bytes(b"x" * (_BOOT_LOG_MAX_BYTES + 1))
+    legacy = tmp_path / "agent.err.log"
+    legacy.write_bytes(b"y" * (_BOOT_LOG_MAX_BYTES + 1))
+    truncate_boot_log(tmp_path)
+    assert boot.stat().st_size == 0
+    assert legacy.stat().st_size == 0
+
+
+def test_truncate_boot_log_swallows_errors(tmp_path):
+    # A non-existent log dir must not raise (best-effort housekeeping).
+    truncate_boot_log(tmp_path / "does-not-exist")
+
+
+# ---- uncaught-exception routing into the logger ----------------------------
+
+
+def test_install_excepthook_routes_uncaught_to_logger():
+    saved = sys.excepthook
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = logging.getLogger("spacelabel")
+    logger.addHandler(handler)
+    try:
+        install_logging_excepthook()
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())  # type: ignore[misc]
+        assert any(r.levelno == logging.CRITICAL and r.exc_info for r in records)
+    finally:
+        logger.removeHandler(handler)
+        sys.excepthook = saved
+
+
+def test_install_excepthook_passes_through_keyboardinterrupt(monkeypatch):
+    saved = sys.excepthook
+    seen: dict[str, bool] = {}
+    monkeypatch.setattr(sys, "__excepthook__", lambda *a: seen.setdefault("default", True))
+    try:
+        install_logging_excepthook()
+        sys.excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
+        assert seen.get("default")  # delegated to the default hook, not logged
+    finally:
+        sys.excepthook = saved

@@ -198,3 +198,34 @@ def test_expected_public_classes_exist():
     assert callable(run_agent)
     for cls in (MenuBarItem, Hud, Overlay, WallpaperRenderer, PreferencesWindow, SpaceObserver):
         assert isinstance(cls, type)
+
+
+def test_is_managed_run_only_default_config_nondev_noninteractive():
+    from pathlib import Path
+
+    from spacelabel.agent.app import _is_managed_run
+
+    base = {"verbose": False, "debug": False, "interactive": False}
+    # Production login agent: default config, no dev flags, no TTY (launchd).
+    assert _is_managed_run(None, **base) is True
+    # A manual run from a terminal (TTY) is NOT the managed agent.
+    assert _is_managed_run(None, verbose=False, debug=False, interactive=True) is False
+    # Dev flags are never managed (no plist mutation / boot-log truncation / hard-exit).
+    assert _is_managed_run(None, verbose=True, debug=False, interactive=False) is False
+    assert _is_managed_run(None, verbose=False, debug=True, interactive=False) is False
+    # A --config run targets a throwaway store and must never touch shared artifacts.
+    assert _is_managed_run(Path("/tmp/x.json"), **base) is False
+
+
+def test_is_interactive_tolerates_closed_stream(monkeypatch):
+    import sys as _sys
+
+    from spacelabel.agent.app import _is_interactive
+
+    class _Closed:
+        def isatty(self):
+            raise ValueError("I/O operation on closed file")
+
+    # A closed stdio stream must not crash the probe; absence of a TTY -> False.
+    monkeypatch.setattr(_sys, "stdin", _Closed())
+    assert _is_interactive() is False

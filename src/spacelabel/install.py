@@ -17,7 +17,9 @@ import os
 import plistlib
 import re
 import subprocess
+import tempfile
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from spacelabel import BUNDLE_ID
 
@@ -111,8 +113,12 @@ def build_launch_agent(home: Path, shim: Path) -> dict[str, object]:
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ProcessType": "Interactive",
-        "StandardOutPath": str(log_root / "agent.log"),
-        "StandardErrorPath": str(log_root / "agent.err.log"),
+        # Both streams go to a single boot-catch file (NOT agent.log): agent.log is
+        # owned solely by the RotatingFileHandler, so launchd never double-writes the
+        # file the handler rotates. agent.boot.log only catches catastrophic output
+        # before logging is up; run_agent caps it (DECISIONS 2.6 / DESIGN §9.2).
+        "StandardOutPath": str(log_root / "agent.boot.log"),
+        "StandardErrorPath": str(log_root / "agent.boot.log"),
     }
 
 
@@ -123,6 +129,103 @@ def render_plist(home: Path, shim: Path) -> bytes:
     :param shim: Absolute path to the ``spacelabel`` console-script shim.
     """
     return plistlib.dumps(build_launch_agent(home, shim))
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically (unique temp in the same dir -> replace).
+
+    A direct ``write_bytes`` can leave a truncated plist if interrupted mid-write
+    (power loss, kill, ENOSPC), which would make the login item fail to load. The
+    temp-then-rename keeps the installed plist either fully old or fully new. A
+    **unique** temp (``mkstemp``) avoids a collision when two writers race — e.g. a
+    manual ``spacelabel install`` and the agent's ``refresh_plist_if_stale`` after an
+    upgrade — which a shared temp name would corrupt.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.replace(path)
+        _fsync_dir(path.parent)  # persist the rename itself, not just the file bytes
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort ``fsync`` of ``directory`` so a just-completed rename survives a crash.
+
+    Some filesystems reject directory fsync (``EINVAL``); since the rename already
+    succeeded, such a failure is logged at ``DEBUG`` and ignored rather than failing
+    the write.
+    """
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError as exc:
+        log.debug("could not open %s to fsync: %s", directory, exc)
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        log.debug("could not fsync directory %s: %s", directory, exc)
+    finally:
+        os.close(dir_fd)
+
+
+def refresh_plist_if_stale() -> bool:
+    """Rewrite an installed LaunchAgent plist when it differs from the template.
+
+    Lets a package upgrade roll out plist changes (e.g. the log-path / single-writer
+    migration) **without** the user re-running ``spacelabel install``: the agent
+    calls this at startup, and a stale on-disk plist is rewritten so the corrected
+    config applies on the next login or ``launchctl kickstart``. Only the keys this
+    migration changes (the std-stream paths) are patched — ``ProgramArguments``
+    (including any ``--config``/extra args) and every other key are preserved, so it
+    never repoints the agent or drops customizations. No-op when not installed or
+    already current.
+
+    Best-effort: a read/parse/write failure is logged and returns ``False`` rather
+    than raising — a logging-housekeeping refresh must never block agent startup.
+
+    Returns:
+        ``True`` if the plist was rewritten, else ``False``.
+    """
+    path = plist_path()
+    if not path.exists():
+        return False
+    try:
+        current = plistlib.loads(path.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ExpatError) as exc:
+        # ExpatError: a detected-as-XML plist that is syntactically broken (e.g. a
+        # truncated hand edit) — plistlib lets expat's error propagate. Best-effort.
+        log.warning("could not read installed plist %s to refresh it: %s", path, exc)
+        return False
+    program = current.get("ProgramArguments") if isinstance(current, dict) else None
+    if not (isinstance(program, list) and program and isinstance(program[0], str)):
+        log.warning("installed plist %s has no usable ProgramArguments; not refreshing", path)
+        return False
+    # Patch ONLY the std-stream paths; keep ProgramArguments + any other keys as-is.
+    expected = build_launch_agent(Path.home(), Path(program[0]))
+    updated = dict(current)
+    updated["StandardOutPath"] = expected["StandardOutPath"]
+    updated["StandardErrorPath"] = expected["StandardErrorPath"]
+    if updated == current:
+        return False  # std paths already current
+    try:
+        _atomic_write_bytes(path, plistlib.dumps(updated))
+    except OSError as exc:
+        log.warning("could not refresh stale plist %s: %s", path, exc)
+        return False
+    # The on-disk file is now correct; launchd keeps the already-loaded (old) config
+    # for this session, so the migration applies on the next login/reload. We do NOT
+    # bootout/bootstrap here — self-reloading the running login agent is fragile; the
+    # legacy log files stay capped meanwhile (see logging_setup.truncate_boot_log).
+    log.info("refreshed stale LaunchAgent plist %s; applies on next login or reload", path)
+    return True
 
 
 def _launchctl(args: list[str], *, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -186,7 +289,7 @@ def install_agent(*, load: bool = True) -> None:
     logs_dir(home).mkdir(parents=True, exist_ok=True)
 
     try:
-        target_plist.write_bytes(render_plist(home, shim))
+        _atomic_write_bytes(target_plist, render_plist(home, shim))
     except OSError as exc:
         log.exception("failed to write LaunchAgent plist: %s", target_plist)
         raise InstallError(f"could not write plist {target_plist}: {exc}") from exc
