@@ -294,6 +294,7 @@ spacelabel config set  <key> <value>
 Keys are **dotted paths** into `config.json` (DESIGN §7.2), e.g.
 `modes.hud`, `hud.position`, `hud.duration_ms`, `overlay.corner`,
 `overlay.show_notes`, `overlay.note_font_size`, `menubar.show_buttons_row`,
+`wallpaper.position`, `wallpaper.font_size` (int point size or `auto`),
 `debounce_ms`, `log_level`.
 
 ```sh

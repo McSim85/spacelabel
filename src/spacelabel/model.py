@@ -134,12 +134,15 @@ class OverlayConfig:
 class WallpaperConfig:
     """``config.json`` ``wallpaper`` block (cosmetic/best-effort; DESIGN.md §6.4).
 
-    The mode is toggled solely by ``modes.wallpaper``; this block only holds the
-    label placement (one of the nine anchors), composited onto the real desktop
-    image rather than a blank background.
+    The mode is toggled solely by ``modes.wallpaper``; this block holds the label
+    placement (one of the nine anchors) and font size, composited onto the real
+    desktop image rather than a blank background. ``font_size`` is an int point
+    size or the literal ``"auto"`` (computed from the display's short side, see
+    :func:`spacelabel.agent.geometry.wallpaper_font_size`).
     """
 
     position: str = "center"  # one of the nine anchors
+    font_size: int | str = "auto"  # int point size or "auto"
 
 
 def default_modes() -> dict[str, bool]:

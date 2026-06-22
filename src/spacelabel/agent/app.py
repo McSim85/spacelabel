@@ -672,7 +672,12 @@ class AppDelegate(NSObject):
         screen = self._screens_by_uuid().get(active_uuid) if active_uuid is not None else None
         if screen is None:
             screen = NSScreen.mainScreen()
-        self._wallpaper.render_and_set(title, screen=screen, position=config.wallpaper.position)
+        self._wallpaper.render_and_set(
+            title,
+            screen=screen,
+            position=config.wallpaper.position,
+            font_size=config.wallpaper.font_size,
+        )
 
     # -- menu actions -----------------------------------------------------------
 

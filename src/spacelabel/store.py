@@ -956,6 +956,13 @@ def _build_config_schema() -> dict[str, ConfigField]:
         "one of the nine anchors",
     )
     add(
+        "wallpaper.font_size",
+        lambda raw: _parse_int_or_auto("wallpaper.font_size", raw, minimum=1),
+        lambda c: c.wallpaper.font_size,
+        lambda c, v: setattr(c.wallpaper, "font_size", v),
+        'int >= 1 or "auto"',
+    )
+    add(
         "debounce_ms",
         lambda raw: _parse_int("debounce_ms", raw, minimum=0),
         lambda c: c.debounce_ms,
@@ -1010,6 +1017,7 @@ def config_to_dict(config: Config) -> dict[str, object]:
         },
         "wallpaper": {
             "position": config.wallpaper.position,
+            "font_size": config.wallpaper.font_size,
         },
         "debounce_ms": config.debounce_ms,
         "log_level": config.log_level,
@@ -1038,12 +1046,17 @@ def _coerce_str(value: object, default: str) -> str:
     return value if isinstance(value, str) else default
 
 
-def _coerce_int_or_auto(value: object, default: int | str) -> int | str:
-    """Coerce a value to ``int`` or the literal ``"auto"``, else ``default``."""
+def _coerce_int_or_auto(value: object, default: int | str, *, minimum: int = 1) -> int | str:
+    """Coerce a value to ``int`` (>= ``minimum``) or the literal ``"auto"``, else ``default``.
+
+    A loaded int below ``minimum`` falls back to ``default`` so a hand-edited
+    ``config.json`` with e.g. ``font_size: 0`` doesn't render an invisible label --
+    the same lower bound the ``config set`` parsers enforce (tolerant load, DESIGN §8.2).
+    """
     if isinstance(value, bool):
         return default
     if isinstance(value, int):
-        return value
+        return value if value >= minimum else default
     if isinstance(value, str) and value == "auto":
         return "auto"
     return default
@@ -1101,6 +1114,7 @@ def config_from_dict(data: Mapping[str, object]) -> Config:
     raw_wallpaper = _as_mapping(data.get("wallpaper"))
     wallpaper = WallpaperConfig(
         position=_coerce_str(raw_wallpaper.get("position"), defaults.wallpaper.position),
+        font_size=_coerce_int_or_auto(raw_wallpaper.get("font_size"), defaults.wallpaper.font_size),
     )
 
     return Config(
