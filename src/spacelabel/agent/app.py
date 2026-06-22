@@ -66,6 +66,19 @@ _RELOAD_INTERVAL = 1.0
 _BOOT_CAP_EVERY_TICKS = 60
 
 
+def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, bool], ...]:
+    """Ordered signature of the live Space topology for change detection (PURE).
+
+    A ``(display_uuid, uuid, is_current)`` tuple per Space, **in order**. Compared
+    tick-to-tick by the poll so a Mission Control **reorder** — which fires neither
+    ``activeSpaceDidChange`` nor ``didChangeScreenParameters`` (the active Space is
+    unchanged) — is still detected, alongside create/delete (length changes) and a
+    current-Space change. Order is preserved (no sorting): a reorder permutes the
+    tuple even when the set of UUIDs is identical. (DECISIONS.md §4.3.)
+    """
+    return tuple((space.display_uuid, space.uuid, space.is_current) for space in spaces)
+
+
 def _is_interactive() -> bool:
     """Whether any standard stream is a TTY (a manual terminal run, not launchd).
 
@@ -256,6 +269,9 @@ class AppDelegate(NSObject):
         # A non-managed startup failure is stashed here (PyObjC swallows a re-raise
         # from the callback); run_agent re-raises it after the loop stops.
         self._startup_error: BaseException | None = None
+        # Last live Space-topology signature; the poll refreshes when it changes
+        # (catches a Mission Control reorder that fires no notification). DECISIONS 4.3.
+        self._topology_sig: tuple[tuple[str, str, bool], ...] | None = None
         # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
         # reactively (on a pill click) and on a fresh opt-in; a failure disables
         # capture with a surfaced reason rather than a silent no-op.
@@ -302,7 +318,7 @@ class AppDelegate(NSObject):
             # Call the UNGUARDED impl: the first paint is part of startup, so a
             # failure here must reach this handler (the guarded _refresh would
             # swallow it and leave the agent wedged — codex P1).
-            self._refresh_impl()
+            self._refresh_impl()  # also seeds self._topology_sig from what it rendered
         except Exception as exc:
             log.critical("unexpected error during agent startup", exc_info=True)
             if self._is_managed_run:
@@ -507,8 +523,16 @@ class AppDelegate(NSObject):
             # Display names are reloaded fresh in _rebuild_menu; just trigger a refresh.
             self._displays_mtime = displays_mtime
             changed = True
+        # Live-topology diff: a Mission Control reorder (and create/delete) fires no
+        # Space/screen notification, so detect it here by comparing a cheap CGS
+        # signature tick-to-tick (DECISIONS 4.3). None == unreadable this tick -> skip.
+        topology_sig = self._live_topology_signature()
+        if topology_sig is not None and topology_sig != self._topology_sig:
+            # Don't advance the baseline here — _refresh_impl resyncs it only on a
+            # successful render, so a failed refresh is retried on the next tick.
+            log.debug("space topology changed (reorder/create/delete); refreshing")
+            changed = True
         if changed:
-            log.debug("config/labels changed on disk; refreshing surfaces")
             self._refresh()
 
     # -- the hot path -----------------------------------------------------------
@@ -573,6 +597,12 @@ class AppDelegate(NSObject):
         self._update_hud(title)
         self._update_overlays(spaces, ordinals)
         self._update_wallpaper(title)
+        # Resync the topology baseline from what we just rendered, AFTER all surfaces
+        # updated. Every refresh (observer- or poll-driven) lands here, so an ordinary
+        # space switch won't make the next poll fire a redundant refresh (codex P2);
+        # and because this runs only on a successful render, a swallowed mid-refresh
+        # failure leaves the baseline stale so the next poll retries (codex P2).
+        self._topology_sig = _topology_signature(spaces)
 
     @objc.python_method
     def _title_for_active(self, active_space: Space | None, ordinals: dict[int, int]) -> str:
@@ -966,6 +996,25 @@ class AppDelegate(NSObject):
         except (OSError, ValueError) as exc:
             log.warning("plist fallback failed: %s", exc)
             return []
+
+    @objc.python_method
+    def _live_topology_signature(self) -> tuple[tuple[str, str, bool], ...] | None:
+        """Live CGS topology signature for the poll, or ``None`` if unreadable.
+
+        Live CGS **only** (no plist fallback): a reorder is invisible in the stale
+        spaces plist (cfprefsd flushes it on create/delete only — DECISIONS 3.4), so
+        the plist can't drive this. A failed read returns ``None`` so the poll skips
+        the tick rather than mistaking a transient CGS hiccup for a topology change
+        (which would spuriously refresh). Logged at DEBUG only — not per-second WARNs.
+        """
+        from spacelabel.platform import cgs
+
+        try:
+            spaces = cgs.enumerate_spaces(include_unlabelable=True)
+        except (cgs.CGSUnavailableError, ImportError) as exc:  # ImportError == PyObjC absent
+            log.debug("topology poll: CGS read unavailable: %s", exc)
+            return None
+        return _topology_signature(spaces)
 
     @objc.python_method
     def _read_active_space_uuid(self) -> str | None:

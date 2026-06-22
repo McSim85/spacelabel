@@ -31,7 +31,7 @@ order (they are independent); fold Non-critical items into a single session usin
 | Single rotated agent log — merge stderr, one rotated file, fix double-writer | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | done |
 | `install --no-run-at-load` — opt out of auto-start at login | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | open |
 | Signed `.app` bundle for Accessibility/TCC identity (`python3.x` → `spacelabel`) | Non-critical | [improvements.md](improvements.md) | v1.0 | bundled (own session — relaxes 2.7/6.3) | open |
-| Live pill/overlay refresh on Space reorder & create/delete | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | open |
+| Live pill/overlay refresh on Space reorder & create/delete | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | done |
 
 ---
 

@@ -217,6 +217,32 @@ def test_is_managed_run_only_default_config_nondev_noninteractive():
     assert _is_managed_run(Path("/tmp/x.json"), **base) is False
 
 
+def test_topology_signature_detects_reorder_create_delete_current():
+    from spacelabel.agent.app import _topology_signature
+    from spacelabel.model import Space
+
+    d = "DISP-UUID"
+    a = Space(uuid="A", display_uuid=d, is_current=True)
+    b = Space(uuid="B", display_uuid=d)
+    c = Space(uuid="C", display_uuid=d)
+
+    base = _topology_signature([a, b, c])
+    # Same topology, same objects/order -> equal signature (no refresh).
+    assert _topology_signature([a, b, c]) == base
+    # Reorder (same set of UUIDs, different order) -> different signature.
+    assert _topology_signature([b, a, c]) != base
+    # Create / delete (membership change) -> different signature.
+    assert _topology_signature([a, b]) != base
+    assert _topology_signature([a, b, c, Space(uuid="D", display_uuid=d)]) != base
+    # Current-Space change only -> different signature.
+    moved_current = [
+        Space(uuid="A", display_uuid=d),
+        Space(uuid="B", display_uuid=d, is_current=True),
+        Space(uuid="C", display_uuid=d),
+    ]
+    assert _topology_signature(moved_current) != base
+
+
 def test_is_interactive_tolerates_closed_stream(monkeypatch):
     import sys as _sys
 
