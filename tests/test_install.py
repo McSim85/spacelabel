@@ -67,6 +67,7 @@ def test_refresh_plist_rewrites_stale_preserving_shim(tmp_path, monkeypatch):
     refreshed = plistlib.loads(plist.read_bytes())
     assert refreshed == build_launch_agent(home, shim)  # migrated to agent.boot.log
     assert refreshed["ProgramArguments"][0] == str(shim)  # shim preserved, not repointed
+    assert not list(tmp_path.glob(".agent.plist.*.tmp"))  # atomic write left no temp
     assert install.refresh_plist_if_stale() is False  # idempotent
 
 

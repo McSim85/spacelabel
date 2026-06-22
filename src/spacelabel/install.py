@@ -17,6 +17,7 @@ import os
 import plistlib
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
@@ -130,6 +131,51 @@ def render_plist(home: Path, shim: Path) -> bytes:
     return plistlib.dumps(build_launch_agent(home, shim))
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically (unique temp in the same dir -> replace).
+
+    A direct ``write_bytes`` can leave a truncated plist if interrupted mid-write
+    (power loss, kill, ENOSPC), which would make the login item fail to load. The
+    temp-then-rename keeps the installed plist either fully old or fully new. A
+    **unique** temp (``mkstemp``) avoids a collision when two writers race — e.g. a
+    manual ``spacelabel install`` and the agent's ``refresh_plist_if_stale`` after an
+    upgrade — which a shared temp name would corrupt.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.replace(path)
+        _fsync_dir(path.parent)  # persist the rename itself, not just the file bytes
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort ``fsync`` of ``directory`` so a just-completed rename survives a crash.
+
+    Some filesystems reject directory fsync (``EINVAL``); since the rename already
+    succeeded, such a failure is logged at ``DEBUG`` and ignored rather than failing
+    the write.
+    """
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError as exc:
+        log.debug("could not open %s to fsync: %s", directory, exc)
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        log.debug("could not fsync directory %s: %s", directory, exc)
+    finally:
+        os.close(dir_fd)
+
+
 def refresh_plist_if_stale() -> bool:
     """Rewrite an installed LaunchAgent plist when it differs from the template.
 
@@ -164,10 +210,14 @@ def refresh_plist_if_stale() -> bool:
     if current == build_launch_agent(Path.home(), shim):
         return False  # already current
     try:
-        path.write_bytes(render_plist(Path.home(), shim))
+        _atomic_write_bytes(path, render_plist(Path.home(), shim))
     except OSError as exc:
         log.warning("could not refresh stale plist %s: %s", path, exc)
         return False
+    # The on-disk file is now correct; launchd keeps the already-loaded (old) config
+    # for this session, so the migration applies on the next login/reload. We do NOT
+    # bootout/bootstrap here — self-reloading the running login agent is fragile; the
+    # legacy log files stay capped meanwhile (see logging_setup.truncate_boot_log).
     log.info("refreshed stale LaunchAgent plist %s; applies on next login or reload", path)
     return True
 
@@ -233,7 +283,7 @@ def install_agent(*, load: bool = True) -> None:
     logs_dir(home).mkdir(parents=True, exist_ok=True)
 
     try:
-        target_plist.write_bytes(render_plist(home, shim))
+        _atomic_write_bytes(target_plist, render_plist(home, shim))
     except OSError as exc:
         log.exception("failed to write LaunchAgent plist: %s", target_plist)
         raise InstallError(f"could not write plist {target_plist}: {exc}") from exc

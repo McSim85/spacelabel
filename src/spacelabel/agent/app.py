@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fcntl
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -199,11 +200,14 @@ class AppDelegate(NSObject):
     def applicationDidFinishLaunching_(self, _notification: object) -> None:  # noqa: N802
         """Set accessory policy, build surfaces, wire the observer, start polling.
 
-        Wrapped in a last-resort guard: this is an AppKit delegate callback, so an
-        unexpected exception here would go to raw stderr (the bounded boot-catch file)
-        rather than the rotated ``agent.log`` operators inspect. On failure it is
-        logged with a traceback and the process kept alive (an idle-but-diagnosable
-        agent beats a silent vanish to stderr).
+        On an unexpected startup failure, **fail fast**: log a traceback to
+        ``agent.log``, then ``os._exit(1)`` so launchd (``KeepAlive``) restarts the
+        agent and the single-instance lock is released. Swallowing-and-continuing
+        instead would leave the agent alive but un-initialized while still holding
+        the lock, so launchd would not restart it and every later ``spacelabel
+        agent`` would exit "already running" — a wedged agent (codex P1). The log
+        goes to the rotated ``agent.log`` (PyObjC would otherwise route a raw
+        callback exception to stderr / the boot file).
         """
         try:
             NSApplication.sharedApplication().setActivationPolicy_(
@@ -214,9 +218,17 @@ class AppDelegate(NSObject):
             self._build_surfaces()
             self._start_observer()
             self._start_reload_timer()
-            self._refresh()
-        except Exception:  # deliberate last-resort guard at the AppKit callback boundary
-            log.critical("unexpected error during agent startup", exc_info=True)
+            # Call the UNGUARDED impl: the first paint is part of startup, so a
+            # failure here must reach this fail-fast handler (the guarded _refresh
+            # would swallow it and leave the agent wedged — codex P1).
+            self._refresh_impl()
+        except Exception:
+            # Last-resort startup guard: log to agent.log, then exit non-zero so
+            # launchd restarts us cleanly (releasing the lock) instead of wedging.
+            log.critical(
+                "unexpected error during agent startup; exiting for restart", exc_info=True
+            )
+            os._exit(1)
 
     # -- construction -----------------------------------------------------------
 
@@ -412,21 +424,29 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _refresh(self) -> None:
-        """Refresh every surface, guarding against unexpected callback exceptions.
+        """Refresh every surface, logging any unexpected error to ``agent.log``.
 
-        Every steady-state AppKit callback (the NSTimer poll, the space/display
-        notifications, menu actions) funnels through here, but exceptions raised in a
-        PyObjC callback don't reach :func:`sys.excepthook` — PyObjC would print them
-        to raw stderr (the bounded boot-catch file), outside the rotated ``agent.log``
-        operators inspect. This last-resort guard logs any unexpected error to
-        ``agent.log`` with a traceback and keeps the run loop alive with the previous
-        surfaces. Expected failures are already handled specifically inside
-        :meth:`_refresh_impl` (per the no-silent-except policy); this only catches the
-        truly unexpected, and it logs rather than swallows silently.
+        Called on user/system events (space switch, display change, config/label
+        edits) — not a fixed tick: the 1 s poll only refreshes on a store mtime
+        change, so failures here are event-paced, not per-second. Expected failures
+        are handled specifically in :meth:`_refresh_impl` (no-silent-except policy);
+        an *unexpected* one is logged at CRITICAL and the previous surfaces are kept.
+
+        It is deliberately **not** re-raised: PyObjC swallows exceptions at the
+        callback boundary, so propagating would neither reach :func:`sys.excepthook`
+        nor terminate the process — it would just vanish to raw stderr and leave the
+        agent wedged *without a trace in ``agent.log``*. ``os._exit`` here would be
+        worse (restarting the whole agent over one transient refresh glitch, with
+        restart-loop risk). So: log it where operators look, keep the last-good
+        surfaces, and let the next event retry. (Startup differs — see
+        :meth:`applicationDidFinishLaunching_`, which fails fast for a launchd
+        restart.) The rotated ``agent.log`` bounds the log even if it recurs.
         """
         try:
             self._refresh_impl()
-        except Exception:  # deliberate last-resort guard at the AppKit callback boundary
+        except Exception:
+            # Last-resort guard at the AppKit callback boundary: log (never silent),
+            # keep the previous surfaces, retry on the next event.
             log.critical("unexpected error refreshing surfaces", exc_info=True)
 
     @objc.python_method
