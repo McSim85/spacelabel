@@ -65,6 +65,13 @@ _RELOAD_INTERVAL = 1.0
 #: log, so recurring AppKit/PyObjC stderr can't grow it unbounded mid-session.
 _BOOT_CAP_EVERY_TICKS = 60
 
+#: How often (in poll ticks ~= seconds) the live CGS topology is read. Decoupled from
+#: the 1 s mtime poll: the mtime checks are cheap stat()s (keep `config`/`label` edits
+#: reflected within ~1 s), but the CGS read costs ~1 ms (measured; ~6 ms p99) on the
+#: AppKit main thread, so it runs every ~3 s — reorder freshness stays imperceptible
+#: while cutting main-thread CGS load ~3x (off-main read deferred — DECISIONS 4.2/4.3).
+_TOPOLOGY_POLL_EVERY_TICKS = 3
+
 
 def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, bool], ...]:
     """Ordered signature of the live Space topology for change detection (PURE).
@@ -274,6 +281,12 @@ class AppDelegate(NSObject):
         self._topology_sig: tuple[tuple[str, str, bool], ...] | None = None
         # Spaces-plist mtime, used only as the create/delete fallback while CGS is down.
         self._spaces_plist_mtime: float = 0.0
+        # Tick counter so the CGS topology read runs every _TOPOLOGY_POLL_EVERY_TICKS,
+        # not every 1 s tick (the mtime checks stay at 1 s).
+        self._topology_poll_ticks: int = 0
+        # Last CGS-topology read result: True until a read returns None. While False
+        # (CGS down) the cheap spaces-plist mtime fallback runs every 1 s tick.
+        self._cgs_topology_ok: bool = True
         # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
         # reactively (on a pill click) and on a fresh opt-in; a failure disables
         # capture with a surfaced reason rather than a silent no-op.
@@ -526,24 +539,27 @@ class AppDelegate(NSObject):
             self._displays_mtime = displays_mtime
             changed = True
         # Live-topology diff: a Mission Control reorder (and create/delete) fires no
-        # Space/screen notification, so detect it here by comparing a cheap CGS
-        # signature tick-to-tick (DECISIONS 4.3). This CGS read runs on the AppKit main
-        # thread, consistent with the event path; moving CGS reads off-main is the
-        # deferred DECISIONS 4.2 / Phase-6 work (the item-F spec accepts main-thread).
-        topology_sig = self._live_topology_signature()
-        if topology_sig is not None:
-            if topology_sig != self._topology_sig:
+        # Space/screen notification, so detect it by comparing a cheap CGS signature
+        # (DECISIONS 4.3). The CGS read (~1 ms, ~6 ms p99) is the only EXPENSIVE part,
+        # so it runs every ~3 s (decoupled from the 1 s mtime poll) on the AppKit main
+        # thread (off-main deferred — 4.2). Reorder freshness ≤3 s is imperceptible.
+        self._topology_poll_ticks += 1
+        if self._topology_poll_ticks >= _TOPOLOGY_POLL_EVERY_TICKS:
+            self._topology_poll_ticks = 0
+            topology_sig = self._live_topology_signature()
+            self._cgs_topology_ok = topology_sig is not None
+            if topology_sig is not None and topology_sig != self._topology_sig:
                 # Advance the baseline now (not only on a successful render): a
-                # persistently-failing refresh must not become a 1 Hz retry loop
-                # (codex P1). A one-off failed refresh leaves surfaces briefly stale,
-                # recovered on the next event or topology change.
+                # persistently-failing refresh must not become a retry loop (codex P1).
+                # A one-off failed refresh leaves surfaces briefly stale, recovered on
+                # the next event or topology change.
                 log.debug("space topology changed (reorder/create/delete); refreshing")
                 self._topology_sig = topology_sig
                 changed = True
-        else:
-            # CGS unavailable this tick: fall back to the spaces-plist mtime so Space
-            # create/delete still refreshes on a CGS-broken build (the plist flushes on
-            # create/delete — §3.4; reorder is invisible there and needs CGS).
+        # CGS-down create/delete fallback: the spaces plist is just a stat(), so check
+        # it on EVERY 1 s tick (not the 3 s CGS cadence) while CGS is unavailable — it
+        # flushes on create/delete (§3.4; reorder is invisible there and needs CGS).
+        if not self._cgs_topology_ok:
             from spacelabel.platform import spaces_plist
 
             spaces_plist_mtime = _mtime(spaces_plist.plist_path())
