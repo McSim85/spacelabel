@@ -22,7 +22,7 @@ order (they are independent); fold Non-critical items into a single session usin
 |---|---|---|---|---|---|
 | Click-to-switch pills — implement the opt-in `CGEventPost` switch path | **Critical** | [critical-click-to-switch.md](critical-click-to-switch.md) | v0.2/v0.3 | 1 session · Opus 4.8 · high | done (Phase-6 verifies end-to-end switch) |
 | Release automation — release-please + PyPI OIDC + Homebrew tap + Renovate | **Critical** | [critical-release-automation.md](critical-release-automation.md) | v0.2+ | 1 session · Sonnet 4.6 · medium | done |
-| Per-screen overlay note body | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | open |
+| Per-Space notes/task queue *(superseded the per-display overlay-note design)* | Non-critical | [improvements.md](improvements.md) | v0.2 | bundled | done (v0.2.0, #17); only the optional prefs notes editor (item A.4) still open |
 | Wallpaper: persist captured original across restarts | Non-critical | [improvements.md](improvements.md) | v0.3 | bundled | done (v0.3.0, #19) |
 | Wallpaper: per-display font sizing | Non-critical | [improvements.md](improvements.md) | v0.3 | bundled | done (v0.3.0, #19) |
 | Wallpaper: detect user wallpaper changes to refresh cached original | Non-critical | [improvements.md](improvements.md) | v0.3 | bundled | open |

@@ -32,6 +32,12 @@ more complex than expected and note it at the end for a future session.
 
 ### A. Per-screen overlay note/TODO body  *(v0.2)*
 
+> **⚠ Superseded — do NOT build the per-display design below.** This shipped instead
+> as a per-**Space** notes/task queue (#17, v0.2.0; `DECISIONS.md` §9.10) — keyed by
+> Space UUID, with the `note` CLI group and `☐/☑` overlay glyphs. The only live remnant
+> of this section is the optional **A.4** (a Preferences notes editor), still unbuilt and
+> tracked in `DECISIONS.md` §9.10. The rest of A is historical.
+
 **Context (from Phase 5 plan):**
 The corner overlay currently shows the Space label (bold title, configurable size).
 Add a per-display free-text note body below the title — a small notes/TODO field
