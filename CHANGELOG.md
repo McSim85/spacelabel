@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/McSim85/spacelabel/compare/v0.3.0...v0.4.0) (2026-06-22)
+
+
+### Features
+
+* **cli:** add shell tab-completion (zsh/bash/fish) ([#21](https://github.com/McSim85/spacelabel/issues/21)) ([fd77f43](https://github.com/McSim85/spacelabel/commit/fd77f43690f765f4f40573ba2078b1566d406a41))
+
 ## [0.3.0](https://github.com/McSim85/spacelabel/compare/v0.2.0...v0.3.0) (2026-06-22)
 
 
