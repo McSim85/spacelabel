@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/McSim85/spacelabel/compare/v0.6.0...v0.6.1) (2026-06-22)
+
+
+### Documentation
+
+* **todo:** mark per-display overlay note superseded by per-Space notes ([#29](https://github.com/McSim85/spacelabel/issues/29)) ([e737646](https://github.com/McSim85/spacelabel/commit/e737646d18e009196059160e47a5e74b92d76533))
+* **todo:** refresh backlog statuses to match shipped releases ([#27](https://github.com/McSim85/spacelabel/issues/27)) ([2b84ddd](https://github.com/McSim85/spacelabel/commit/2b84ddd4b3d72efa093969569fda450190b868c3))
+
 ## [0.6.0](https://github.com/McSim85/spacelabel/compare/v0.5.0...v0.6.0) (2026-06-22)
 
 
