@@ -151,6 +151,48 @@ def test_resolve_install_shim_refuses_when_unresolved(monkeypatch):
         install._resolve_install_shim()
 
 
+def test_resolve_install_shim_uses_source_venv_shim(tmp_path, monkeypatch):
+    # F1: a DURABLE uv/.venv source install (no bundle, no pipx shim) uses the console script
+    # beside the interpreter (.venv/bin/spacelabel next to .venv/bin/python) -- an absolute,
+    # durable path launchd can exec -- so contributors can run `spacelabel install` locally.
+    # (pytest's tmp_path is under $TMPDIR, so stub the ephemerality check to model a durable
+    # venv; the real ephemeral detection is covered by the two tests below.)
+    monkeypatch.setattr(install, "_enclosing_app_exe", lambda: None)
+    monkeypatch.setattr(install, "_canonical_shim", lambda: tmp_path / "no-pipx" / "spacelabel")
+    monkeypatch.setattr(install, "_is_ephemeral_path", lambda _p: False)
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("")
+    shim = venv_bin / "spacelabel"
+    shim.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(install.sys, "executable", str(venv_bin / "python"))
+    # The resolved durable target is persisted (canonicalizes a temp/cache symlink to its
+    # real venv path); for a real file it's just the resolved path.
+    assert install._resolve_install_shim() == shim.resolve()
+
+
+def test_resolve_install_shim_rejects_ephemeral_runner_shim(tmp_path, monkeypatch):
+    # F1 follow-on: a DISPOSABLE runner venv (uvx / pipx run -> a .cache path) must NOT be
+    # persisted into the LaunchAgent -> refuse rather than point at a path that may vanish.
+    monkeypatch.setattr(install, "_enclosing_app_exe", lambda: None)
+    monkeypatch.setattr(install, "_canonical_shim", lambda: tmp_path / "no-pipx" / "spacelabel")
+    cache_bin = tmp_path / ".cache" / "uv" / "venv" / "bin"  # ".cache" component -> ephemeral
+    cache_bin.mkdir(parents=True)
+    (cache_bin / "python").write_text("")
+    (cache_bin / "spacelabel").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(install.sys, "executable", str(cache_bin / "python"))
+    with pytest.raises(install.InstallError, match="cask"):
+        install._resolve_install_shim()
+
+
+def test_is_ephemeral_path_flags_cache_and_temp_not_project_venv():
+    home = Path.home()
+    assert install._is_ephemeral_path(home / ".cache/uv/x/bin/spacelabel") is True  # uvx
+    assert install._is_ephemeral_path(home / ".local/pipx/.cache/x/bin/spacelabel") is True
+    assert install._is_ephemeral_path(home / "Library/Caches/x/bin/spacelabel") is True
+    assert install._is_ephemeral_path(home / "code/proj/.venv/bin/spacelabel") is False
+
+
 def test_enclosing_app_exe_detects_bundle(tmp_path, monkeypatch):
     # A spacelabel.app whose Resources host this package -> resolve Contents/MacOS exe.
     app = tmp_path / "spacelabel.app"

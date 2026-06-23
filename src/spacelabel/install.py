@@ -90,6 +90,27 @@ def _canonical_shim() -> Path:
     return Path.home() / ".local" / "bin" / "spacelabel"
 
 
+def _is_ephemeral_path(path: Path) -> bool:
+    """Return True if ``path`` is under a cache/temp dir that may be evicted on reboot.
+
+    Distinguishes a DURABLE project venv (``~/code/proj/.venv/bin/spacelabel`` -- safe to
+    persist into a LaunchAgent) from a DISPOSABLE runner venv (``uvx``/``uv tool run`` ->
+    ``~/.cache/uv/…``, ``pipx run`` -> ``~/.local/pipx/.cache/…``, or a ``$TMPDIR`` build),
+    whose path can vanish and break the login item (DECISIONS.md §9.1).
+    """
+    resolved = path.resolve()  # follow symlinks so /tmp -> /private/tmp etc. compare equal
+    if ".cache" in resolved.parts:  # ~/.cache/uv, ~/.local/pipx/.cache, XDG_CACHE_HOME, …
+        return True
+    caches = [Path(tempfile.gettempdir()).resolve(), (Path.home() / "Library" / "Caches").resolve()]
+    for base in caches:
+        try:
+            resolved.relative_to(base)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _bundle_identifier(app_dir: Path) -> str | None:
     """Return the ``CFBundleIdentifier`` from ``app_dir/Contents/Info.plist``, or ``None``.
 
@@ -156,16 +177,23 @@ def _enclosing_app_exe() -> Path | None:
 def _resolve_install_shim() -> Path:
     """Return the absolute executable the LaunchAgent must exec.
 
-    Prefers the cask-installed ``spacelabel.app`` main executable so the agent process
-    **is** the bundle -- a stable, *named* Accessibility identity (the point of the
-    distribution pivot, DECISIONS.md §6). Falls back to the legacy pipx shim
-    ``~/.local/bin/spacelabel`` (deprecated) for dev/transition installs. launchd starts
-    the login agent without a shell environment, so a transient PATH/venv path would make
-    the login item fragile; when neither a bundle nor the pipx shim resolves, this refuses
-    rather than persist such a path.
+    Resolution order, each an absolute, durable path launchd can exec without a shell:
+
+    1. the cask-installed ``spacelabel.app`` main executable, so the agent process **is**
+       the bundle -- a stable, *named* Accessibility identity (the distribution pivot,
+       DECISIONS.md §6);
+    2. the legacy pipx shim ``~/.local/bin/spacelabel`` (deprecated);
+    3. a **source/dev** console script beside the running interpreter
+       (``<bindir>/spacelabel`` next to ``<bindir>/python``, e.g. ``.venv/bin/spacelabel``
+       from ``uv run`` / an editable install) -- a real, durable venv path, NOT the
+       transient ``PATH`` lookup §9.1 warns against, so contributors can exercise the
+       LaunchAgent lifecycle locally.
+
+    Only when none of these resolves (a genuinely transient launch) does it refuse, rather
+    than persist a path that would make the login item fragile.
 
     Raises:
-        InstallError: If neither the app bundle nor the pipx shim can be resolved.
+        InstallError: If no bundle, pipx shim, or source/venv console script resolves.
     """
     bundle_exe = _enclosing_app_exe()
     if bundle_exe is not None:
@@ -179,11 +207,29 @@ def _resolve_install_shim() -> Path:
             canonical,
         )
         return canonical
+    # Source/dev install: the console script sits beside the interpreter (bin/spacelabel
+    # next to bin/python). Use sys.executable's dir to FIND the script (not resolve(), which
+    # would follow a venv python symlink out of the venv's bin/). Reject a shim under a
+    # cache/temp dir (uvx / pipx run / $TMPDIR) -- those vanish and break the login item --
+    # and persist the RESOLVED target so a durable script reached via a temp/cache symlink
+    # records its real durable path, never the ephemeral symlink (kept consistent with the
+    # ephemerality check, which also classifies the resolved target).
+    source_shim = Path(sys.executable).parent / APP_NAME
+    if source_shim.exists() and not _is_ephemeral_path(source_shim):
+        durable = source_shim.resolve()
+        log.warning(
+            "not running from the spacelabel.app bundle; the LaunchAgent will exec the "
+            "source/dev shim %s. Fine for local development, but prefer the Homebrew cask "
+            "for a stable Accessibility identity (DECISIONS.md §6); the agent breaks if this "
+            "venv is removed.",
+            durable,
+        )
+        return durable
     raise InstallError(
         "could not resolve the agent executable: install spacelabel via the Homebrew cask "
-        "(`brew install --cask spacelabel`) -- or the legacy `pipx install spacelabel` -- "
-        "before `spacelabel install`, so the login agent points at a durable path rather "
-        "than a transient shell/venv executable."
+        "(`brew install --cask spacelabel`), the legacy `pipx install spacelabel`, or a "
+        "source/venv install (`uv pip install -e .`) before `spacelabel install`, so the "
+        "login agent points at a durable path rather than a transient shell executable."
     )
 
 
