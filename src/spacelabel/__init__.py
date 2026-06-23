@@ -48,7 +48,11 @@ def _version_from_app_bundle() -> str | None:
             plist = plistlib.load(handle)
     except (OSError, plistlib.InvalidFileException, ValueError):
         return None
-    value = plist.get("CFBundleShortVersionString") if isinstance(plist, dict) else None
+    if not isinstance(plist, dict) or plist.get("CFBundleIdentifier") != BUNDLE_ID:
+        # Only trust OUR bundle's version. A source checkout run under some *other*
+        # app-bundled interpreter would otherwise borrow that host app's version.
+        return None
+    value = plist.get("CFBundleShortVersionString")
     return value if isinstance(value, str) and value else None
 
 
