@@ -34,19 +34,20 @@ cask "spacelabel" do
             quit:      "dev.mcsim.spacelabel",
             trash:     "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist"
 
-  # `brew uninstall --zap` deep-clean — mirrors `spacelabel uninstall --purge`
+  # `brew uninstall --zap` deep-clean. The data side mirrors `spacelabel uninstall --purge`
   # (install.purge_targets) rather than nuking the whole data dir:
   #   * stop the agent FIRST (launchctl/quit/signal) so the store is never trashed out from
   #     under a running instance whose agent.lock still guards single-instance startup;
   #   * trash only spacelabel-OWNED files in Application Support (config/labels/displays +
   #     their .lock + agent.lock + leaked "<json>.<rand>.tmp" temps) so a foreign file a
-  #     user kept there (e.g. an alternate --config) survives, plus the dedicated
-  #     caches/logs and the well-known DEFAULT completion paths for all three shells
-  #     (zsh ~/.zfunc/_spacelabel, fish, bash — best effort);
+  #     user kept there (e.g. an alternate --config) survives, plus the dedicated caches/logs;
   #   * `rmdir` the data dir LAST — removed only if it is now empty (preserves foreign files).
-  # Completions at NON-default locations (zsh resolves any writable dir on $fpath, not just
-  # ~/.zfunc; fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR)
-  # can't be enumerated statically — `spacelabel uninstall --purge` resolves those at runtime.
+  # Completions are BEST-EFFORT only — NOT full parity with `uninstall --purge`: a static
+  # cask can only trash the well-known DEFAULT paths (zsh ~/.zfunc/_spacelabel, fish, bash).
+  # `completion install` may instead write to a $fpath dir, $XDG_CONFIG_HOME, $XDG_DATA_HOME,
+  # or $BASH_COMPLETION_USER_DIR; those can't be enumerated statically and will be left
+  # behind. To remove them, run `spacelabel uninstall --purge` (which resolves them at
+  # runtime) BEFORE `brew uninstall` — afterwards the `spacelabel` CLI is gone.
   zap launchctl: "dev.mcsim.spacelabel",
       quit:      "dev.mcsim.spacelabel",
       signal:    ["TERM", "dev.mcsim.spacelabel"],
