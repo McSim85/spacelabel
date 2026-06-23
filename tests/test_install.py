@@ -316,21 +316,57 @@ def test_agent_status_detail_symlinked_default_probes_canonical_lock(monkeypatch
         holder.close()
 
 
-def test_agent_status_detail_alt_config_ignores_shared_default_lock(monkeypatch, tmp_path):
-    # An alt config inside the default dir shares data_dir/agent.lock; that lock belongs to
-    # the default agent, not this config -> report it not-running/unmanaged (no false agent).
+def test_agent_status_detail_alt_config_reports_shared_default_agent(monkeypatch, tmp_path):
+    # F4: an alt config kept inside the default dir shares data_dir/agent.lock (same store),
+    # so a running agent on that store is reported for the alt config too -- not a false
+    # negative (which previously also blinded the uninstall --purge guard). But F-b:
+    # installed/loaded/managed are NOT inherited from the default LaunchAgent (launchd
+    # manages config.json, not alt.json), so those stay False even when it is loaded.
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     default_dir.mkdir(parents=True)
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, 4213))
     monkeypatch.setattr(install, "is_installed", lambda: True)
-    holder = (default_dir / "agent.lock").open("w")  # the default agent holds the shared lock
+    holder = (default_dir / "agent.lock").open("w")  # an agent holds the shared lock
     holder.write("4213")
     holder.flush()
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
         st = install.agent_status_detail(default_dir / "alt.json")
-        assert (st.running, st.managed, st.pid) == (False, False, None)
+        assert (st.running, st.pid) == (True, 4213)  # the shared lock is held
+        assert (st.installed, st.loaded, st.managed) == (False, False, False)  # not inherited
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+
+def test_agent_status_detail_idle_alt_config_not_marked_installed(monkeypatch, tmp_path):
+    # F-b: an IDLE alt config in the default dir (no agent holds the lock) must not inherit
+    # the default LaunchAgent's installed/loaded just because it shares the dir -> all False.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, None))  # loaded, idle
+    monkeypatch.setattr(install, "is_installed", lambda: True)
+    st = install.agent_status_detail(default_dir / "alt.json")
+    assert (st.installed, st.loaded, st.running, st.managed) == (False, False, False, False)
+
+
+def test_agent_status_detail_alt_config_reports_foreground_shared_agent(monkeypatch, tmp_path):
+    # Same shared store, but a FOREGROUND agent holds the lock (launchctl not loaded) ->
+    # running + unmanaged, with the lock-file pid. This is what makes the purge guard refuse.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))
+    monkeypatch.setattr(install, "is_installed", lambda: False)
+    holder = (default_dir / "agent.lock").open("w")
+    holder.write("9001")
+    holder.flush()
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        st = install.agent_status_detail(default_dir / "alt.json")
+        assert (st.running, st.managed, st.pid) == (True, False, 9001)
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
@@ -351,7 +387,9 @@ def _patch_purge_dirs(monkeypatch, tmp_path, *, data_dir):
     monkeypatch.setattr("spacelabel.completion.installed_completion_files", lambda: [])
 
 
-def test_purge_targets_default_config_removes_whole_dir(monkeypatch, tmp_path):
+def test_purge_targets_default_config_removes_owned_files_not_whole_dir(monkeypatch, tmp_path):
+    # F1: the default store deletes the files it OWNS by construction (so a foreign file kept
+    # in the dir survives) -- NOT the whole dir wholesale.
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     _patch_purge_dirs(monkeypatch, tmp_path, data_dir=default_dir)
     monkeypatch.setattr(
@@ -359,58 +397,55 @@ def test_purge_targets_default_config_removes_whole_dir(monkeypatch, tmp_path):
     )
     paths = install.store.StorePaths.resolve(None)
     targets = install.purge_targets(paths, remove_completion=True)
-    assert default_dir in targets  # the whole owned dir
-    assert paths.config_file not in targets  # individual JSONs not listed separately
+    assert default_dir not in targets  # NOT the whole dir
+    for owned in ("config.json", "config.json.lock", "labels.json", "displays.json", "agent.lock"):
+        assert (default_dir / owned) in targets  # owned files listed individually
     assert (tmp_path / "Caches/spacelabel") in targets
     assert (tmp_path / "Logs/spacelabel") in targets
     assert (tmp_path / "x.fish") in targets  # completion script included
 
 
-def test_purge_targets_custom_config_touches_nothing_in_its_dir(monkeypatch, tmp_path):
-    # Conservative: a custom --config dir is not exclusively ours, so NO file there is a
-    # target (not the config, not the derived labels/displays, not the locks) -- only the
-    # globally-exclusive caches/logs apply.
+def test_purge_targets_custom_config_returns_nothing(monkeypatch, tmp_path):
+    # F2: a custom --config owns nothing exclusively safe to delete -> empty target list. Its
+    # dir isn't ours, and the caches/logs/completions are GLOBAL (the default install's).
     _patch_purge_dirs(monkeypatch, tmp_path, data_dir=tmp_path / "default" / "spacelabel")
     cfg = tmp_path / "shared" / "myconfig.json"
     paths = install.store.StorePaths.resolve(cfg)
     targets = install.purge_targets(paths, remove_completion=True)
-    assert not any(t.parent == paths.directory for t in targets)  # nothing in the --config dir
-    assert (tmp_path / "Caches/spacelabel") in targets
-    assert (tmp_path / "Logs/spacelabel") in targets
+    assert targets == []  # nothing in the --config dir, and NOT the global caches/logs
+    assert (tmp_path / "Caches/spacelabel") not in targets  # default install's, not this config's
+    assert (tmp_path / "Logs/spacelabel") not in targets
 
 
 def test_purge_targets_custom_config_never_deletes_unrelated_file(monkeypatch, tmp_path):
     # The footgun: `--config ~/.ssh/config` must never schedule ~/.ssh/config (or a
-    # sibling labels.json that could be another app's) for deletion.
+    # sibling labels.json that could be another app's) for deletion -- it purges nothing.
     _patch_purge_dirs(monkeypatch, tmp_path, data_dir=tmp_path / "default" / "spacelabel")
     ssh_config = tmp_path / ".ssh" / "config"
     paths = install.store.StorePaths.resolve(ssh_config)
-    targets = install.purge_targets(paths, remove_completion=True)
-    assert not any(t.parent == ssh_config.parent for t in targets)  # nothing in ~/.ssh
+    assert install.purge_targets(paths, remove_completion=True) == []
 
 
-def test_purge_targets_alt_config_inside_default_dir_spares_default_store(monkeypatch, tmp_path):
-    # An ALTERNATE config kept inside the default dir must NOT delete the whole dir NOR the
-    # default store's shared files (labels.json/displays.json/agent.lock all belong to the
-    # default install) -- only the global caches/logs apply to it.
+def test_purge_targets_alt_config_inside_default_dir_returns_nothing(monkeypatch, tmp_path):
+    # An ALTERNATE config kept inside the default dir is not the default store (its config
+    # file != config.json), so it purges NOTHING -- never the shared default files/dir.
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     _patch_purge_dirs(monkeypatch, tmp_path, data_dir=default_dir)
     paths = install.store.StorePaths.resolve(default_dir / "alt.json")
-    targets = install.purge_targets(paths, remove_completion=True)
-    assert default_dir not in targets  # never nuke the whole (shared) dir
-    assert (default_dir / "alt.json") not in targets  # the alt config file is spared
-    assert (default_dir / "labels.json") not in targets  # default store's data is spared
-    assert (default_dir / "agent.lock") not in targets
-    assert (tmp_path / "Caches/spacelabel") in targets  # only the global dirs apply
+    assert install.purge_targets(paths, remove_completion=True) == []
 
-    # ...but the canonical default config.json (explicit path) DOES purge the whole dir.
+    # ...but the canonical default config.json (explicit path) purges the owned files.
     default_paths = install.store.StorePaths.resolve(default_dir / "config.json")
-    assert default_dir in install.purge_targets(default_paths, remove_completion=True)
+    targets = install.purge_targets(default_paths, remove_completion=True)
+    assert (default_dir / "config.json") in targets
+    assert default_dir not in targets  # owned files, not the whole dir
 
 
-def test_purge_targets_symlinked_default_config_targets_canonical_dir(monkeypatch, tmp_path):
+def test_purge_targets_symlinked_default_config_targets_canonical_owned_files(
+    monkeypatch, tmp_path
+):
     # --config is a symlink resolving to the default config.json -> purge the CANONICAL
-    # data dir, never the symlink's parent (e.g. /tmp), which would be catastrophic.
+    # store's owned files, never anything under the symlink's parent (e.g. /tmp).
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     _patch_purge_dirs(monkeypatch, tmp_path, data_dir=default_dir)
     default_dir.mkdir(parents=True)
@@ -420,8 +455,40 @@ def test_purge_targets_symlinked_default_config_targets_canonical_dir(monkeypatc
     link = elsewhere / "link.json"
     link.symlink_to(default_dir / "config.json")
     targets = install.purge_targets(install.store.StorePaths.resolve(link), remove_completion=True)
-    assert default_dir in targets  # the canonical store dir
-    assert elsewhere not in targets  # NOT the symlink's parent
+    assert (default_dir / "config.json") in targets  # canonical owned file
+    assert not any(
+        t == elsewhere or elsewhere in t.parents for t in targets
+    )  # not symlink's parent
+
+
+def test_remove_default_store_dir_if_empty_preserves_foreign_file(monkeypatch, tmp_path):
+    # F1: after purging owned files, the data dir is removed only if empty; a foreign file
+    # kept there (e.g. a user's alternate --config) survives.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    foreign = default_dir / "alt.json"
+    foreign.write_text("{}")
+    install.remove_default_store_dir_if_empty()
+    assert default_dir.exists() and foreign.exists()  # not removed: a foreign file remains
+    foreign.unlink()
+    install.remove_default_store_dir_if_empty()
+    assert not default_dir.exists()  # now empty -> removed
+
+
+def test_purge_targets_default_includes_leaked_atomic_write_temps(monkeypatch, tmp_path):
+    # F-a: an interrupted atomic write leaves "<json>.<rand>.tmp" in the default dir; purge
+    # must sweep them (else the dir survives the empty-check). A foreign name is NOT swept.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    _patch_purge_dirs(monkeypatch, tmp_path, data_dir=default_dir)
+    leaked = default_dir / "labels.json.ab12cd.tmp"
+    leaked.write_text("partial")
+    foreign = default_dir / "notes.txt"  # not a spacelabel temp -> preserved
+    foreign.write_text("x")
+    targets = install.purge_targets(install.store.StorePaths.resolve(None), remove_completion=True)
+    assert leaked in targets
+    assert foreign not in targets
 
 
 def test_purge_user_data_deletes_files_dirs_and_skips_missing(tmp_path):

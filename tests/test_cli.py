@@ -662,13 +662,30 @@ def test_uninstall_purge_dry_run_lists_paths_on_stdout(runner, monkeypatch):
 def test_uninstall_purge_non_tty_without_yes_refuses(runner, monkeypatch):
     _agent_not_running(monkeypatch)
     monkeypatch.setattr("spacelabel.cli._isatty", lambda: False)
-    monkeypatch.setattr("spacelabel.install.purge_targets", lambda paths, remove_completion: [])
+    # Non-empty targets (the default purge has data to delete) -> the --yes gate must fire.
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets", lambda paths, remove_completion: [Path("/x/data")]
+    )
     deleted = []
     monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: deleted.append(t) or [])
     monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
     r = runner.invoke(cli, ["uninstall", "--purge"])
     assert r.exit_code == 2  # UsageError -> never deletes non-interactively
     assert deleted == []
+
+
+def test_uninstall_purge_no_targets_skips_yes_requirement(runner, monkeypatch):
+    # A custom --config purges nothing (empty targets), so it needs neither --yes nor a TTY;
+    # a harmless scripted uninstall that deletes no data must not fail. (real purge_targets
+    # returns [] for a custom config -> not mocked here.)
+    _agent_not_running(monkeypatch)
+    monkeypatch.setattr("spacelabel.cli._isatty", lambda: False)
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    received: list = []
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: received.extend(t) or [])
+    r = runner.invoke(cli, ["--config", "/tmp/mycfg.json", "uninstall", "--purge"])  # no --yes/tty
+    assert r.exit_code == 0  # nothing to delete -> no --yes required
+    assert received == []  # and nothing was deleted
 
 
 def test_uninstall_purge_yes_removes_agent_then_purges(runner, monkeypatch):
@@ -743,20 +760,41 @@ def test_uninstall_purge_refuses_while_foreground_agent_running(runner, monkeypa
     assert deleted == []  # neither the agent nor the data was touched
 
 
-def test_uninstall_purge_custom_config_notes_manual_removal(runner, monkeypatch, tmp_path):
-    # A custom --config -> its own store files aren't auto-purged; the CLI says so.
+def test_uninstall_purge_custom_config_purges_nothing_and_notes_manual_removal(
+    runner, monkeypatch, tmp_path
+):
+    # F2: a custom --config owns nothing safe to auto-delete (its dir isn't ours; caches/logs
+    # are the default install's), so NOTHING is purged and the CLI says to remove it manually.
     _agent_not_running(monkeypatch)
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    deleted: list = []
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: deleted.extend(t) or [])
+    r = runner.invoke(
+        cli, ["--config", str(tmp_path / "mycfg.json"), "uninstall", "--purge", "--yes"]
+    )
+    assert r.exit_code == 0
+    assert deleted == []  # real purge_targets returns [] for a custom config -> nothing deleted
+    assert "NOT auto-purged" in r.stderr and "remove it manually" in r.stderr
+
+
+def test_uninstall_purge_custom_config_not_blocked_by_running_default_agent(
+    runner, monkeypatch, tmp_path
+):
+    # F3: a custom --config purge deletes nothing, so it must NOT be refused just because the
+    # default agent is running (the guard only applies to the default purge now).
     monkeypatch.setattr(
-        "spacelabel.install.purge_targets",
-        lambda paths, remove_completion: [Path("/x/Caches/spacelabel")],  # no data_dir -> custom
+        "spacelabel.install.agent_status_detail",
+        lambda _cfg=None: AgentStatus(
+            installed=True, loaded=True, running=True, pid=42, managed=False
+        ),
     )
     monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
     monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: [])
     r = runner.invoke(
         cli, ["--config", str(tmp_path / "mycfg.json"), "uninstall", "--purge", "--yes"]
     )
-    assert r.exit_code == 0
-    assert "not auto-purged" in r.stderr  # custom-config caveat shown
+    assert r.exit_code == 0  # not blocked
+    assert "still running" not in r.stderr
 
 
 def test_isatty_handles_closed_stdin(monkeypatch):

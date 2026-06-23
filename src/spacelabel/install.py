@@ -418,43 +418,87 @@ def _is_default_store(config_file: Path) -> bool:
         return config_file == default_config
 
 
+def _default_store_owned_files() -> list[Path]:
+    """Return the files spacelabel owns *by construction* inside the default data dir.
+
+    These names are ours in the default store (``config.json``/``labels.json``/
+    ``displays.json`` + their ``.lock`` siblings + ``agent.lock``), so deleting them by
+    name there is safe -- unlike a custom ``--config`` directory, where a sibling
+    ``labels.json`` could belong to another app. Listing the files (rather than removing
+    the whole dir) means a foreign file a user kept in our dir -- e.g. an alternate
+    ``--config`` ``alt.json`` -- survives; :func:`remove_default_store_dir_if_empty`
+    removes the dir afterwards only if nothing foreign remains.
+    """
+    default = store.StorePaths.default()
+    owned = [
+        default.config_file,
+        default.config_lock,
+        default.labels_file,
+        default.labels_lock,
+        default.displays_file,
+        default.displays_lock,
+        default.directory / "agent.lock",
+    ]
+    # Leaked atomic-write temps from an interrupted write: store._atomic_write_json names
+    # them "<json>.<rand>.tmp" in the same dir, so they are ours. Sweep them too -- else
+    # remove_default_store_dir_if_empty() finds the dir non-empty and leaves it behind
+    # (an incomplete purge after a crash). glob on a missing dir yields nothing.
+    for json_file in (default.config_file, default.labels_file, default.displays_file):
+        owned.extend(sorted(default.directory.glob(json_file.name + ".*.tmp")))
+    return owned
+
+
 def purge_targets(paths: store.StorePaths, *, remove_completion: bool) -> list[Path]:
     """Resolve the spacelabel-owned paths that ``uninstall --purge`` would delete.
 
-    Deletes only paths spacelabel **exclusively owns**:
+    Deletes only paths the **selected install exclusively owns**:
 
-    - the **default store** ``store.data_dir()`` (``~/Library/Application Support/spacelabel``),
-      our own dedicated directory, removed wholesale -- but only when ``paths`` is the
-      default config (or a symlink/spelling of it). The canonical ``store.data_dir()`` is
-      used, never ``paths.directory`` (a ``--config`` symlink's parent could be ``/tmp``);
-    - the global ``~/Library/Caches/spacelabel`` and ``~/Library/Logs/spacelabel`` dirs;
-    - when ``remove_completion``, the existing per-shell completion scripts.
+    - **Default store:** the spacelabel-owned files in ``store.data_dir()`` (see
+      :func:`_default_store_owned_files`), plus the dedicated global
+      ``~/Library/Caches/spacelabel`` and ``~/Library/Logs/spacelabel`` dirs, plus (when
+      ``remove_completion``) the per-shell completion scripts. The data dir itself is
+      removed afterwards only if it ends up empty, so a foreign file kept there survives.
+    - **Custom ``--config``:** returns **nothing**. Its own directory is not exclusively
+      ours (a sibling ``labels.json`` could be another app's), and the caches/logs/
+      completions are *global* -- shared with, and owned by, the default install (the
+      agent logs to the global ``logs_dir`` regardless of ``--config``). Deleting them for
+      a custom config would destroy the default install's artifacts, so the CLI instead
+      tells the user to remove their store manually and run the default purge.
 
-    A **custom** ``--config`` lives in a directory spacelabel does not own, so its files
-    are **never** deleted by guessed basename -- a sibling named ``labels.json`` could be
-    another app's. The custom store's own files are left for manual removal (the CLI says
-    so). **Never** touches the WallpaperAgent store, the pipx venv, or the
-    ``~/.local/bin/spacelabel`` shim. The cask ``zap`` stanza mirrors these paths.
+    Decided by the **resolved config file** (``_is_default_store``), so a ``--config``
+    that is a symlink/spelling of the default config.json still counts as default.
+    **Never** touches the WallpaperAgent store, the pipx venv, or the
+    ``~/.local/bin/spacelabel`` shim.
 
     :param paths: The resolved store paths for the active ``--config`` selection.
-    :param remove_completion: Also include the per-shell completion scripts.
+    :param remove_completion: Also include the per-shell completion scripts (default only).
     """
     from spacelabel import completion
 
-    targets: list[Path] = []
-    if _is_default_store(paths.config_file):
-        # Our own dedicated dir -> remove wholesale. The CANONICAL store.data_dir(), never
-        # paths.directory: if --config is a symlink to the default config.json,
-        # paths.directory is the symlink's parent (e.g. /tmp), which must not be deleted.
-        targets.append(store.data_dir())
-    # A custom --config is intentionally NOT expanded into per-file deletions here: its
-    # directory is not exclusively ours, so deleting labels.json/etc by name there could
-    # remove a foreign file. Only the globally-exclusive dirs below apply to it.
+    if not _is_default_store(paths.config_file):
+        return []  # custom --config owns nothing exclusively safe to delete here
+    targets: list[Path] = _default_store_owned_files()
     targets.append(caches_dir())
     targets.append(logs_dir())
     if remove_completion:
         targets += completion.installed_completion_files()
     return targets
+
+
+def remove_default_store_dir_if_empty() -> None:
+    """Remove the default data dir after a purge, but only if it is now empty.
+
+    :func:`purge_targets` deletes the default store's own files individually rather than
+    the whole dir, so a foreign file a user kept there (e.g. an alternate ``--config``)
+    is preserved. ``rmdir`` removes the dir in the normal case (nothing foreign remains)
+    and fails harmlessly otherwise.
+    """
+    directory = store.data_dir()
+    try:
+        directory.rmdir()
+    except OSError as exc:
+        # Not empty (a foreign file remains) or already gone -> leave it, don't error.
+        log.debug("default store dir %s not removed: %s", directory, exc)
 
 
 def purge_user_data(targets: list[Path]) -> list[Path]:
@@ -576,12 +620,14 @@ def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
     """
     paths = store.StorePaths.resolve(config_path)
     canonical_lock = store.data_dir() / "agent.lock"
-    # The LaunchAgent only ever runs the DEFAULT config file (one Label). Decide by the
-    # *resolved config file* (not `config_path is None`, not the directory) so the default
-    # config.json -- even via a symlink/relative spelling -- is recognized as managed.
+    custom_lock = paths.directory / "agent.lock"
+    try:
+        shares_default_lock = custom_lock.resolve() == canonical_lock.resolve()
+    except OSError:
+        shares_default_lock = custom_lock == canonical_lock
+    # The genuinely-managed default config (its config file IS config.json, even via a
+    # symlink/relative spelling) gets the full launchctl + canonical-lock report.
     if _is_default_store(paths.config_file):
-        # Probe the CANONICAL lock, so a symlinked-default --config still sees the live
-        # default agent (not a lock in the symlink's parent dir), and fold in launchctl.
         lock_held, lock_pid = _probe_lock_path(canonical_lock)
         loaded, launchctl_pid = _launchctl_service_state()
         return AgentStatus(
@@ -591,20 +637,12 @@ def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
             pid=launchctl_pid if launchctl_pid is not None else lock_pid,
             managed=launchctl_pid is not None,
         )
-    # A genuinely custom --config agent is necessarily unmanaged/foreground. Probe ITS
-    # lock -- unless that lock IS the default store's shared lock (an alt config kept
-    # inside the default dir), which we attribute to the default agent, not this config.
-    # Inherent ambiguity: StorePaths places an alt config's agent.lock in the shared
-    # default dir, so its agent and the default agent are indistinguishable via flock; we
-    # report not-running here to avoid falsely attributing the default agent to this
-    # config (a documented limit of the contrived "alt config inside the default store"
-    # layout -- a normal --config lives in its own directory with its own lock).
-    custom_lock = paths.directory / "agent.lock"
-    try:
-        shares_default_lock = custom_lock.resolve() == canonical_lock.resolve()
-    except OSError:
-        shares_default_lock = custom_lock == canonical_lock
-    lock_held, lock_pid = (False, None) if shares_default_lock else _probe_lock_path(custom_lock)
+    # A custom --config is unmanaged/foreground. Probe ITS lock -- but if that lock IS the
+    # default store's shared lock (an alt config kept inside the default dir), probe the
+    # CANONICAL lock so a running agent on that shared store is still reported (no false
+    # negative). installed/loaded/managed stay False either way: launchd manages only the
+    # default config.json, not this alternate file, so we must not claim it for this config.
+    lock_held, lock_pid = _probe_lock_path(canonical_lock if shares_default_lock else custom_lock)
     return AgentStatus(
         installed=False, loaded=False, running=lock_held, pid=lock_pid, managed=False
     )

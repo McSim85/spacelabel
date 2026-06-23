@@ -262,29 +262,39 @@ def uninstall(
         )
         return
 
+    is_default = install_mod._is_default_store(paths.config_file)
     targets = install_mod.purge_targets(paths, remove_completion=True)
     if dry_run:
         for target in targets:
             click.echo(str(target))  # resolved paths -> stdout (mirrors `label prune --dry-run`)
-        _diag("(dry run) nothing deleted.")
+        if is_default:
+            _diag("(dry run) nothing deleted.")
+        else:
+            _diag(
+                f"(dry run) custom --config: nothing is auto-purged. Remove {paths.directory} "
+                "manually; run the default 'spacelabel uninstall --purge' for the shared "
+                "caches/logs/completion."
+            )
         return
-    # Don't delete data/logs out from under a live agent. The managed LaunchAgent is
-    # stopped by the uninstall step below, but a foreground `spacelabel agent` is not — so
-    # refuse if one is alive. Check BOTH this --config's store AND the default store: purge
-    # always removes the shared ~/Library/Caches|Logs/spacelabel that the default agent
-    # uses, so a foreground default agent must block it too. (`{None, …}` dedupes.)
-    # Coverage limit: a foreground agent for some OTHER custom config cannot be enumerated
-    # (its lock lives in an arbitrary dir), so it isn't detected here. The cost is bounded —
-    # it would lose only the regenerable shared caches/logs, never user data (labels/config
-    # live in each store's own dir, which purge does not touch for a non-default config).
-    for probe_config in {None, app_ctx.config_path}:
-        live = install_mod.agent_status_detail(probe_config)
+    # Only the DEFAULT purge deletes shared data (the data dir + the global caches/logs that
+    # the agent uses regardless of --config). Don't delete it out from under a live agent:
+    # the managed LaunchAgent is stopped below, but a foreground `spacelabel agent` is not,
+    # so refuse if one holds the default lock (agent_status_detail(None) also catches an alt
+    # config sharing that lock). A custom --config deletes nothing, so it never blocks here.
+    # Coverage limit: a foreground agent for some OTHER custom config can't be enumerated
+    # (its lock lives in an arbitrary dir); a default purge would still remove the shared,
+    # regenerable caches/logs from under it — never its user data (each store keeps its own).
+    if is_default:
+        live = install_mod.agent_status_detail(None)
         if live.running and not live.managed:
             raise click.ClickException(
                 f"a foreground spacelabel agent is still running (pid {live.pid}); quit it "
                 "before 'uninstall --purge' so its data isn't deleted out from under it."
             )
-    if not assume_yes:
+    # Confirm only when there is something to delete. A custom --config purges nothing
+    # (empty targets), so it needs neither --yes nor a TTY -- requiring them would break
+    # harmless scripted uninstalls that delete no data.
+    if targets and not assume_yes:
         if not _isatty():
             raise click.UsageError(
                 "--purge needs --yes when not run interactively (refusing to delete data "
@@ -297,22 +307,28 @@ def uninstall(
 
     _uninstall_agent_or_die()
     failed = install_mod.purge_user_data(targets)
-    if app_ctx.config_path is not None and store.data_dir() not in targets:
-        # A custom --config: we never delete files in a directory we don't own, so its
-        # config + labels/displays are left for the user to remove (only spacelabel's own
-        # caches/logs/completion were purged).
+    if is_default:
+        # Remove the now-emptied data dir, but keep it (and any foreign file a user stashed
+        # there, e.g. an alternate --config) if something non-spacelabel remains.
+        install_mod.remove_default_store_dir_if_empty()
         _diag(
-            f"Note: your --config store under {paths.directory} was not auto-purged "
-            "(spacelabel doesn't delete files in a directory it doesn't own); remove it manually."
+            "Note: any '.zshrc' fpath line added by 'completion install' is left in place "
+            "(remove it manually if you no longer use spacelabel)."
         )
+        if failed:
+            _diag("Purged with errors; could not remove: " + ", ".join(str(p) for p in failed))
+            ctx.exit(1)
+        _diag(f"Removed {_AGENT_LABEL} and purged spacelabel data, caches, logs, and completion.")
+        return
+    # A custom --config owns nothing we can safely auto-delete: its directory isn't ours
+    # (a sibling labels.json could be another app's) and the caches/logs/completions are
+    # global — shared with the default install. So we delete nothing for it.
     _diag(
-        "Note: any '.zshrc' fpath line added by 'completion install' is left in place "
-        "(remove it manually if you no longer use spacelabel)."
+        f"Removed {_AGENT_LABEL}. Your --config store under {paths.directory} was NOT "
+        "auto-purged (spacelabel only deletes what it exclusively owns); remove it manually. "
+        "Run the default 'spacelabel uninstall --purge' to remove the shared caches/logs/"
+        "completion."
     )
-    if failed:
-        _diag("Purged with errors; could not remove: " + ", ".join(str(p) for p in failed))
-        ctx.exit(1)
-    _diag(f"Removed {_AGENT_LABEL} and purged spacelabel data, caches, logs, and completion.")
 
 
 def _isatty() -> bool:
