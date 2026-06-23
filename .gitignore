@@ -12,9 +12,14 @@ pip-wheel-metadata/
 
 # Virtual environments
 .venv/
+.venv-build/
 venv/
 env/
 ENV/
+
+# Generated app icon (the 1024 master is committed; .icns/.iconset are built)
+packaging/icon/spacelabel.icns
+packaging/icon/*.iconset/
 
 # Tooling caches
 .ruff_cache/
