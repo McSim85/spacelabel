@@ -408,6 +408,61 @@ Severity: **low** (UX). Cross-refs `critical-click-to-switch.md` (shipped).
 
 ---
 
+### K. CLI shows `launcher.py` as prog_name when run from the .app bundle  *(Phase-6 finding, 2026-06-23)*
+
+**Context:** through the cask CLI shim (`spacelabel.app/Contents/Resources/spacelabel` → `launcher.py`), `spacelabel --help` prints `Usage: launcher.py [OPTIONS] …` instead of `Usage: spacelabel …`. The py2app launcher invokes the click group without `prog_name`, so click derives it from `sys.argv[0]` (`launcher.py`). Cosmetic, but it contradicts the CLI contract (plan row **A4** expects `prog_name="spacelabel"`) and leaks into any usage/error text.
+
+**Read first:** `packaging/py2app/launcher.py`; `src/spacelabel/cli.py` (`main()` / the click group, which sets `prog_name="spacelabel"` on the normal entry point).
+
+**Fix:** have the launcher call the group with `prog_name="spacelabel"` (e.g. `cli.main(prog_name="spacelabel")`) — matching the pyproject entry-point behavior — so the bundle CLI and the pipx/dev CLI present identically. Add/extend a launcher test (`tests/test_launcher.py`) asserting the usage line says `spacelabel`.
+
+Severity: **low** (cosmetic / contract consistency).
+
+---
+
+### L. Detect a STALE Accessibility grant before telling the user to "enable" it  *(Max, 2026-06-23 — live finding)*
+
+**Context (verified live):** with the signed cask 0.7.0 bundle (cdhash `4ac198d5…`), an **already-enabled "spacelabel" entry** existed in System Settings → Accessibility, yet `AXIsProcessTrusted()` stayed **False** and click-to-switch never armed; **re-triggering / toggling did not help.** Root cause: **ad-hoc signing rotates the cdhash every build/release**, and macOS TCC keys the grant to the cdhash — so the visible "spacelabel" entry is bound to an **old** cdhash and does not apply to the new process. Toggling the stale entry off/on often re-grants the *old* cdhash; the user must **remove it (−) and let a fresh prompt re-add it** (re-keying to the current cdhash). Today the guidance just says "enable Accessibility for spacelabel" — actively misleading when an enabled-but-stale entry is already present.
+
+**Max's question — can the app detect this before suggesting enablement? YES (heuristically):** the app cannot read TCC.db (SIP), but it can read **its own** code identity and remember it:
+1. Read the running bundle's **cdhash** via the Security framework (`SecCodeCopySelf` → `SecCodeCopySigningInformation`, `kSecCodeInfoUnique`) — reading your own signature is allowed; bind it feature-detected like the AX funcs in `switching.py`.
+2. Persist `last_cdhash` + an `ax_was_trusted` flag in the store (small state file or config).
+3. **Infer staleness:** when `AXIsProcessTrusted()` is False AND (`current_cdhash != last_cdhash` → app was updated, OR `ax_was_trusted` was set) → almost certainly a **stale** grant, not a missing one.
+
+**Then branch the guidance** (in `app.py` click-to-switch availability / the ⚠️ reason row + the first-click prompt; `_sync_click_to_switch_state`):
+- **stale** → *"Accessibility for ‘spacelabel’ went stale after an app update (its signature changed). In System Settings → Privacy & Security → Accessibility, REMOVE the existing ‘spacelabel’ entry (–), then click a pill again to re-add it."* + open the Accessibility pane.
+- **never granted** → the existing "grant Accessibility" message.
+
+**Read first:** `src/spacelabel/platform/switching.py` (`accessibility_trusted`, the HIServices bind pattern), `src/spacelabel/agent/app.py` (`_sync_click_to_switch_state`, the AX reason rows B22), item **E** (the signed-app/TCC story), `docs/UI.md` Accessibility section.
+
+**Durable fix (the real cure):** **Developer-ID signing + notarization** gives a *stable* cdhash across releases, so the grant survives upgrades and this whole staleness class disappears — tracked as the item-E follow-on. Item L is the best we can do while ad-hoc. Tests: stale-vs-missing branch (mock `AXIsProcessTrusted` + persisted cdhash). Severity: **medium** (UX/correctness of the headline feature).
+
+> **Interim workaround for Max right now:** Settings → Privacy & Security → Accessibility → select the existing **"spacelabel"** row → **−** to remove it → click a menu-bar pill → on the fresh prompt enable the newly-added "spacelabel" → click a pill again. (Re-keys the grant to cdhash `4ac198d5`.)
+
+---
+
+### M. `status --help` (and audit all) leaks raw RST/markdown markup + internal refs  *(Max, 2026-06-23)*
+
+**Context:** `spacelabel status --help` prints the docstring verbatim, including `**selected store**`, `` ``--config`` ``, `*different*`, `` ``agent.lock`` ``, and internal references `(DECISIONS.md §9)`, `(per review F3)` — click renders none of this in plain-text help, so the raw markup/refs show (`src/spacelabel/cli.py` `status` docstring, ~line 382).
+
+**Fix:** rewrite the `status` docstring as clean, concise plain text — no `**bold**`, no `` ``literals`` ``, no `*emphasis*` — and move the `DECISIONS §9` / `review F3` notes into a **code comment**, not user-facing help. **Audit every command docstring** for the same leak.
+
+**Acceptance test (Max asked):** in `tests/test_cli.py`, parametrize over the CLI command tree and assert no command's `--help` contains `**`, `` `` `` (double backtick), or internal-ref substrings (`DECISIONS.md`, `review F`, `§`). Doubles as a regression guard. (The usage line also shows `launcher.py` not `spacelabel` under the cask — that's item **K**; the test should assert `spacelabel` once K lands.)
+
+Severity: **low** (cosmetic / CLI contract A4).
+
+---
+
+### N. Colorize `status` output (dep-free); do NOT colorize help (needs a rejected dep)  *(Max, 2026-06-23)*
+
+**`status` output — yes:** color `running (managed) …` green and `not running …` yellow via `click.style`, TTY-gated + `NO_COLOR`-aware — the existing pattern for `spaces`/`display list` (the bold/green helper near `cli.py:80`). No new dep; fits the CLI contract (DECISIONS §9 / A11–A18: color only on an interactive TTY, stripped when piped/`NO_COLOR`). Test: ANSI present on a faked TTY, absent when piped / `NO_COLOR=1`.
+
+**`--help` colorization — no:** click has no native colored help; the only easy route is `rich-click`/`rich`, a **new dependency** contradicting the locked **stdlib-first / only-`click`** policy (DECISIONS §2; `rumps`/`Pillow` already rejected). Keep help plain unless that decision is deliberately relaxed.
+
+Pairs with **K** + **M** (one `fix(cli): help/output polish` PR). Severity: **low**.
+
+---
+
 ## After completing each item
 
 1. Run all gates:

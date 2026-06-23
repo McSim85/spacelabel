@@ -18,14 +18,17 @@ User-acceptance verification of the shipped build, per `spacelabel-plan/phase-6-
 ### Notes / drift from the plan text
 - Plan says repo is at **v0.6.0**; repo is actually **v0.6.1** with an open release-please PR for **0.6.2**. Version-string checks (1A.1, A4) are scored as "matches installed metadata", not the literal `0.6.0`.
 - The overview's branch-reconciliation warning (`feat/live-refresh-reorder`) is **stale**: that branch no longer exists (its feature shipped in v0.6.0 #25), and the `docs/backlog-pipx-only` work already merged to main (#30). No reconciliation was needed.
+- **Resumed 2026-06-23, post-PR #32** (`feat(dist): signed .app via Homebrew cask + Phase-6 follow-ups`, merged to `main` @ `df12dde`): distribution pivoted to the **signed `.app` via Homebrew cask** (DECISIONS §6.8); the CGS→SLS (item H) and `status` (item I) fixes landed. Verification continues on branch **`docs/phase-6-reverify-brew`** (off `df12dde`). The env table above reflects the **pipx** snapshot at the original 2026-06-22 run; install acceptance is now the brew matrix in Part 1. pipx is being removed entirely (`todo/remove-pipx.md`).
 
 Legend: ✅ pass · ⚠️ pass-with-note · ❌ fail · 🟡 N/A (by design / feature not shipped) · ⏳ deferred (hardware/UI, pending Max)
 
 ---
 
-## Part 1 — Install & distribution acceptance (pipx) — COMPLETE
+## Part 1 — Install & distribution acceptance
 
-### 1A. pipx install matrix
+> **Distribution is now the signed `.app` via a Homebrew cask** (PR #32, DECISIONS §6.8 — reverses pipx-only #30). The **authoritative install-acceptance matrix is [Part 1 (brew) below](#part-1--install-acceptance-signed-app-via-homebrew-cask-current-path).** The pipx matrix that follows (1A/1B/1C) is **SUPERSEDED — kept only as a historical record** of the pre-pivot build's behavior. pipx is being removed from the repo entirely (`todo/remove-pipx.md`); **do not test pipx going forward.**
+
+### 1A. pipx install matrix  *(SUPERSEDED — historical; pipx being removed)*
 
 | # | Result | Evidence |
 |---|---|---|
@@ -55,9 +58,31 @@ Legend: ✅ pass · ⚠️ pass-with-note · ❌ fail · 🟡 N/A (by design / f
 ### 1C. Homebrew — 🟡 deferred (out of scope)
 No `Formula/` in the repo; brew not tested this run, matching the pipx-only decision (`todo/critical-release-automation.md`). N/A.
 
-**Part 1 verdict: PASS.** All scriptable install/distribution rows pass; PyPI-by-name and `--purge`/Homebrew correctly N/A (deferred features). No defects.
+**Part 1 (pipx, legacy) verdict: PASS (historical).** All scriptable pipx rows passed pre-pivot; PyPI-by-name and `--purge`/Homebrew were N/A then. Retained only as a record — **superseded by the brew matrix below.**
 
-> **⚠ Distribution pivot (Max, 2026-06-22):** during Part 2, click-to-switch testing surfaced that the pipx shared-python identity can't be granted Accessibility reliably (see the finding below). Decision: **move from pipx to a signed `.app` shipped via a Homebrew cask** (reverses #30). Part 1's pipx results remain a **valid record of the current build's behavior**, but the install/distribution path will be **re-verified under the cask** in the follow-up session (`todo/phase-6-blockers.md` Tier 1). The CLI/agent behavior tested in Parts 2–4 is distribution-agnostic and stands regardless.
+### Part 1 — Install acceptance: signed `.app` via Homebrew cask (current path)
+
+Distribution = signed `.app` via Homebrew cask (PR #32, DECISIONS §6.8). Build tool `tools/build_app.sh`; cask `Casks/spacelabel.rb`; agent-path resolution `install.py` `_resolve_install_shim`/`_enclosing_app_exe`. **Status: ⏳ to be run live** — building/installing the `.app` replaces the running agent, so it needs Max's go-ahead.
+
+Verified 2026-06-23 against the **CI-signed v0.7.0 release artifact** `spacelabel-0.7.0.zip` (downloaded from the GitHub release; ~18 MB; this is exactly what the cask installs):
+
+| # | Test | Expected | Result |
+|---|---|---|---|
+| P1.1 build | release pipeline `build-app` (py2app) | Produces a self-contained `spacelabel.app` (embedded `Python.framework`); py2app build-time only. | ✅ CI `build-app` job green; 18 MB bundle attached to v0.7.0. |
+| P1.2 sign | `codesign -dvvv` + `codesign --verify --deep --strict` | `Identifier=dev.mcsim.spacelabel`, `Signature=adhoc`; inside-out; verify passes. | ✅ `Identifier=dev.mcsim.spacelabel`, adhoc, cdhash `4ac198d5…`; verify → *valid on disk; satisfies its Designated Requirement* (validated the embedded Python.framework). |
+| P1.3 self-contained | `…/Contents/MacOS/spacelabel --version` (no build venv) | Runs from the embedded interpreter. | ✅ → `spacelabel, version 0.7.0`. |
+| P1.4 CLI on PATH | `…/Contents/Resources/spacelabel --help` (cask `binary` shim) | Full command tree, no PyObjC cost; shim execs the stub by absolute path. | ⚠️ Full tree renders (incl. the new richer `status` help). **Minor:** usage line shows `launcher.py`, not `spacelabel` (prog_name not set on the shim path) — A4 expects `prog_name="spacelabel"`. See finding below. |
+| P1.5 icon/accessory | `spacelabel.icns` present; `CFBundleIconFile`; `LSUIElement=true` | Named icon; accessory. | ✅ `CFBundleIdentifier=dev.mcsim.spacelabel`, `CFBundleName=spacelabel`, `LSUIElement=true`, `CFBundleIconFile=spacelabel.icns` (present). |
+| P1.6 install→bundle | install the app, then `spacelabel install` | LaunchAgent `ProgramArguments` = the **bundle exe**; `_resolve_install_shim` resolves the bundle. | ✅ `spacelabel install` → "Installed and loaded dev.mcsim.spacelabel."; plist `ProgramArguments` = **`/Applications/spacelabel.app/Contents/MacOS/spacelabel agent`** (bundle exe, not the pipx shim). Cask installs to **`/Applications`** (not `~/Applications`). |
+| **P1.7 named TCC identity** | running agent's code identity | Agent process **is** the bundle → Accessibility shows **"spacelabel"** (not `python3.x`); grant → `AXIsProcessTrusted()` True → pills switch. | ✅ **VERIFIED LIVE (Max, 2026-06-23).** Agent runs as the bundle (cdhash `4ac198d5…`); Accessibility entry is the named **"spacelabel"** (python3.x collision gone). Once a **stale** prior-cdhash entry was removed + re-added (see below / item L), `AXIsProcessTrusted()` → True and **clicking a non-current pill switches the Space** end-to-end (B18 path). The bundle pivot achieved its goal. Caveat stands: ad-hoc cdhash rotates per build → grant must be re-approved after each upgrade until Developer-ID/notarization (item E follow-on). The "had to remove a stale entry" friction → backlog item **L**. |
+| P1.8 footprint/uninstall | `spacelabel uninstall`; cask `zap` | uninstall keeps user data; cask `zap trash:` matches `--purge` paths. | ⏳ pending (after the click-to-switch test). |
+| P1.9 remote cask | `brew install --cask <tap>/spacelabel` | Installs v0.7.0 from the signed release asset. | ✅ PR #33 merged (cask `0.7.0`, real sha256). `brew tap mcsim85/spacelabel <repo>` + `brew install --cask mcsim85/spacelabel/spacelabel` → 0.7.0; app→`/Applications`, CLI→`/opt/homebrew/bin/spacelabel`; caveats correctly name **"spacelabel"** for Accessibility. Installed app cdhash `4ac198d5…` == the verified release asset. |
+
+**Finding (minor, P1.4 — confirmed on installed cask):** through the cask CLI shim, `--help`/usage prints `launcher.py` instead of `spacelabel` (the bundle's `Contents/Resources/launcher.py` invokes the click group without `prog_name="spacelabel"`). Cosmetic; affects the usage line + any `prog_name`-derived text (A4). → logged as `todo/improvements.md` item **K**.
+
+**Finding (minor — brew quarantine):** `brew install --cask` set `com.apple.quarantine` on `/Applications/spacelabel.app` (ad-hoc, no notarization). The LaunchAgent/first-launch needs it cleared — the cask **caveat documents this exactly** (`xattr -dr com.apple.quarantine …` / right-click→Open). I cleared it and the agent launched. Working-as-documented; the durable fix is Developer-ID notarization (deferred follow-on).
+
+**Item I (richer `status`) — ✅ verified:** with the cask agent loaded, `spacelabel status` → `running (managed)  pid=11916  label=dev.mcsim.spacelabel` (exit 0); `--json` → `{"installed":true,"loaded":true,"running":true,"pid":11916,"managed":true,"label":"dev.mcsim.spacelabel"}`. (The foreground/unmanaged branch — `running (unmanaged)` — still to be spot-checked.)
 
 ---
 
@@ -90,8 +115,11 @@ Read-only probe (`scratchpad/cgs_probe.py`) exercising the **shipped** `spacelab
 > **Resolved (2026-06-22):** the signed `.app` so TCC keys on `dev.mcsim.spacelabel` is built, installed via the Homebrew cask, and **verified end-to-end on the reference machine**: the Accessibility entry shows a **named "spacelabel"** (no python collision); granting it makes the agent trusted; **clicking a menu-bar pill switches the Space** (Max, after re-arming `menubar.click_to_switch` off→on). Caveat confirmed live too: the **ad-hoc cdhash changes on each rebuild**, so the grant must be re-approved after an upgrade/rebuild (Developer-ID would make it durable — deferred, §6.9). See the **Phase-6 blockers session → Tier 1** section below.
 Max enabled "python3.14" in Settings → Accessibility but click-to-switch stayed disabled. **Root cause confirmed empirically:** the agent runs as the ad-hoc-signed framework app-stub `Python.app/Contents/MacOS/Python` (id `org.python.python`, cdhash `b4955ea0…`); `AXIsProcessTrusted()` returns **False from a fresh process of that exact binary**, so the enabled "python3.14" entry isn't bound to the agent's identity, and **relaunch won't fix it**. The pipx CLI stub `bin/python3.14` is a *different* binary (id `python3-5555…`, cdhash `f740…`), so multiple "python3.14" identities collide in the Accessibility list. This is exactly the TCC-identity risk in `todo/improvements.md` item **E** (signed `.app`) — now reproduced live; item E updated with the cdhashes, the "relaunch won't help" proof, and an interim workaround. Not a code defect in spacelabel's switching logic (it correctly disables with a visible reason rather than silently no-op'ing, per DECISIONS §9.5). **Deferred to item E** (signed bundle is the durable fix). Workaround to attempt this session is in item E.
 
-### Steps 2–7 — ⏳ pending Max (UI / hardware)
-Need the running agent + your hands/eyes: (2) WhichSpace reorder demo, (3) display modes on rotated 2160×3840 + 4K, (4) menu-bar/prefs rename live-reload, (5) reboot persistence [deferred], (6) experimental wallpaper revert, (7) generality spot-check (detach 4K / change res-orientation / add-remove Space). I'll drive each with exact steps and you report/screenshot.
+### Step 2 — WhichSpace reorder demo (the core invariant) — ✅ PASS (Max, 2026-06-23)
+Moving/reordering Spaces in Mission Control keeps each label bound to its **Space UUID**, not its position — labels follow their desktops through a reorder (the `Desktop N` ordinal shifts, the label does not migrate to a different Space). This is the project's reason-for-being vs WhichSpace (position-keyed). Confirmed live by Max. Covers plan row **A1** + Part-2 step 2.
+
+### Steps 3–7 — ⏳ pending Max (UI / hardware)
+Still need your hands/eyes: (3) display modes (menu-bar / HUD / overlay) on the rotated 2160×3840 + 4K, (4) menu-bar/prefs rename live-reload, (5) reboot persistence [deferred to a natural restart — snippet below], (6) experimental wallpaper revert, (7) generality spot-check (detach 4K / change res-orientation / add-remove Space).
 
 #### Reboot-capture snippet (run once, around your next natural restart — no live session needed)
 ```sh
