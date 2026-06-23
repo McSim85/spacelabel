@@ -379,6 +379,30 @@ def test_bash_too_old_parses_version(monkeypatch) -> None:
     assert completion._bash_too_old() is False  # unparseable -> best-effort, don't block
 
 
+def test_bash_too_old_uses_newest_candidate(monkeypatch) -> None:
+    # PATH `bash` is the old macOS 3.2, but a newer Homebrew bash exists -> NOT too old
+    # (probe candidates, judge by the newest), so a valid setup isn't falsely rejected.
+    versions = {"bash": (3, 2), "/opt/homebrew/bin/bash": (5, 2), "/usr/local/bin/bash": None}
+    monkeypatch.setattr(completion, "_bash_version", versions.get)
+    assert completion._bash_too_old() is False
+    # ...but if EVERY discoverable bash is old, it really is too old.
+    monkeypatch.setattr(completion, "_bash_version", lambda _b: (3, 2))
+    assert completion._bash_too_old() is True
+
+
+def test_installed_completion_files_finds_default_after_env_change(tmp_path, monkeypatch) -> None:
+    # F5: a script installed at the DEFAULT location is still found by purge even if
+    # $XDG_CONFIG_HOME now points elsewhere (purge checks current-env AND default per shell).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("BASH_COMPLETION_USER_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    default_fish = tmp_path / ".config" / "fish" / "completions" / "spacelabel.fish"
+    default_fish.parent.mkdir(parents=True)
+    default_fish.write_text("# spacelabel fish completion\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "newxdg"))  # current-env target moved
+    assert default_fish in completion.installed_completion_files()
+
+
 def test_install_bash_rejects_old_bash(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(completion, "_bash_too_old", lambda: True)
