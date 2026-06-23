@@ -21,9 +21,11 @@ IDENTIFIER="${SPACELABEL_BUNDLE_ID:-dev.mcsim.spacelabel}"
 [ -d "$APP" ] || { echo "no such bundle: $APP" >&2; exit 1; }
 echo "ad-hoc signing (inside-out) as ${IDENTIFIER}: $APP"
 
-# 1. Nested dylibs and extension modules (.so), deepest path first.
+# 1. Nested dylibs and extension modules (.so). These are leaf Mach-O files (none
+# contains another signable item), so order among them is irrelevant -- the inside-out
+# invariant is enforced by the STEP order below (leaves here, frameworks next, outer
+# bundle last), not by sorting. No `sort` (its `-z` is non-portable across runners).
 find "$APP/Contents" \( -name '*.dylib' -o -name '*.so' \) -type f -print0 \
-  | sort -rz \
   | while IFS= read -r -d '' lib; do
       codesign --force --sign - "$lib"
     done
