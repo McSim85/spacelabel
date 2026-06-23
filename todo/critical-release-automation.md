@@ -132,10 +132,10 @@ Ensure the go-public checklist includes:
 - [x] Flip repo to public — **done** (repo is public)
 - [ ] Register `spacelabel` on PyPI and configure OIDC trusted publishing
       (publisher: `McSim85/spacelabel`, workflow: `publish.yml`, env: `pypi`)
-- [ ] Create `McSim85/homebrew-spacelabel` tap repo + formula
+- [x] ~~Create `McSim85/homebrew-spacelabel` tap repo + formula~~ — **N/A**: the cask lives in-repo (`Casks/spacelabel.rb`, DECISIONS §10.5); tapped via `brew tap McSim85/spacelabel <repo-url>`, no separate tap repo
 - [x] Install Renovate GitHub App on the repo — **done** (PR #5)
-- [ ] Enable branch protection on `main` (required status checks: CI) — deferred (DECISIONS §8.5)
-- [ ] Enable GitHub Discussions — deferred (DECISIONS §8.5)
+- [x] Enable branch protection on `main` (required status checks: CI) — **done**
+- [ ] Enable GitHub Discussions — optional (enable when wanted)
 
 ### 7. `DECISIONS.md` update
 
