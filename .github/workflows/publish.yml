@@ -50,7 +50,7 @@ jobs:
       - name: Build + ad-hoc sign spacelabel.app
         env:
           SPACELABEL_PY_VERSION: /opt/homebrew/opt/python@3.14/bin/python3.14
-        run: ./tools/build_app.sh --sign
+        run: ./tools/build_app.sh   # always ad-hoc-signs inside-out
 
       - name: Zip the bundle (ditto preserves the code signature + symlinks)
         env:
@@ -79,8 +79,11 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          ASSET_URL="https://github.com/McSim85/spacelabel/releases/download/${TAG}/spacelabel-${VERSION}.zip"
-          SHA256=$(curl -fsSL "$ASSET_URL" | sha256sum | awk '{print $1}')
+          ASSET="spacelabel-${VERSION}.zip"
+          # Download via gh (uses $GH_TOKEN) — the repo is private, so an anonymous
+          # curl of the release-download URL would 404 and break the cask bump.
+          gh release download "$TAG" --pattern "$ASSET" --clobber
+          SHA256=$(sha256sum "$ASSET" | awk '{print $1}')
 
           # Bump only the top-level version + sha256 (url uses #{version} interpolation).
           python3 - "$VERSION" "$SHA256" << 'PYEOF'

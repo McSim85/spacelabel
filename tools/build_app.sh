@@ -4,21 +4,20 @@
 # py2app is a BUILD-time dependency only -- never added to the project's runtime deps
 # (todo/phase-6-blockers.md Tier 1 step 2). This script is used both locally and by the
 # release workflow (.github/workflows): it creates an isolated build venv, builds the
-# icon, runs py2app into ./dist, and -- with --sign -- ad-hoc code-signs the bundle
+# icon, runs py2app into ./dist, writes the CLI shim, and ad-hoc code-signs the bundle
 # inside-out so the agent process carries the dev.mcsim.spacelabel TCC identity.
 #
+# Signing is ALWAYS done: writing the CLI shim after py2app invalidates py2app's own
+# signature, so a re-sign is mandatory for a valid (launchable, Gatekeeper-clean) bundle.
+#
 # Usage:
-#   tools/build_app.sh            # build only (py2app auto ad-hoc-signs at link time)
-#   tools/build_app.sh --sign     # build, then re-sign inside-out with the bundle id
+#   tools/build_app.sh            # build + ad-hoc sign (the legacy --sign flag is accepted + ignored)
 #
 # Requires: uv + macOS (sips/iconutil/codesign). Output: dist/spacelabel.app
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
-
-SIGN=0
-[ "${1:-}" = "--sign" ] && SIGN=1
 
 PY_VERSION="${SPACELABEL_PY_VERSION:-3.14}"
 BUILD_VENV="$REPO_ROOT/.venv-build"
@@ -72,10 +71,10 @@ exec "$dir/../MacOS/spacelabel" "$@"
 SHIM
 chmod +x "$CLI_SHIM"
 
-if [ "$SIGN" = "1" ]; then
-  echo "==> ad-hoc codesign (inside-out)"
-  "$REPO_ROOT/tools/codesign_app.sh" "$APP"
-fi
+# ALWAYS re-sign: adding the shim above invalidated py2app's own signature, so an
+# unsigned-stale bundle would fail codesign --verify and Gatekeeper. Inside-out ad-hoc.
+echo "==> ad-hoc codesign (inside-out)"
+"$REPO_ROOT/tools/codesign_app.sh" "$APP"
 
 echo "==> built: $APP"
 echo -n "version: "
