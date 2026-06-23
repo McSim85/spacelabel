@@ -2,17 +2,23 @@ name: Build and attach release artifacts
 
 # Triggered when the release-please PR is merged and a GitHub Release is created.
 #
-# build-and-upload: builds the pure-Python wheel + sdist on ubuntu (no macOS
-# runner needed — no C extensions; PyObjC resolves from PyPI at install time)
-# and attaches the artifacts to the release so users can:
-#   pipx install https://github.com/McSim85/spacelabel/releases/download/vX.Y.Z/spacelabel-X.Y.Z-py3-none-any.whl
+# Distribution is a signed .app shipped via a Homebrew CASK (DECISIONS.md §6 — the
+# 2026-06-22 pivot that reversed pipx-only). The jobs:
 #
-# update-homebrew-formula: runs only once Formula/spacelabel.rb is committed to
-# this repo (set FORMULA_IN_REPO=true in Settings → Variables when ready).
-# Uses GITHUB_TOKEN — no extra PAT or separate tap repo needed.
-# Install after going public:
-#   brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
-#   brew install McSim85/spacelabel/spacelabel
+#   build-app:    builds the self-contained spacelabel.app on a macOS arm64 runner
+#                 (py2app, ad-hoc signed inside-out — no Apple account/secrets/cost),
+#                 zips it with `ditto` (preserves the code signature), and attaches
+#                 spacelabel-<version>.zip to the GitHub Release. This is the artifact
+#                 the cask installs.
+#   update-cask:  computes the asset sha256 and opens a PR bumping Casks/spacelabel.rb
+#                 (version + sha256) — mirrors the quiknode-labs optic update-formula job.
+#   build-wheel:  also attaches the pure-Python wheel + sdist for dev / source installs
+#                 (`uv pip install <wheel-url>`); pipx is deprecated in favour of the cask.
+#
+# Ad-hoc caveats (documented in README/UI.md): the cdhash changes each build so the
+# Accessibility grant drops on upgrade until re-granted, and downloads hit Gatekeeper
+# quarantine (right-click→Open). Developer-ID signing + notarization (paid Apple Developer
+# Program + secrets) is a deferred follow-on for friction-free public installs.
 
 on:
   release:
@@ -20,15 +26,90 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and upload (e.g. v0.1.0)"
+        description: "Release tag to build and upload (e.g. v0.6.2)"
         required: true
 
 permissions:
-  contents: write       # upload release assets + push formula branch
-  pull-requests: write  # open formula update PR
+  contents: write       # upload release assets + push the cask-bump branch
+  pull-requests: write  # open the cask-bump PR
 
 jobs:
-  build-and-upload:
+  build-app:
+    runs-on: macos-15  # Apple Silicon (arm64); the ad-hoc build is arm64-only for now
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install framework Python 3.14
+        # py2app needs a *framework* build of Python (it embeds Python.framework); the
+        # Homebrew interpreter is a framework build, uv-managed standalones are not.
+        run: brew install python@3.14
+
+      - name: Build + ad-hoc sign spacelabel.app
+        env:
+          SPACELABEL_PY_VERSION: /opt/homebrew/opt/python@3.14/bin/python3.14
+        run: ./tools/build_app.sh --sign
+
+      - name: Zip the bundle (ditto preserves the code signature + symlinks)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ditto -c -k --sequesterRsrc --keepParent dist/spacelabel.app "spacelabel-${VERSION}.zip"
+
+      - name: Attach the .app zip to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: gh release upload "$TAG" "spacelabel-${TAG#v}.zip" --clobber
+
+  update-cask:
+    needs: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bump cask version + sha256 and open a PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ASSET_URL="https://github.com/McSim85/spacelabel/releases/download/${TAG}/spacelabel-${VERSION}.zip"
+          SHA256=$(curl -fsSL "$ASSET_URL" | sha256sum | awk '{print $1}')
+
+          # Bump only the top-level version + sha256 (url uses #{version} interpolation).
+          python3 - "$VERSION" "$SHA256" << 'PYEOF'
+          import re, sys
+
+          version, sha = sys.argv[1], sys.argv[2]
+          path = "Casks/spacelabel.rb"
+          content = open(path).read()
+          content = re.sub(r'  version "[^"]*"', f'  version "{version}"', content, count=1)
+          content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
+          open(path, "w").write(content)
+          PYEOF
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git checkout -b "chore/bump-cask-${VERSION}"
+          git add Casks/spacelabel.rb
+          git commit -m "chore: bump spacelabel cask to ${VERSION}"
+          git push origin "chore/bump-cask-${VERSION}"
+          gh pr create \
+            --title "chore: bump spacelabel cask to ${VERSION}" \
+            --body "Automated cask bump for release ${TAG} (version + sha256 of spacelabel-${VERSION}.zip)." \
+            --base main \
+            --head "chore/bump-cask-${VERSION}"
+
+  build-wheel:
+    # Pure-Python wheel + sdist for dev / source installs (no macOS runner needed —
+    # no C extensions; PyObjC resolves from PyPI at install time). pipx is deprecated
+    # in favour of the cask, but the wheel stays useful for `uv pip install`.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -39,53 +120,8 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
-      - name: Attach artifacts to GitHub Release
+      - name: Attach artifacts to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" dist/*.whl dist/*.tar.gz
-
-  update-homebrew-formula:
-    # Deferred until Formula/spacelabel.rb is committed to this repo.
-    # Enable by adding a repository variable FORMULA_IN_REPO=true.
-    needs: build-and-upload
-    if: vars.FORMULA_IN_REPO == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Update formula url and sha256
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#v}"
-          ARCHIVE_URL="https://github.com/McSim85/spacelabel/archive/refs/tags/${TAG}.tar.gz"
-          export SHA256
-          SHA256=$(curl -fsSL "$ARCHIVE_URL" | sha256sum | awk '{print $1}')
-          export ARCHIVE_URL
-
-          # Update the top-level url and sha256 (count=1 skips resource blocks).
-          python3 << 'PYEOF'
-          import re, os
-
-          content = open("Formula/spacelabel.rb").read()
-          url = os.environ["ARCHIVE_URL"]
-          sha = os.environ["SHA256"]
-          content = re.sub(r'  url "[^"]*"', f'  url "{url}"', content, count=1)
-          content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
-          open("Formula/spacelabel.rb", "w").write(content)
-          PYEOF
-
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git checkout -b "chore/bump-formula-${VERSION}"
-          git add Formula/spacelabel.rb
-          git commit -m "chore: bump Homebrew formula to ${VERSION}"
-          git push origin "chore/bump-formula-${VERSION}"
-          gh pr create \
-            --title "chore: bump Homebrew formula to ${VERSION}" \
-            --body "Automated formula bump for release ${TAG}." \
-            --base main \
-            --head "chore/bump-formula-${VERSION}"
+        run: gh release upload "$TAG" dist/*.whl dist/*.tar.gz --clobber
