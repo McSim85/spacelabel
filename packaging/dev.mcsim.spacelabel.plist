@@ -8,7 +8,12 @@
   absolute. Keep the Label / filename == dev.mcsim.spacelabel (BUNDLE_ID).
 
   Tokens substituted by install.py:
-    __HOME__   ->  the user's home directory (e.g. /Users/alex)
+    __HOME__     ->  the user's home directory (e.g. /Users/alex)
+    __APP_EXE__  ->  the cask-installed spacelabel.app main executable, resolved at
+                     install time (e.g. /Applications/spacelabel.app/Contents/MacOS/spacelabel).
+                     The agent process IS the bundle so Accessibility (TCC) keys on
+                     dev.mcsim.spacelabel. Legacy pipx installs resolve to
+                     __HOME__/.local/bin/spacelabel instead (deprecated).
 
   The agent must run in the per-user Aqua GUI domain (NSStatusItem needs a
   window-server session); load with:
@@ -22,7 +27,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__HOME__/.local/bin/spacelabel</string>
+        <string>__APP_EXE__</string>
         <string>agent</string>
     </array>
 

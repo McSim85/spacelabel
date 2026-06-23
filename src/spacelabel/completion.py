@@ -451,6 +451,26 @@ def completion_target(shell: str) -> Path:
     return _zsh_completion_path()[0]
 
 
+def installed_completion_files() -> list[Path]:
+    """Return per-shell completion scripts that currently exist (for ``uninstall --purge``).
+
+    Resolves each supported shell's target best-effort and keeps only files that exist,
+    so purge removes exactly what ``completion install`` would have written -- never a
+    guessed path. Per-shell resolution failures are skipped (logged at DEBUG).
+    """
+    found: list[Path] = []
+    for shell in SHELLS:
+        try:
+            target = completion_target(shell)
+            exists = target.exists()
+        except (CompletionError, UnknownShellError, OSError) as exc:
+            log.debug("completion: could not resolve %s target for purge: %s", shell, exc)
+            continue
+        if exists:
+            found.append(target)
+    return found
+
+
 def _write_if_changed(path: Path, content: str) -> bool:
     """Atomically write ``content`` to ``path`` only if it differs; return changed.
 

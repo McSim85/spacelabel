@@ -250,6 +250,13 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
         log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
         raise SystemExit(1) from exc
     log.debug("acquired single-instance lock %s", lock_path)
+    # Record our pid under the held lock so `spacelabel status` can report it for a
+    # foreground agent (the flock itself is anonymous); best-effort (DECISIONS.md §9).
+    try:
+        handle.write(str(os.getpid()))
+        handle.flush()
+    except OSError as exc:
+        log.debug("could not record agent pid in %s: %s", lock_path, exc)
     return handle
 
 
@@ -760,11 +767,18 @@ class AppDelegate(NSObject):
             return
         if not switching.accessibility_trusted(prompt=not self._ax_prompted):
             self._ax_prompted = True
+            # Name the right Accessibility row: the signed cask bundle (frozen) appears as
+            # "spacelabel"; a legacy pipx/dev run appears under the Python interpreter.
+            if getattr(sys, "frozen", False):
+                entry_hint = "enable “spacelabel”"
+            else:
+                entry_hint = (
+                    "enable this agent's entry (a legacy pipx/dev install appears under your "
+                    "Python interpreter, e.g. “python3.x”, not “spacelabel”)"
+                )
             self._disable_click_to_switch(
-                "Accessibility permission is required — enable the entry in System "
-                "Settings → Privacy & Security → Accessibility (on a pipx install it "
-                "appears under your Python interpreter, e.g. “python3.x”, not "
-                "“spacelabel”), then re-enable click-to-switch.",
+                f"Accessibility permission is required — {entry_hint} in System Settings → "
+                "Privacy & Security → Accessibility, then re-enable click-to-switch.",
                 settings_url=_SETTINGS_URL_ACCESSIBILITY,
             )
             return

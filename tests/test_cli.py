@@ -9,11 +9,13 @@ hosted CI runner with no displays or Spaces session.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from spacelabel.cli import cli
+from spacelabel.install import AgentStatus
 from spacelabel.model import Display, Space
 
 U1 = "6622AC87-2FD2-48E8-934D-F6EB303AC9BA"
@@ -538,30 +540,235 @@ def test_spaces_stdout_is_ansi_free_when_piped(runner, cfg, monkeypatch):
     assert "\x1b[" not in r.stdout
 
 
-# ---- status (mocked launchctl) ---------------------------------------------
+# ---- status (mocked launchctl + agent.lock probe) --------------------------
 
 
-def test_status_running_exit_0(runner, monkeypatch):
-    monkeypatch.setattr("spacelabel.install.agent_status", lambda: (True, 4213))
+def _patch_status(monkeypatch, st: AgentStatus) -> None:
+    # agent_status_detail is called with the active --config path; accept + ignore it.
+    monkeypatch.setattr("spacelabel.install.agent_status_detail", lambda _cfg=None: st)
+
+
+def test_status_running_managed_exit_0(runner, monkeypatch):
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=True, pid=4213, managed=True),
+    )
     r = runner.invoke(cli, ["status"])
     assert r.exit_code == 0
-    assert "running" in r.stdout
+    assert "running (managed)" in r.stdout
     assert "4213" in r.stdout
 
 
-def test_status_not_running_exit_3(runner, monkeypatch):
-    monkeypatch.setattr("spacelabel.install.agent_status", lambda: (False, None))
+def test_status_running_foreground_exit_0(runner, monkeypatch):
+    # A foreground `spacelabel agent` holds agent.lock but launchd does not manage it.
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=False, loaded=False, running=True, pid=50803, managed=False),
+    )
+    r = runner.invoke(cli, ["status"])
+    assert r.exit_code == 0
+    assert "running (foreground)" in r.stdout
+    assert "50803" in r.stdout
+
+
+def test_status_installed_not_running_exit_3(runner, monkeypatch):
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=False, pid=None, managed=False),
+    )
     r = runner.invoke(cli, ["status"])
     assert r.exit_code == 3
     assert "not running" in r.stdout
+    assert "installed" in r.stdout
+
+
+def test_status_not_installed_exit_3(runner, monkeypatch):
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=False, loaded=False, running=False, pid=None, managed=False),
+    )
+    r = runner.invoke(cli, ["status"])
+    assert r.exit_code == 3
+    assert "not installed" in r.stdout
 
 
 def test_status_json(runner, monkeypatch):
-    monkeypatch.setattr("spacelabel.install.agent_status", lambda: (True, 99))
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=True, pid=99, managed=True),
+    )
     r = runner.invoke(cli, ["status", "--json"])
     assert r.exit_code == 0
     payload = json.loads(r.stdout)
-    assert payload == {"running": True, "pid": 99, "label": "dev.mcsim.spacelabel"}
+    assert payload == {
+        "installed": True,
+        "loaded": True,
+        "running": True,
+        "pid": 99,
+        "managed": True,
+        "label": "dev.mcsim.spacelabel",
+    }
+
+
+# ---- uninstall / uninstall --purge -----------------------------------------
+
+
+def _agent_not_running(monkeypatch):
+    # The real --purge flow checks for a live foreground agent before deleting; stub it
+    # to "not running" so the deletion path runs (a dedicated test covers the refusal).
+    monkeypatch.setattr(
+        "spacelabel.install.agent_status_detail",
+        lambda _cfg=None: AgentStatus(
+            installed=False, loaded=False, running=False, pid=None, managed=False
+        ),
+    )
+
+
+def test_uninstall_default_keeps_data_with_breadcrumb(runner, monkeypatch):
+    calls = []
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: calls.append("agent"))
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: calls.append("purge") or [])
+    r = runner.invoke(cli, ["uninstall"])
+    assert r.exit_code == 0
+    assert calls == ["agent"]  # purge never runs without --purge
+    assert "labels and config kept" in r.stderr
+    assert "--purge" in r.stderr  # breadcrumb nudges toward the deep clean
+
+
+def test_uninstall_keep_labels_is_deprecated_noop(runner, monkeypatch):
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    r = runner.invoke(cli, ["uninstall", "--keep-labels"])
+    assert r.exit_code == 0
+    assert "no-op" in r.stderr and "--purge" in r.stderr
+
+
+def test_uninstall_purge_dry_run_lists_paths_on_stdout(runner, monkeypatch):
+    targets = [Path("/x/Application Support/spacelabel"), Path("/x/Caches/spacelabel")]
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets", lambda paths, remove_completion: targets
+    )
+    called = []
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: called.append("agent"))
+    monkeypatch.setattr(
+        "spacelabel.install.purge_user_data", lambda t: called.append("purge") or []
+    )
+    r = runner.invoke(cli, ["uninstall", "--purge", "--dry-run"])
+    assert r.exit_code == 0
+    assert called == []  # dry run removes nothing and does not touch the agent
+    for target in targets:
+        assert str(target) in r.stdout  # resolved paths on the data channel
+
+
+def test_uninstall_purge_non_tty_without_yes_refuses(runner, monkeypatch):
+    _agent_not_running(monkeypatch)
+    monkeypatch.setattr("spacelabel.cli._isatty", lambda: False)
+    monkeypatch.setattr("spacelabel.install.purge_targets", lambda paths, remove_completion: [])
+    deleted = []
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: deleted.append(t) or [])
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    r = runner.invoke(cli, ["uninstall", "--purge"])
+    assert r.exit_code == 2  # UsageError -> never deletes non-interactively
+    assert deleted == []
+
+
+def test_uninstall_purge_yes_removes_agent_then_purges(runner, monkeypatch):
+    _agent_not_running(monkeypatch)
+    targets = [Path("/x/data")]
+    order = []
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets", lambda paths, remove_completion: targets
+    )
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: order.append("agent"))
+    monkeypatch.setattr(
+        "spacelabel.install.purge_user_data", lambda t: order.append(("purge", t)) or []
+    )
+    r = runner.invoke(cli, ["uninstall", "--purge", "--yes"])
+    assert r.exit_code == 0
+    assert order == ["agent", ("purge", targets)]  # agent removed BEFORE data purged
+    assert "purged spacelabel data" in r.stderr
+
+
+def test_uninstall_purge_partial_failure_exit_1(runner, monkeypatch):
+    _agent_not_running(monkeypatch)
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets",
+        lambda paths, remove_completion: [Path("/x/data"), Path("/x/logs")],
+    )
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: [Path("/x/logs")])
+    r = runner.invoke(cli, ["uninstall", "--purge", "--yes"])
+    assert r.exit_code == 1
+    assert "could not remove" in r.stderr
+    assert "/x/logs" in r.stderr
+
+
+def test_uninstall_purge_interactive_confirm(runner, monkeypatch):
+    _agent_not_running(monkeypatch)
+    monkeypatch.setattr("spacelabel.cli._isatty", lambda: True)
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets", lambda paths, remove_completion: [Path("/x/data")]
+    )
+    order = []
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: order.append("agent"))
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: order.append("purge") or [])
+    # "y" proceeds...
+    assert runner.invoke(cli, ["uninstall", "--purge"], input="y\n").exit_code == 0
+    assert order == ["agent", "purge"]
+    # ...and "n" aborts without removing anything.
+    order.clear()
+    r = runner.invoke(cli, ["uninstall", "--purge"], input="n\n")
+    assert r.exit_code != 0  # click.confirm(abort=True) -> Abort
+    assert order == []
+
+
+def test_uninstall_purge_refuses_while_foreground_agent_running(runner, monkeypatch):
+    # A live foreground agent holds agent.lock -> refuse to delete its store from under it.
+    monkeypatch.setattr(
+        "spacelabel.install.agent_status_detail",
+        lambda _cfg=None: AgentStatus(
+            installed=False, loaded=False, running=True, pid=50803, managed=False
+        ),
+    )
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets", lambda paths, remove_completion: [Path("/x/data")]
+    )
+    deleted = []
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: deleted.append("agent"))
+    monkeypatch.setattr(
+        "spacelabel.install.purge_user_data", lambda t: deleted.append("purge") or []
+    )
+    r = runner.invoke(cli, ["uninstall", "--purge", "--yes"])
+    assert r.exit_code == 1  # ClickException
+    assert "foreground" in r.stderr and "50803" in r.stderr
+    assert deleted == []  # neither the agent nor the data was touched
+
+
+def test_uninstall_purge_custom_config_notes_manual_removal(runner, monkeypatch, tmp_path):
+    # A custom --config -> its own store files aren't auto-purged; the CLI says so.
+    _agent_not_running(monkeypatch)
+    monkeypatch.setattr(
+        "spacelabel.install.purge_targets",
+        lambda paths, remove_completion: [Path("/x/Caches/spacelabel")],  # no data_dir -> custom
+    )
+    monkeypatch.setattr("spacelabel.install.uninstall_agent", lambda: None)
+    monkeypatch.setattr("spacelabel.install.purge_user_data", lambda t: [])
+    r = runner.invoke(
+        cli, ["--config", str(tmp_path / "mycfg.json"), "uninstall", "--purge", "--yes"]
+    )
+    assert r.exit_code == 0
+    assert "not auto-purged" in r.stderr  # custom-config caveat shown
+
+
+def test_isatty_handles_closed_stdin(monkeypatch):
+    # A closed/detached stdin must read as non-interactive, not crash (so --purge refuses).
+    from spacelabel import cli as cli_mod
+
+    class _ClosedStdin:
+        def isatty(self):
+            raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(cli_mod.sys, "stdin", _ClosedStdin())
+    assert cli_mod._isatty() is False
 
 
 # ---- label prune (mocked CGS) ----------------------------------------------

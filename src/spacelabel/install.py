@@ -12,26 +12,34 @@ test asserts the two stay in sync.
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import plistlib
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from spacelabel import BUNDLE_ID
+from spacelabel import APP_NAME, BUNDLE_ID, store
 
 __all__ = [
     "LAUNCH_AGENT_LABEL",
+    "AgentStatus",
     "InstallError",
-    "agent_status",
+    "agent_status_detail",
     "build_launch_agent",
+    "caches_dir",
     "install_agent",
     "is_installed",
     "logs_dir",
     "plist_path",
+    "purge_targets",
+    "purge_user_data",
     "render_plist",
     "uninstall_agent",
 ]
@@ -68,42 +76,106 @@ def logs_dir(home: Path | None = None) -> Path:
     return base / "Library" / "Logs" / "spacelabel"
 
 
+def caches_dir(home: Path | None = None) -> Path:
+    """Return the agent cache directory ``<home>/Library/Caches/spacelabel``.
+
+    :param home: Home directory to base the path on; defaults to ``Path.home()``.
+    """
+    base = home if home is not None else Path.home()
+    return base / "Library" / "Caches" / "spacelabel"
+
+
 def _canonical_shim() -> Path:
-    """Return the canonical pipx shim path ``~/.local/bin/spacelabel`` (DESIGN §9.1)."""
+    """Return the legacy pipx shim path ``~/.local/bin/spacelabel`` (DESIGN §9.1)."""
     return Path.home() / ".local" / "bin" / "spacelabel"
 
 
-def _resolve_install_shim() -> Path:
-    """Return the absolute shim the LaunchAgent must exec; REQUIRE the pipx path.
+def _enclosing_app_exe() -> Path | None:
+    """Return ``<…>.app/Contents/MacOS/spacelabel`` when running from the cask bundle.
 
-    launchd starts the login agent without the shell environment, so a transient
-    PATH-derived executable (a dev shell, a ``uv``/venv path) would make the login
-    item fragile and break the moment that path disappears. Rather than persist such
-    a path, this REQUIRES the canonical pipx location ``~/.local/bin/spacelabel``
-    (DESIGN §9.1) and refuses otherwise -- the agent must be installed via pipx first.
+    The Homebrew cask exposes the bundle's main executable on PATH (its ``binary``
+    stanza), so a user invoking ``spacelabel install`` is running *inside*
+    ``spacelabel.app``. The LaunchAgent must exec that bundle executable so the agent
+    process **is** the bundle and macOS attributes Accessibility (TCC) to
+    ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot
+    (DECISIONS.md §6 / §2.7, todo/phase-6-blockers.md Tier 1 step 5). Detected by
+    walking up from the running executable / this module's file to the enclosing
+    ``.app``; returns ``None`` when not bundled (a dev or legacy-pipx install).
+
+    Paths are only ``abspath``-normalized, **not** symlink-resolved: the cask moves
+    the app to a STABLE location (e.g. ``~/Applications/spacelabel.app``) that
+    ``brew upgrade`` rewrites in place, so we must record that stable path in the
+    LaunchAgent. Fully resolving symlinks could instead yield a versioned
+    ``…/Caskroom/spacelabel/<version>/…`` path that the next upgrade deletes, breaking
+    auto-start.
+    """
+    for raw in (sys.executable, sys.argv[0] if sys.argv else "", __file__):
+        if not raw:
+            continue
+        try:
+            # abspath normalizes (absolute + collapses ``..``) WITHOUT following
+            # symlinks -> keeps the stable appdir path, not a Caskroom-versioned one.
+            # (Path.resolve() -- what PTH100 suggests -- WOULD follow symlinks; that is
+            # exactly the behavior we must avoid here.)
+            normalized = Path(os.path.abspath(raw))  # noqa: PTH100
+        except (OSError, ValueError) as exc:
+            log.debug("could not normalize candidate path %r: %s", raw, exc)
+            continue
+        for ancestor in normalized.parents:
+            if ancestor.suffix == ".app":
+                exe = ancestor / "Contents" / "MacOS" / APP_NAME
+                if exe.exists():
+                    return exe
+                # This .app has no spacelabel exe -- it may be py2app's embedded
+                # Python.app helper under Contents/Frameworks, not spacelabel.app. Keep
+                # scanning outer ancestors / the remaining candidates rather than giving up.
+    return None
+
+
+def _resolve_install_shim() -> Path:
+    """Return the absolute executable the LaunchAgent must exec.
+
+    Prefers the cask-installed ``spacelabel.app`` main executable so the agent process
+    **is** the bundle -- a stable, *named* Accessibility identity (the point of the
+    distribution pivot, DECISIONS.md §6). Falls back to the legacy pipx shim
+    ``~/.local/bin/spacelabel`` (deprecated) for dev/transition installs. launchd starts
+    the login agent without a shell environment, so a transient PATH/venv path would make
+    the login item fragile; when neither a bundle nor the pipx shim resolves, this refuses
+    rather than persist such a path.
 
     Raises:
-        InstallError: If the canonical pipx shim does not exist.
+        InstallError: If neither the app bundle nor the pipx shim can be resolved.
     """
+    bundle_exe = _enclosing_app_exe()
+    if bundle_exe is not None:
+        return bundle_exe
     canonical = _canonical_shim()
-    if not canonical.exists():
-        raise InstallError(
-            f"{canonical} not found: install spacelabel via pipx (`pipx install spacelabel`) "
-            "before `spacelabel install`, so the login agent points at a durable path "
-            "rather than a transient shell/venv executable."
+    if canonical.exists():
+        log.warning(
+            "not running from the spacelabel.app bundle; the LaunchAgent will exec the "
+            "legacy pipx shim %s. Prefer the Homebrew cask (`brew install --cask spacelabel`) "
+            "so the agent gets its own stable Accessibility identity (DECISIONS.md §6).",
+            canonical,
         )
-    return canonical
+        return canonical
+    raise InstallError(
+        "could not resolve the agent executable: install spacelabel via the Homebrew cask "
+        "(`brew install --cask spacelabel`) -- or the legacy `pipx install spacelabel` -- "
+        "before `spacelabel install`, so the login agent points at a durable path rather "
+        "than a transient shell/venv executable."
+    )
 
 
 def build_launch_agent(home: Path, shim: Path) -> dict[str, object]:
     """Build the LaunchAgent property-list dictionary (PURE; DESIGN §9.2).
 
     The returned dict matches ``packaging/dev.mcsim.spacelabel.plist`` after the
-    ``__HOME__`` token is replaced with ``home`` and the program path is
-    ``home/".local/bin/spacelabel"``.
+    ``__HOME__`` token is replaced with ``home`` and ``__APP_EXE__`` with ``shim``
+    (the resolved agent executable -- the cask bundle exe, or the legacy pipx shim).
 
     :param home: Absolute home directory templated into the log paths.
-    :param shim: Absolute path to the ``spacelabel`` console-script shim.
+    :param shim: Absolute path to the agent executable (the ``spacelabel.app`` bundle
+        exe under the cask; the pipx console-script shim on the legacy path).
     """
     log_root = home / "Library" / "Logs" / "spacelabel"
     return {
@@ -323,27 +395,203 @@ def uninstall_agent() -> None:
     log.info("unloaded and removed %s", LAUNCH_AGENT_LABEL)
 
 
-def agent_status() -> tuple[bool, int | None]:
-    """Return ``(running, pid)`` for the LaunchAgent service.
+def _is_default_store(config_file: Path) -> bool:
+    """Whether ``config_file`` is the canonical default config (``config.json`` in data_dir).
 
-    Runs ``launchctl print gui/$UID/<label>`` and parses the ``pid = N`` line.
-    A non-zero exit means the service is not loaded, reported as
-    ``(False, None)``. A present-but-pid-less service (loaded, not currently
-    spawned) is also ``(False, None)``.
+    Compares fully-resolved paths (symlink/spelling-proof). Only the default config file
+    is the managed store: the LaunchAgent runs *that* file, so this gates whether the
+    launchctl state and the whole-dir ``--purge`` apply. An ALTERNATE config kept inside
+    the data dir (e.g. ``alt.json``) is **not** the default store -- status reports it
+    unmanaged and purge deletes only spacelabel-owned-named files, never the whole dir.
+    """
+    default_config = store.StorePaths.default().config_file
+    try:
+        return config_file.resolve() == default_config.resolve()
+    except OSError:
+        return config_file == default_config
 
-    :raises InstallError: Only if ``launchctl`` itself is missing or fails to
-        execute (a genuine query failure, distinct from "not loaded").
+
+def purge_targets(paths: store.StorePaths, *, remove_completion: bool) -> list[Path]:
+    """Resolve the spacelabel-owned paths that ``uninstall --purge`` would delete.
+
+    Deletes only paths spacelabel **exclusively owns**:
+
+    - the **default store** ``store.data_dir()`` (``~/Library/Application Support/spacelabel``),
+      our own dedicated directory, removed wholesale -- but only when ``paths`` is the
+      default config (or a symlink/spelling of it). The canonical ``store.data_dir()`` is
+      used, never ``paths.directory`` (a ``--config`` symlink's parent could be ``/tmp``);
+    - the global ``~/Library/Caches/spacelabel`` and ``~/Library/Logs/spacelabel`` dirs;
+    - when ``remove_completion``, the existing per-shell completion scripts.
+
+    A **custom** ``--config`` lives in a directory spacelabel does not own, so its files
+    are **never** deleted by guessed basename -- a sibling named ``labels.json`` could be
+    another app's. The custom store's own files are left for manual removal (the CLI says
+    so). **Never** touches the WallpaperAgent store, the pipx venv, or the
+    ``~/.local/bin/spacelabel`` shim. The cask ``zap`` stanza mirrors these paths.
+
+    :param paths: The resolved store paths for the active ``--config`` selection.
+    :param remove_completion: Also include the per-shell completion scripts.
+    """
+    from spacelabel import completion
+
+    targets: list[Path] = []
+    if _is_default_store(paths.config_file):
+        # Our own dedicated dir -> remove wholesale. The CANONICAL store.data_dir(), never
+        # paths.directory: if --config is a symlink to the default config.json,
+        # paths.directory is the symlink's parent (e.g. /tmp), which must not be deleted.
+        targets.append(store.data_dir())
+    # A custom --config is intentionally NOT expanded into per-file deletions here: its
+    # directory is not exclusively ours, so deleting labels.json/etc by name there could
+    # remove a foreign file. Only the globally-exclusive dirs below apply to it.
+    targets.append(caches_dir())
+    targets.append(logs_dir())
+    if remove_completion:
+        targets += completion.installed_completion_files()
+    return targets
+
+
+def purge_user_data(targets: list[Path]) -> list[Path]:
+    """Delete each target (file or directory); return the ones that could not be removed.
+
+    Each deletion is independent and best-effort, so one failure never aborts the rest
+    (the caller reports the returned failures and exits 1). A missing target is a no-op
+    (already gone). A symlink is unlinked (never followed) so a deletion can't escape the
+    named target into a linked location.
+    """
+    failed: list[Path] = []
+    for target in targets:
+        try:
+            if target.is_symlink():
+                target.unlink(missing_ok=True)
+            elif target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink(missing_ok=True)
+        except OSError as exc:
+            log.error("could not remove %s: %s", target, exc)
+            failed.append(target)
+    return failed
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStatus:
+    """Install + run state of the agent (DECISIONS.md §9 exit-code contract).
+
+    ``installed``/``loaded`` describe the LaunchAgent plist (present on disk / loaded
+    into ``gui/$UID``); ``running`` is True when *any* agent process -- the managed
+    LaunchAgent **or** a foreground ``spacelabel agent`` -- holds ``agent.lock``, and
+    ``managed`` distinguishes the two. ``spacelabel status`` exits 0 when ``running``
+    else 3; ``installed``/``loaded`` are informational and never change the exit code.
+    """
+
+    installed: bool
+    loaded: bool
+    running: bool
+    pid: int | None
+    managed: bool
+
+
+def _launchctl_service_state() -> tuple[bool, int | None]:
+    """Return ``(loaded, pid)`` for the LaunchAgent service via ``launchctl print``.
+
+    ``loaded`` is whether the service exists in ``gui/$UID`` (``launchctl print`` exits
+    0); ``pid`` is the running instance's pid when launchd has spawned it, else ``None``
+    (loaded-but-not-spawned).
+
+    :raises InstallError: Only if ``launchctl`` itself is missing or fails to execute
+        (a genuine query failure, distinct from "not loaded").
     """
     result = _launchctl(["print", _service_target()], check=False)
     if result.returncode != 0:
         log.debug(
-            "launchctl print %s exited %d (treated as not loaded)",
+            "launchctl print %s exited %d (service not loaded)",
             _service_target(),
             result.returncode,
         )
         return (False, None)
     match = _PID_RE.search(result.stdout)
-    if match is None:
-        log.debug("service %s is loaded but has no pid (not running)", _service_target())
-        return (False, None)
-    return (True, int(match.group(1)))
+    pid = int(match.group(1)) if match is not None else None
+    return (True, pid)
+
+
+def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None]:
+    """Return ``(held, pid)`` for a specific lock file -- the core single-instance probe.
+
+    Opens the file read-only and attempts a non-blocking ``flock``: if it blocks
+    (``BlockingIOError``/``EAGAIN``) an agent -- managed or foreground -- holds it; if it
+    succeeds the lock is released immediately and no agent is running. The holder's pid is
+    read from the file's contents (the agent records its pid after locking); a stale file
+    from a crashed agent reads as not-held because the OS drops its ``flock``.
+    """
+    try:
+        handle = lock_path.open("r")
+    except OSError:
+        return (False, None)  # no lock file -> the agent has never run here
+    try:
+        recorded = handle.read().strip()
+        try:
+            pid: int | None = int(recorded)
+        except ValueError:
+            pid = None
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return (True, pid)  # contended -> an agent holds the lock
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return (False, None)  # acquired freely -> not running
+    finally:
+        handle.close()
+
+
+def _probe_agent_lock(config_path: Path | None) -> tuple[bool, int | None]:
+    """Return ``(held, pid)`` for the ``agent.lock`` of the ``--config`` selection's store."""
+    return _probe_lock_path(store.StorePaths.resolve(config_path).directory / "agent.lock")
+
+
+def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
+    """Report install + run state, detecting a foreground agent too (improvements.md item I).
+
+    Combines the LaunchAgent service state (``launchctl``) with a probe of ``agent.lock``,
+    so a foreground ``spacelabel agent`` (dev/debug) is reported **running** even though
+    launchd does not manage it. ``managed`` is True when the running instance is the
+    launchd one (``launchctl`` reports its pid); ``pid`` prefers the launchd pid, else the
+    pid recorded in the lock file.
+
+    :param config_path: ``--config`` selection, so the probe targets the matching
+        ``agent.lock`` (a custom-config agent has its own store/lock).
+    :raises InstallError: Only if ``launchctl`` itself cannot be executed.
+    """
+    paths = store.StorePaths.resolve(config_path)
+    canonical_lock = store.data_dir() / "agent.lock"
+    # The LaunchAgent only ever runs the DEFAULT config file (one Label). Decide by the
+    # *resolved config file* (not `config_path is None`, not the directory) so the default
+    # config.json -- even via a symlink/relative spelling -- is recognized as managed.
+    if _is_default_store(paths.config_file):
+        # Probe the CANONICAL lock, so a symlinked-default --config still sees the live
+        # default agent (not a lock in the symlink's parent dir), and fold in launchctl.
+        lock_held, lock_pid = _probe_lock_path(canonical_lock)
+        loaded, launchctl_pid = _launchctl_service_state()
+        return AgentStatus(
+            installed=is_installed(),
+            loaded=loaded,
+            running=lock_held or launchctl_pid is not None,
+            pid=launchctl_pid if launchctl_pid is not None else lock_pid,
+            managed=launchctl_pid is not None,
+        )
+    # A genuinely custom --config agent is necessarily unmanaged/foreground. Probe ITS
+    # lock -- unless that lock IS the default store's shared lock (an alt config kept
+    # inside the default dir), which we attribute to the default agent, not this config.
+    # Inherent ambiguity: StorePaths places an alt config's agent.lock in the shared
+    # default dir, so its agent and the default agent are indistinguishable via flock; we
+    # report not-running here to avoid falsely attributing the default agent to this
+    # config (a documented limit of the contrived "alt config inside the default store"
+    # layout -- a normal --config lives in its own directory with its own lock).
+    custom_lock = paths.directory / "agent.lock"
+    try:
+        shares_default_lock = custom_lock.resolve() == canonical_lock.resolve()
+    except OSError:
+        shares_default_lock = custom_lock == canonical_lock
+    lock_held, lock_pid = (False, None) if shares_default_lock else _probe_lock_path(custom_lock)
+    return AgentStatus(
+        installed=False, loaded=False, running=lock_held, pid=lock_pid, managed=False
+    )
