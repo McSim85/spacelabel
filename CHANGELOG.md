@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/McSim85/spacelabel/compare/v0.6.1...v0.7.0) (2026-06-23)
+
+
+### Features
+
+* **dist:** signed .app via Homebrew cask (fixes click-to-switch) + Phase-6 follow-ups ([#32](https://github.com/McSim85/spacelabel/issues/32)) ([df12dde](https://github.com/McSim85/spacelabel/commit/df12ddebdc10a350c94e0eace1779a07ae286306))
+
+
+### Documentation
+
+* **todo:** go pipx-only — defer Homebrew, add uninstall --purge backlog ([#30](https://github.com/McSim85/spacelabel/issues/30)) ([39a8d2c](https://github.com/McSim85/spacelabel/commit/39a8d2c41b766378ac5f06fc393da3666f6460a0))
+
 ## [0.6.1](https://github.com/McSim85/spacelabel/compare/v0.6.0...v0.6.1) (2026-06-22)
 
 
