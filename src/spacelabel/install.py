@@ -90,6 +90,26 @@ def _canonical_shim() -> Path:
     return Path.home() / ".local" / "bin" / "spacelabel"
 
 
+def _bundle_identifier(app_dir: Path) -> str | None:
+    """Return the ``CFBundleIdentifier`` from ``app_dir/Contents/Info.plist``, or ``None``.
+
+    Used to confirm an enclosing ``.app`` is genuinely *ours* before pointing the
+    LaunchAgent at its executable -- mirrors :func:`spacelabel._version_from_app_bundle` so
+    we never persist a launch path into some other app that merely happens to contain a
+    ``Contents/MacOS/spacelabel``.
+    """
+    info = app_dir / "Contents" / "Info.plist"
+    try:
+        with info.open("rb") as handle:
+            plist = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ExpatError, ValueError):
+        # ExpatError: a detected-as-XML but syntactically broken Info.plist (e.g. a corrupt
+        # or third-party app wrapper) must skip this bundle, not crash `spacelabel install`.
+        return None
+    identifier = plist.get("CFBundleIdentifier") if isinstance(plist, dict) else None
+    return identifier if isinstance(identifier, str) else None
+
+
 def _enclosing_app_exe() -> Path | None:
     """Return ``<…>.app/Contents/MacOS/spacelabel`` when running from the cask bundle.
 
@@ -124,11 +144,12 @@ def _enclosing_app_exe() -> Path | None:
         for ancestor in normalized.parents:
             if ancestor.suffix == ".app":
                 exe = ancestor / "Contents" / "MacOS" / APP_NAME
-                if exe.exists():
+                if exe.exists() and _bundle_identifier(ancestor) == BUNDLE_ID:
                     return exe
-                # This .app has no spacelabel exe -- it may be py2app's embedded
-                # Python.app helper under Contents/Frameworks, not spacelabel.app. Keep
-                # scanning outer ancestors / the remaining candidates rather than giving up.
+                # Either this .app has no spacelabel exe (e.g. py2app's embedded Python.app
+                # helper under Contents/Frameworks) or it is some OTHER app that merely
+                # contains a "spacelabel" exe with a different CFBundleIdentifier -- never
+                # persist a LaunchAgent into a non-spacelabel bundle. Keep scanning.
     return None
 
 

@@ -40,13 +40,16 @@ def _version_from_app_bundle() -> str | None:
     """
     import plistlib
     from pathlib import Path
+    from xml.parsers.expat import ExpatError
 
     # …/spacelabel.app/Contents/MacOS/<exe> -> …/spacelabel.app/Contents/Info.plist
     info = Path(sys.executable).resolve().parent.parent / "Info.plist"
     try:
         with info.open("rb") as handle:
             plist = plistlib.load(handle)
-    except (OSError, plistlib.InvalidFileException, ValueError):
+    except (OSError, plistlib.InvalidFileException, ExpatError, ValueError):
+        # ExpatError: a detected-as-XML but broken Info.plist must not crash package import
+        # (this runs at import time via the __version__ fallback below).
         return None
     if not isinstance(plist, dict) or plist.get("CFBundleIdentifier") != BUNDLE_ID:
         # Only trust OUR bundle's version. A source checkout run under some *other*

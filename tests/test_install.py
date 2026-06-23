@@ -158,6 +158,7 @@ def test_enclosing_app_exe_detects_bundle(tmp_path, monkeypatch):
     macos.mkdir(parents=True)
     exe = macos / "spacelabel"
     exe.write_text("#!/bin/sh\n")
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": BUNDLE_ID}))
     pkg_file = app / "Contents" / "Resources" / "lib" / "python3.14" / "spacelabel" / "install.py"
     pkg_file.parent.mkdir(parents=True)
     pkg_file.write_text("")
@@ -187,6 +188,7 @@ def test_enclosing_app_exe_skips_inner_helper_app(tmp_path, monkeypatch):
     macos.mkdir(parents=True)
     exe = macos / "spacelabel"
     exe.write_text("#!/bin/sh\n")
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": BUNDLE_ID}))
     helper = (
         app
         / "Contents"
@@ -205,6 +207,37 @@ def test_enclosing_app_exe_skips_inner_helper_app(tmp_path, monkeypatch):
     monkeypatch.setattr(install.sys, "argv", [str(helper / "Python")])
     monkeypatch.setattr(install, "__file__", str(app / "Contents" / "Resources" / "x.py"))
     assert install._enclosing_app_exe() == exe  # found the OUTER spacelabel.app
+
+
+def test_enclosing_app_exe_rejects_foreign_bundle(tmp_path, monkeypatch):
+    # F4: an OTHER app that merely contains a Contents/MacOS/spacelabel exe (wrong/absent
+    # CFBundleIdentifier) must NOT be accepted -> never point the LaunchAgent at a
+    # non-spacelabel bundle. Mirrors _version_from_app_bundle's identity gate.
+    app = tmp_path / "Other.app"
+    macos = app / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    (macos / "spacelabel").write_text("#!/bin/sh\n")
+    (app / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleIdentifier": "com.example.other"})
+    )
+    monkeypatch.setattr(install.sys, "executable", str(macos / "spacelabel"))
+    monkeypatch.setattr(install.sys, "argv", [str(macos / "spacelabel")])
+    monkeypatch.setattr(install, "__file__", str(app / "Contents" / "Resources" / "x.py"))
+    assert install._enclosing_app_exe() is None
+
+
+def test_enclosing_app_exe_handles_broken_xml_info_plist(tmp_path, monkeypatch):
+    # A detected-as-XML but syntactically broken Info.plist raises ExpatError -> must be
+    # skipped (return None), never crash `spacelabel install` from inside a corrupt wrapper.
+    app = tmp_path / "spacelabel.app"
+    macos = app / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    (macos / "spacelabel").write_text("#!/bin/sh\n")
+    (app / "Contents" / "Info.plist").write_bytes(b'<?xml version="1.0"?>\n<plist><dict><key>')
+    monkeypatch.setattr(install.sys, "executable", str(macos / "spacelabel"))
+    monkeypatch.setattr(install.sys, "argv", [str(macos / "spacelabel")])
+    monkeypatch.setattr(install, "__file__", str(app / "Contents" / "Resources" / "x.py"))
+    assert install._enclosing_app_exe() is None  # ExpatError swallowed, not raised
 
 
 # ---- status: agent.lock probe + install/run-state combination --------------
