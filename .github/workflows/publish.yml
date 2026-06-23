@@ -19,6 +19,12 @@ name: Build and attach release artifacts
 #   build-wheel:  also attaches the pure-Python wheel + sdist for dev / source installs
 #                 (`uv pip install <wheel-url>`); pipx is deprecated in favour of the cask.
 #
+# Rerun safety (manual workflow_dispatch backfills + retries): every build job checks out
+# the COMMIT THE TAG POINTS AT (not the dispatch branch tip); tagged release assets are
+# treated as IMMUTABLE (uploads skip an asset that already exists rather than --clobber, so
+# an already-published sha256 in a merged cask bump stays valid); and the cask bump forks
+# from main and is idempotent (reuses its branch/PR), so a retry never corrupts a release.
+#
 # Ad-hoc caveats (documented in README/UI.md): the cdhash changes each build so the
 # Accessibility grant drops on upgrade until re-granted, and downloads hit Gatekeeper
 # quarantine (right-click→Open). Developer-ID signing + notarization (paid Apple Developer
@@ -37,11 +43,24 @@ permissions:
   contents: write       # upload release assets + push the cask-bump branch
   pull-requests: write  # open the cask-bump PR
 
+# Serialize runs for the SAME tag so overlapping reruns/backfills can't race on the
+# check-then-act guards below (asset upload, cask-bump branch/PR). cancel-in-progress: false
+# queues a rerun behind an in-flight release build instead of killing it mid-upload.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build-app:
     runs-on: macos-15  # Apple Silicon (arm64); the ad-hoc build is arm64-only for now
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Build the COMMIT THE TAG POINTS AT. On a manual workflow_dispatch, github.ref
+          # is the launch branch, so without this a rerun/backfill for tag=vX would publish
+          # branch-tip bytes under that tag. On the release trigger this is github.ref (the
+          # tag) unchanged.
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
@@ -64,17 +83,31 @@ jobs:
           VERSION="${TAG#v}"
           ditto -c -k --sequesterRsrc --keepParent dist/spacelabel.app "spacelabel-${VERSION}.zip"
 
-      - name: Attach the .app zip to the GitHub Release
+      - name: Attach the .app zip to the GitHub Release (immutable — never overwrite)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" "spacelabel-${TAG#v}.zip" --clobber
+        run: |
+          set -euo pipefail
+          ASSET="spacelabel-${TAG#v}.zip"
+          # Tagged assets are IMMUTABLE. An ad-hoc rebuild has a different cdhash (different
+          # bytes), so clobbering would break the sha256 in an already-open/merged cask bump.
+          # Upload only if absent; a rerun leaves the published bytes untouched.
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
+          if printf '%s\n' "$existing" | grep -qx "$ASSET"; then
+            echo "::notice::$ASSET already attached to $TAG — leaving published bytes immutable."
+          else
+            gh release upload "$TAG" "$ASSET"
+          fi
 
   update-cask:
     needs: build-app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main  # fork the cask-bump branch from main (NOT the dispatch ref), so the PR
+                     # contains only the checksum bump — never a feature branch's commits
 
       - name: Bump cask version + sha256 and open a PR
         env:
@@ -101,17 +134,41 @@ jobs:
           open(path, "w").write(content)
           PYEOF
 
+          # Already bumped on main (a prior cask PR merged) -> clean no-op BEFORE touching any
+          # branch/PR. The checkout is `main` and the edit above is unstaged, so an empty diff
+          # means main already carries this version+sha256. This also avoids a failed empty
+          # `gh pr create` when a merged bump branch still lingers on origin.
+          if git diff --quiet -- Casks/spacelabel.rb; then
+            echo "::notice::Casks/spacelabel.rb on main already at ${VERSION} with this sha256; nothing to bump."
+            exit 0
+          fi
+
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git checkout -b "chore/bump-cask-${VERSION}"
-          git add Casks/spacelabel.rb
-          git commit -m "chore: bump spacelabel cask to ${VERSION}"
-          git push origin "chore/bump-cask-${VERSION}"
-          gh pr create \
-            --title "chore: bump spacelabel cask to ${VERSION}" \
-            --body "Automated cask bump for release ${TAG} (version + sha256 of spacelabel-${VERSION}.zip)." \
-            --base main \
-            --head "chore/bump-cask-${VERSION}"
+          BRANCH="chore/bump-cask-${VERSION}"
+          # Idempotent across SEQUENTIAL reruns (overlaps are prevented by `concurrency`):
+          # reuse the bump branch if a prior run already pushed it. The asset is immutable, so
+          # its bump content is identical; and main lacking the bump (checked above) guarantees
+          # the branch differs from main, so the `gh pr create` below has commits.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::notice::bump branch $BRANCH already exists; ensuring it has a PR."
+          else
+            git checkout -b "$BRANCH"
+            git add Casks/spacelabel.rb
+            git commit -m "chore: bump spacelabel cask to ${VERSION}"
+            git push origin "$BRANCH"
+          fi
+          # Open the PR only if NONE exists for this head in ANY state (open/closed/merged) --
+          # never recreate one the user closed, and never fail on an already-created PR.
+          if gh pr list --head "$BRANCH" --state all --json number --jq '.[0].number // empty' | grep -q .; then
+            echo "::notice::a PR for $BRANCH already exists (open/closed/merged); not creating another."
+          else
+            gh pr create \
+              --title "chore: bump spacelabel cask to ${VERSION}" \
+              --body "Automated cask bump for release ${TAG} (version + sha256 of ${ASSET})." \
+              --base main \
+              --head "$BRANCH"
+          fi
 
   build-wheel:
     # Pure-Python wheel + sdist for dev / source installs (no macOS runner needed —
@@ -120,6 +177,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Build the tag's commit (same reason as build-app) — a dispatch rerun must not
+          # publish branch-tip wheels/sdists under an existing tag.
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
@@ -127,8 +188,21 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
-      - name: Attach artifacts to the GitHub Release
+      - name: Attach artifacts to the GitHub Release (immutable — never overwrite)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" dist/*.whl dist/*.tar.gz --clobber
+        run: |
+          set -euo pipefail
+          # Tagged Python artifacts are IMMUTABLE: the build env isn't version-locked, so a
+          # rerun can produce different wheel/sdist bytes for the same version, breaking
+          # consumers that verify by checksum. Upload each only if it isn't already attached.
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
+          for f in dist/*.whl dist/*.tar.gz; do
+            name="$(basename "$f")"
+            if printf '%s\n' "$existing" | grep -qx "$name"; then
+              echo "::notice::$name already attached to $TAG — leaving it immutable."
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
