@@ -19,6 +19,7 @@ import fcntl
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -72,6 +73,12 @@ _BOOT_CAP_EVERY_TICKS = 60
 #: AppKit main thread, so it runs every ~3 s — reorder freshness stays imperceptible
 #: while cutting main-thread CGS load ~3x (off-main read deferred — DECISIONS 4.2/4.3).
 _TOPOLOGY_POLL_EVERY_TICKS = 3
+# Single-instance acquisition retries briefly: a status/purge probe (install._probe_lock_path)
+# momentarily flocks agent.lock to test it, so a starting agent must ride out that microsecond
+# hold rather than mistake it for a real second instance. ~10 x 30 ms = 300 ms worst case
+# before a genuine duplicate is rejected.
+_LOCK_RETRY_ATTEMPTS = 10
+_LOCK_RETRY_DELAY_S = 0.03
 
 
 def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, int], ...]:
@@ -260,12 +267,20 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
     # Open WITHOUT truncating ("a+", not "w"): a losing second instance must not clear the
     # current holder's recorded pid before its flock fails (else `status` reports pid=?).
     handle = lock_path.open("a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        handle.close()  # the loser leaves the winner's recorded pid intact
-        log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
-        raise SystemExit(1) from exc
+    # Retry the non-blocking flock briefly: a transient holder is almost always a status/purge
+    # probe testing the lock, not a real second agent (which holds it persistently and will
+    # still be rejected after the retries). This rides out the probe's microsecond hold so a
+    # harmless `spacelabel status` during startup can't make us spuriously exit 1.
+    for attempt in range(_LOCK_RETRY_ATTEMPTS):
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError as exc:
+            if attempt + 1 >= _LOCK_RETRY_ATTEMPTS:
+                handle.close()  # the loser leaves the winner's recorded pid intact
+                log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
+                raise SystemExit(1) from exc
+            time.sleep(_LOCK_RETRY_DELAY_S)
     log.debug("acquired single-instance lock %s", lock_path)
     # Won the lock: NOW record "<pid>\n<resolved-config>" (truncate the stale content first).
     # The flock itself is anonymous, so `spacelabel status` reads the pid here; the config

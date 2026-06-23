@@ -524,12 +524,14 @@ def _default_store_owned_files() -> list[Path]:
         default.displays_lock,
         default.directory / "agent.lock",
     ]
-    # Leaked atomic-write temps from an interrupted write: store._atomic_write_json names
-    # them "<json>.<rand>.tmp" in the same dir, so they are ours. Sweep them too -- else
-    # remove_default_store_dir_if_empty() finds the dir non-empty and leaves it behind
-    # (an incomplete purge after a crash). glob on a missing dir yields nothing.
+    # Our own derived files from interrupted writes / corruption recovery, all in the same
+    # dir, so sweep them too -- else remove_default_store_dir_if_empty() finds the dir
+    # non-empty and leaves it behind (an incomplete purge). "<json>.<rand>.tmp" = a leaked
+    # atomic-write temp (store._atomic_write_json); "<json>.corrupt" = a malformed file backed
+    # up by store._guard_before_rewrite. glob on a missing dir yields nothing.
     for json_file in (default.config_file, default.labels_file, default.displays_file):
         owned.extend(sorted(default.directory.glob(json_file.name + ".*.tmp")))
+        owned.extend(sorted(default.directory.glob(json_file.name + ".corrupt")))
     return owned
 
 
@@ -659,37 +661,39 @@ def _same_path(a: Path, b: Path) -> bool:
 
 
 def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None, Path | None]:
-    """Return ``(held, pid, config)`` for a lock file -- the core single-instance probe.
+    """Return ``(held, pid, config)`` for a lock file -- the read-only single-instance probe.
 
-    Opens the file **read-only** and attempts a non-blocking ``flock``: if it blocks an
-    agent -- managed or foreground -- holds it; if it succeeds the lock is released and no
-    agent is running. After locking, the agent writes two lines -- the pid, then the resolved
-    config path it is serving -- so ``pid`` is line 1 and ``config`` is line 2 (``None`` for a
-    legacy pid-only lock). The recorded config disambiguates several config files that share
-    one store dir / lock. A stale file from a crashed agent reads as not-held (the OS drops
-    its ``flock``).
+    Detects "held" by attempting a non-blocking ``flock``: if it FAILS, an agent holds its
+    exclusive lock; if it SUCCEEDS, no agent holds it and the lock is released at once. flock
+    detection is reliable throughout the agent's whole lifetime -- including the brief
+    ``truncate``+``write`` window where the file is momentarily empty -- because the agent
+    holds the flock the entire time, so a half-written file is never mistaken for not-held
+    (which would let ``uninstall --purge`` delete the store under a just-started agent). When
+    held, the recorded ``<pid>``/``<config>`` lines are read (``config`` disambiguates several
+    config files sharing one store dir/lock; ``None`` for a legacy pid-only lock, or for a
+    partial mid-write read). A crashed agent's flock is dropped by the OS -> reads not-held.
 
-    Read-only is deliberate. BSD ``flock(2)`` advisory locks attach to the open file
-    *description*, not the access mode, so ``LOCK_EX`` works on an ``O_RDONLY`` fd on
-    macOS (verified) -- unlike POSIX ``fcntl``/``lockf`` *write* locks, which do need write
-    access. Opening read-only also keeps a status probe from *creating* ``agent.lock`` as a
-    side effect (a writable open mode like ``"a+"`` would) and needs no write permission.
+    The momentary acquire in the not-held path cannot make a *starting* agent spuriously exit:
+    :func:`spacelabel.agent.app._acquire_single_instance_lock` retries briefly, so it rides out
+    this probe's microsecond hold. Read-only is fine -- BSD ``flock`` advisory locks attach to
+    the open file description, not the access mode, so ``LOCK_EX`` works on an ``O_RDONLY`` fd
+    on macOS -- and it never creates the file.
     """
     try:
         handle = lock_path.open("r")
     except OSError:
         return (False, None, None)  # no lock file -> the agent has never run here
     try:
-        lines = handle.read().splitlines()
-        try:
-            pid: int | None = int(lines[0]) if lines else None
-        except ValueError:
-            pid = None
-        config = Path(lines[1]) if len(lines) > 1 and lines[1].strip() else None
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            return (True, pid, config)  # contended -> an agent holds the lock
+            lines = handle.read().splitlines()  # held -> read the holder's pid/config
+            try:
+                pid: int | None = int(lines[0]) if lines else None
+            except ValueError:
+                pid = None
+            config = Path(lines[1]) if len(lines) > 1 and lines[1].strip() else None
+            return (True, pid, config)
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         return (False, None, None)  # acquired freely -> not running
     finally:
@@ -721,13 +725,15 @@ def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
     # dir, so never key the default lock off paths.directory. A custom store uses its own dir.
     lock_path = (store.data_dir() if is_default else paths.directory) / "agent.lock"
     held, pid, recorded = _probe_lock_path(lock_path)
-    # "running for THIS config": an agent holds the store's lock AND recorded the SAME config
+    # "running for THIS config": an agent holds the store's lock AND serves the SAME config
     # file. Several config files can share one store dir (hence one agent.lock) -- e.g. an
     # alt config kept inside the default dir, or two configs in /tmp -- so config.json's agent
-    # holding the shared lock does NOT mean alt.json's agent is running, and vice-versa. The
-    # config the running agent recorded disambiguates; a legacy pid-only lock records None and
-    # is treated as not-this-config (it restarts and rewrites the lock on upgrade).
-    running_here = held and recorded is not None and _same_path(recorded, paths.config_file)
+    # holding the shared lock does NOT mean alt.json's agent is running, and vice-versa.
+    # A legacy pid-only lock (recorded=None, pre-config-recording) is attributed to the
+    # DEFAULT config -- the managed agent and most foreground agents run it -- so an upgrade
+    # doesn't hide a still-running agent (it rewrites the lock with its config on restart).
+    effective_config = recorded if recorded is not None else store.config_path()
+    running_here = held and _same_path(effective_config, paths.config_file)
     running_pid = pid if running_here else None
     if is_default:
         # The managed LaunchAgent runs the default config.json -> fold in launchctl (the
