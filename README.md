@@ -116,11 +116,10 @@ brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
 brew install --cask spacelabel
 ```
 
-> Available **once the first signed `.app` release is published** — which needs two
-> things: (1) the repo is **public** (Homebrew fetches the release asset anonymously, so
-> a private repo 404s), and (2) the release pipeline's **cask-bump PR is merged** (it
-> fills the `sha256`; until then the default branch carries an all-zero placeholder).
-> Until both hold, build + install locally: `tools/build_app.sh` then copy
+> Available **once the first signed `.app` release is published** and the release
+> pipeline's **cask-bump PR is merged** — that PR fills the cask's `sha256`; until it
+> lands, the default branch carries an all-zero placeholder and the cask won't install.
+> Until then, build + install locally: `tools/build_app.sh` then copy
 > `dist/spacelabel.app` to `/Applications`.
 
 This installs `spacelabel.app` and puts the `spacelabel` CLI on your PATH (the cask

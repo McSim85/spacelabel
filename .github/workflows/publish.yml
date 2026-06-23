@@ -84,8 +84,8 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           ASSET="spacelabel-${VERSION}.zip"
-          # Download via gh (uses $GH_TOKEN) — the repo is private, so an anonymous
-          # curl of the release-download URL would 404 and break the cask bump.
+          # Download the asset via gh (uses $GH_TOKEN, goes through the release API) rather
+          # than hardcoding the raw download URL. Keep $ASSET in sync with the build-app zip.
           gh release download "$TAG" --pattern "$ASSET" --clobber
           SHA256=$(sha256sum "$ASSET" | awk '{print $1}')
 

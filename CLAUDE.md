@@ -167,7 +167,7 @@ for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
 - **`dev.mcsim.spacelabel`** is the single reverse-DNS constant (LaunchAgent `Label`,
   plist filename, `os_log` subsystem) — one source of truth so a later move to a
   a future namespace rename is a one-line change. (DECISIONS §6.7)
-- Repo: private under github.com/McSim85; MIT © Max Kramarenko.
+- Repo: public at github.com/McSim85/spacelabel; MIT © Max Kramarenko.
 
 ---
 

@@ -21,8 +21,7 @@ before running.
   `--strict` + pytest + pre-commit.
 - **Commit standard:** Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, etc.)
   — Max's standing standard; every commit in this repo already follows it.
-- **Repo:** private under github.com/McSim85/spacelabel; MIT © Max Kramarenko.
-  Will go public before v1.0.
+- **Repo:** public at github.com/McSim85/spacelabel; MIT © Max Kramarenko.
 - **Version source of truth:** `version` field in `pyproject.toml` (PEP 517/518).
   Currently `0.1.0-dev` or similar — check before starting.
 - **Hand-off rule:** read `DESIGN.md` + `DECISIONS.md` (incl. §8 repo layout, §6.5
@@ -50,11 +49,9 @@ goals, in delivery order:
    GitHub Actions versions, and pre-commit hook revs; weekly batched schedule to
    limit CI minutes churn.
 
-**Timing note:** the repo is currently private. Release-please and Renovate work
-fine on private repos. PyPI publish will not be wired to a real PyPI project until
-the repo goes public and the PyPI project is created — but the workflow should be
-ready to flip on. Document the go-public checklist in `.github/SETTINGS.md`
-(a file already mentioned in DECISIONS §8.5 as the go-public checklist location).
+**Timing note:** the repo is public. Release-please and Renovate are wired and
+working (currently v0.6.1). PyPI publish is not wired to a real PyPI project yet
+(the project must be created first) — but the workflow should be ready to flip on.
 
 ---
 
@@ -127,18 +124,18 @@ Create `renovate.json` at the repo root:
 }
 ```
 Adjust as needed. Document that Max must install the Renovate GitHub App on the
-private repo (Settings → GitHub Apps → Renovate). Add a note to `.github/SETTINGS.md`.
+repo (Settings → GitHub Apps → Renovate). Add a note to `.github/SETTINGS.md`.
 
 ### 6. `.github/SETTINGS.md` update
 
 Ensure the go-public checklist includes:
-- [ ] Flip repo to public
+- [x] Flip repo to public — **done** (repo is public)
 - [ ] Register `spacelabel` on PyPI and configure OIDC trusted publishing
       (publisher: `McSim85/spacelabel`, workflow: `publish.yml`, env: `pypi`)
 - [ ] Create `McSim85/homebrew-spacelabel` tap repo + formula
-- [ ] Install Renovate GitHub App on the repo
-- [ ] Enable branch protection on `main` (required status checks: CI)
-- [ ] Enable GitHub Discussions
+- [x] Install Renovate GitHub App on the repo — **done** (PR #5)
+- [ ] Enable branch protection on `main` (required status checks: CI) — deferred (DECISIONS §8.5)
+- [ ] Enable GitHub Discussions — deferred (DECISIONS §8.5)
 
 ### 7. `DECISIONS.md` update
 

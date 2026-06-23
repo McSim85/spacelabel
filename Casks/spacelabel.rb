@@ -7,9 +7,6 @@ cask "spacelabel" do
   # Until then, build + install the bundle locally with `tools/build_app.sh`.
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
-  # `brew` downloads this URL ANONYMOUSLY, so it 404s while the repo is private. The cask
-  # works only after the repo is public (the planned MIT release) or the asset is hosted
-  # where unauthenticated clients can read it. See README "Install" for the local path.
   url "https://github.com/McSim85/spacelabel/releases/download/v#{version}/spacelabel-#{version}.zip",
       verified: "github.com/McSim85/spacelabel/"
   name "spacelabel"
