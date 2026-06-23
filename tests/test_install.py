@@ -282,6 +282,50 @@ def test_enclosing_app_exe_handles_broken_xml_info_plist(tmp_path, monkeypatch):
     assert install._enclosing_app_exe() is None  # ExpatError swallowed, not raised
 
 
+# ---- install / uninstall agent lifecycle -----------------------------------
+
+
+def test_install_agent_mkdir_failure_raises_clean_install_error(tmp_path, monkeypatch):
+    # A blocked ~/Library/LaunchAgents or Logs dir -> clean InstallError, not a raw OSError
+    # traceback (the function's contract promises InstallError).
+    monkeypatch.setattr(install, "_resolve_install_shim", lambda: tmp_path / "spacelabel")
+    monkeypatch.setattr(install, "plist_path", lambda: tmp_path / "LaunchAgents" / "x.plist")
+
+    def boom(_self, *a, **k):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(install.Path, "mkdir", boom)
+    with pytest.raises(install.InstallError, match="could not create"):
+        install.install_agent()
+
+
+def test_uninstall_agent_raises_when_still_loaded(tmp_path, monkeypatch):
+    # bootout "succeeds" (check=False) but the service is STILL loaded -> a real unload
+    # failure; surface it and do NOT delete the plist (so a retry / manual bootout has it).
+    monkeypatch.setattr(
+        install, "_launchctl", lambda *a, **k: SimpleNamespace(returncode=0, stdout="")
+    )
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, 4242))  # still loaded
+    plist = tmp_path / "x.plist"
+    plist.write_text("x")
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+    with pytest.raises(install.InstallError, match="still loaded"):
+        install.uninstall_agent()
+    assert plist.exists()  # left in place for a retry, not a false-success deletion
+
+
+def test_uninstall_agent_removes_plist_when_unloaded(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        install, "_launchctl", lambda *a, **k: SimpleNamespace(returncode=0, stdout="")
+    )
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))  # unloaded
+    plist = tmp_path / "x.plist"
+    plist.write_text("x")
+    monkeypatch.setattr(install, "plist_path", lambda: plist)
+    install.uninstall_agent()  # no raise
+    assert not plist.exists()  # removed once confirmed unloaded
+
+
 # ---- status: agent.lock probe + install/run-state combination --------------
 
 

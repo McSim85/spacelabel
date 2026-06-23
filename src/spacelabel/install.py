@@ -431,8 +431,15 @@ def install_agent(*, load: bool = True) -> None:
     shim = _resolve_install_shim()
     target_plist = plist_path()
 
-    target_plist.parent.mkdir(parents=True, exist_ok=True)
-    logs_dir(home).mkdir(parents=True, exist_ok=True)
+    # ~/Library/LaunchAgents or ~/Library/Logs/spacelabel may be missing-and-unwritable, or
+    # blocked by a file of the same name -> convert the raw OSError into the clean InstallError
+    # the CLI expects (else `spacelabel install` aborts with a traceback).
+    for directory in (target_plist.parent, logs_dir(home)):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.exception("failed to create install directory: %s", directory)
+            raise InstallError(f"could not create {directory}: {exc}") from exc
 
     try:
         _atomic_write_bytes(target_plist, render_plist(home, shim))
@@ -456,11 +463,22 @@ def uninstall_agent() -> None:
     A "not loaded" bootout is ignored (already unloaded); the plist is unlinked
     with ``missing_ok=True``. Labels and config are never touched.
 
-    :raises InstallError: If unlinking the plist fails for a reason other than
-        the file being absent.
+    :raises InstallError: If the agent is still loaded after bootout (a real unload
+        failure), or if unlinking the plist fails for a reason other than absence.
     """
-    # Ignore failures here: the service may simply not be loaded.
+    # `launchctl bootout` exits nonzero both for "not loaded" (fine) and a genuine failure, so
+    # check the OUTCOME, not the exit code: if the service is STILL loaded afterwards the
+    # bootout really failed and the agent would keep running until logout. Surface that and do
+    # NOT delete the plist (so a retry / manual bootout still has it), rather than reporting a
+    # false success.
     _launchctl(["bootout", _service_target()], check=False)
+    loaded, _pid = _launchctl_service_state()
+    if loaded:
+        raise InstallError(
+            f"could not unload {LAUNCH_AGENT_LABEL}: it is still loaded in {_gui_domain()} "
+            "after `launchctl bootout` (the agent may keep running until logout). The plist "
+            f"was left in place; try `launchctl bootout {_service_target()}` manually."
+        )
     try:
         plist_path().unlink(missing_ok=True)
     except OSError as exc:
