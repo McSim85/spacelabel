@@ -41,17 +41,19 @@ cask "spacelabel" do
   #   * trash only spacelabel-OWNED files in Application Support (config/labels/displays +
   #     their .lock + agent.lock + leaked "<json>.<rand>.tmp" temps) so a foreign file a
   #     user kept there (e.g. an alternate --config) survives, plus the dedicated
-  #     caches/logs and the well-known DEFAULT completion paths (best effort);
+  #     caches/logs and the well-known DEFAULT completion paths for all three shells
+  #     (zsh ~/.zfunc/_spacelabel, fish, bash — best effort);
   #   * `rmdir` the data dir LAST — removed only if it is now empty (preserves foreign files).
-  # Completions at non-default locations (zsh resolves a writable dir on $fpath;
-  # fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR) can't be
-  # enumerated statically — `spacelabel uninstall --purge` resolves those at runtime.
+  # Completions at NON-default locations (zsh resolves any writable dir on $fpath, not just
+  # ~/.zfunc; fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR)
+  # can't be enumerated statically — `spacelabel uninstall --purge` resolves those at runtime.
   zap launchctl: "dev.mcsim.spacelabel",
       quit:      "dev.mcsim.spacelabel",
       signal:    ["TERM", "dev.mcsim.spacelabel"],
       trash:     [
         "~/.config/fish/completions/spacelabel.fish",
         "~/.local/share/bash-completion/completions/spacelabel",
+        "~/.zfunc/_spacelabel",
         "~/Library/Application Support/spacelabel/agent.lock",
         "~/Library/Application Support/spacelabel/config.json",
         "~/Library/Application Support/spacelabel/config.json.*.tmp",
