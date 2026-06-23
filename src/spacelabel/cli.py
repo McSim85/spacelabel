@@ -276,14 +276,13 @@ def uninstall(
                 "caches/logs/completion."
             )
         return
-    # Only the DEFAULT purge deletes shared data (the data dir + the global caches/logs that
-    # the agent uses regardless of --config). Don't delete it out from under a live agent:
-    # the managed LaunchAgent is stopped below, but a foreground `spacelabel agent` is not,
-    # so refuse if one holds the default lock (agent_status_detail(None) also catches an alt
-    # config sharing that lock). A custom --config deletes nothing, so it never blocks here.
-    # Coverage limit: a foreground agent for some OTHER custom config can't be enumerated
-    # (its lock lives in an arbitrary dir); a default purge would still remove the shared,
-    # regenerable caches/logs from under it — never its user data (each store keeps its own).
+    # Only the DEFAULT purge deletes shared data (the default data dir + the global
+    # caches/logs). Don't delete it out from under a live agent: the managed LaunchAgent is
+    # stopped below, but a foreground `spacelabel agent` is not, so refuse if one holds the
+    # default lock (agent_status_detail(None) also catches an alt config sharing that lock).
+    # A custom --config deletes nothing, so it never blocks here. An agent started against a
+    # *different* --config no longer shares the global logs (review F3 routes it to its own
+    # store dir), so a default purge can't pull live state from it -- nothing left to miss.
     if is_default:
         live = install_mod.agent_status_detail(None)
         if live.running and not live.managed:
@@ -303,7 +302,8 @@ def uninstall(
         _diag("--purge will permanently delete:")
         for target in targets:
             _diag(f"  {target}")
-        click.confirm("Delete these?", abort=True)
+        # err=True keeps the prompt on stderr so stdout stays machine-readable (CLI.md).
+        click.confirm("Delete these?", abort=True, err=True)
 
     _uninstall_agent_or_die()
     failed = install_mod.purge_user_data(targets)
@@ -361,9 +361,14 @@ def _uninstall_agent_or_die() -> None:
 def status(ctx: click.Context, as_json: bool) -> None:
     """Report agent install + run state (managed LaunchAgent or a foreground agent).
 
-    Reports a running agent whether it is the managed LaunchAgent or a foreground
-    ``spacelabel agent`` (both hold ``agent.lock``). Exit 0 when an agent is running,
-    else 3; the install/loaded fields are informational (DECISIONS.md §9).
+    Reports the agent for the **selected store** -- the default store, or the ``--config``
+    store when one is given -- whether it is the managed LaunchAgent or a foreground
+    ``spacelabel agent`` (both hold that store's ``agent.lock``). Exit 0 when that agent is
+    running, else 3; the install/loaded fields are informational (DECISIONS.md §9).
+
+    A foreground agent started against a *different* ``--config`` is a separate store with
+    its own lock (and, per review F3, its own logs); check it with ``status --config <that
+    file>`` -- bare ``status`` cannot enumerate agents for arbitrary config paths.
     """
     from spacelabel import install as install_mod
 
