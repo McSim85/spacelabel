@@ -249,11 +249,29 @@ def uninstall(
 
     app_ctx: AppContext = ctx.obj
     paths = store.StorePaths.resolve(app_ctx.config_path)
+    # The LaunchAgent is a single GLOBAL login item tied to the default store (it only ever
+    # runs the default config -- `install` ignores --config). So a custom --config uninstall
+    # must NOT tear it down: that would disable a working default install for someone merely
+    # cleaning up an alternate config. Only the default store touches the LaunchAgent.
+    is_default = install_mod._is_default_store(paths.config_file)
 
     if not purge:
         if dry_run:
-            click.echo(str(install_mod.plist_path()))  # the only thing a plain uninstall removes
-            _diag("(dry run) would remove the LaunchAgent above; data kept. Nothing deleted.")
+            if is_default:
+                click.echo(str(install_mod.plist_path()))  # all a plain uninstall removes
+                _diag("(dry run) would remove the LaunchAgent above; data kept. Nothing deleted.")
+            else:
+                _diag(
+                    "(dry run) custom --config: the global LaunchAgent is not tied to it; "
+                    "nothing would be removed."
+                )
+            return
+        if not is_default:
+            _diag(
+                "Custom --config: the LaunchAgent is the global default login item, not tied "
+                f"to {paths.config_file}; nothing to uninstall. (Run 'spacelabel uninstall' "
+                "with no --config to remove the login agent; add --purge for the data.)"
+            )
             return
         _uninstall_agent_or_die()
         _diag(
@@ -262,7 +280,6 @@ def uninstall(
         )
         return
 
-    is_default = install_mod._is_default_store(paths.config_file)
     targets = install_mod.purge_targets(paths, remove_completion=True)
     if dry_run:
         for target in targets:
@@ -276,19 +293,20 @@ def uninstall(
                 "caches/logs/completion."
             )
         return
-    # Only the DEFAULT purge deletes shared data (the default data dir + the global
-    # caches/logs). Don't delete it out from under a live agent: the managed LaunchAgent is
-    # stopped below, but a foreground `spacelabel agent` is not, so refuse if one holds the
-    # default lock (agent_status_detail(None) also catches an alt config sharing that lock).
-    # A custom --config deletes nothing, so it never blocks here. An agent started against a
-    # *different* --config no longer shares the global logs (review F3 routes it to its own
-    # store dir), so a default purge can't pull live state from it -- nothing left to miss.
+    # Only the DEFAULT purge deletes shared data (the default store's labels/displays/lock +
+    # the global caches/logs). Refuse while ANY unmanaged process holds the default store
+    # lock -- not just one serving config.json: an alt config kept in the default dir shares
+    # that lock + labels/displays, so a config-aware status check would miss it (this is a
+    # lock-level question, not a per-config one). The managed LaunchAgent is excluded (it is
+    # stopped below). A custom --config deletes nothing, so it never reaches this guard; and
+    # an agent on a *different* store dir keeps its own logs/wallpaper cache (per-store), so a
+    # default purge can't pull live state from it.
     if is_default:
-        live = install_mod.agent_status_detail(None)
-        if live.running and not live.managed:
+        blocked, holder_pid = install_mod.unmanaged_default_lock_holder()
+        if blocked:
             raise click.ClickException(
-                f"a foreground spacelabel agent is still running (pid {live.pid}); quit it "
-                "before 'uninstall --purge' so its data isn't deleted out from under it."
+                f"a foreground spacelabel agent is still running (pid {holder_pid}); quit it "
+                "before 'uninstall --purge' so the shared store isn't deleted out from under it."
             )
     # Confirm only when there is something to delete. A custom --config purges nothing
     # (empty targets), so it needs neither --yes nor a TTY -- requiring them would break
@@ -305,7 +323,8 @@ def uninstall(
         # err=True keeps the prompt on stderr so stdout stays machine-readable (CLI.md).
         click.confirm("Delete these?", abort=True, err=True)
 
-    _uninstall_agent_or_die()
+    if is_default:
+        _uninstall_agent_or_die()  # only the default store owns the global LaunchAgent
     failed = install_mod.purge_user_data(targets)
     if is_default:
         # Remove the now-emptied data dir, but keep it (and any foreign file a user stashed
@@ -322,12 +341,13 @@ def uninstall(
         return
     # A custom --config owns nothing we can safely auto-delete: its directory isn't ours
     # (a sibling labels.json could be another app's) and the caches/logs/completions are
-    # global — shared with the default install. So we delete nothing for it.
+    # global — shared with the default install. So we delete nothing AND we leave the global
+    # LaunchAgent in place (it is not tied to this config).
     _diag(
-        f"Removed {_AGENT_LABEL}. Your --config store under {paths.directory} was NOT "
-        "auto-purged (spacelabel only deletes what it exclusively owns); remove it manually. "
-        "Run the default 'spacelabel uninstall --purge' to remove the shared caches/logs/"
-        "completion."
+        f"Custom --config: the global LaunchAgent was left in place (not tied to this config), "
+        f"and your store under {paths.directory} was NOT auto-purged (spacelabel only deletes "
+        "what it exclusively owns) — remove it manually. Run the default 'spacelabel uninstall "
+        "--purge' (no --config) to remove the LaunchAgent and the shared caches/logs/completion."
     )
 
 

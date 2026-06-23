@@ -290,23 +290,38 @@ def test_probe_agent_lock_held_released_and_absent(tmp_path, monkeypatch):
         install.store.StorePaths, "resolve", lambda _cfg=None: SimpleNamespace(directory=tmp_path)
     )
     # No lock file yet -> the agent has never run for this config.
-    assert install._probe_agent_lock(None) == (False, None)
+    assert install._probe_agent_lock(None) == (False, None, None)
 
-    # Simulate a running agent: write its pid and hold an exclusive flock (a separate
+    # Running agent: it records "<pid>\n<config>" and holds an exclusive flock (a separate
     # open file description, so the probe's own fd is correctly denied — flock conflicts
     # across descriptions even within one process).
+    cfg = tmp_path / "config.json"
     holder = (tmp_path / "agent.lock").open("w")
-    holder.write("12345")
+    holder.write(f"12345\n{cfg}\n")
     holder.flush()
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
-        assert install._probe_agent_lock(None) == (True, 12345)
+        assert install._probe_agent_lock(None) == (True, 12345, cfg)  # pid + recorded config
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
 
-    # Lock released (agent gone), but the file (with its stale pid) remains -> not held.
-    assert install._probe_agent_lock(None) == (False, None)
+    # Lock released (agent gone), but the file remains -> not held.
+    assert install._probe_agent_lock(None) == (False, None, None)
+
+
+def test_probe_lock_path_legacy_pid_only_lock_has_no_config(tmp_path):
+    # A legacy pid-only lock (pre-config-recording) parses the pid but reports no config.
+    lock = tmp_path / "agent.lock"
+    holder = lock.open("w")
+    holder.write("777")
+    holder.flush()
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert install._probe_lock_path(lock) == (True, 777, None)
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
 
 
 @pytest.mark.parametrize(
@@ -324,7 +339,12 @@ def test_probe_agent_lock_held_released_and_absent(tmp_path, monkeypatch):
 )
 def test_agent_status_detail_states(monkeypatch, launchctl, lock, installed, expected):
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: launchctl)
-    monkeypatch.setattr(install, "_probe_lock_path", lambda _p: lock)
+    # A held lock for the DEFAULT query records the default config.json, so it matches.
+    monkeypatch.setattr(
+        install,
+        "_probe_lock_path",
+        lambda _p: (lock[0], lock[1], install.store.config_path() if lock[0] else None),
+    )
     monkeypatch.setattr(install, "is_installed", lambda: installed)
     st = install.agent_status_detail()  # default config -> folds in launchctl
     assert (st.installed, st.loaded, st.running, st.pid, st.managed) == expected
@@ -335,8 +355,10 @@ def test_agent_status_detail_custom_config_ignores_launchctl(monkeypatch, tmp_pa
     # report the default agent's managed state (it would be a false positive).
     monkeypatch.setattr(
         install, "_launchctl_service_state", lambda: (True, 4213)
-    )  # default IS running
-    monkeypatch.setattr(install, "_probe_lock_path", lambda _p: (False, None))  # this config's not
+    )  # default running
+    monkeypatch.setattr(
+        install, "_probe_lock_path", lambda _p: (False, None, None)
+    )  # this one's not
     monkeypatch.setattr(install, "is_installed", lambda: True)
     st = install.agent_status_detail(tmp_path / "other.json")
     assert (st.installed, st.loaded, st.running, st.pid, st.managed) == (
@@ -354,7 +376,9 @@ def test_agent_status_detail_default_config_path_is_still_managed(monkeypatch, t
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, 4213))
-    monkeypatch.setattr(install, "_probe_lock_path", lambda _p: (True, 4213))
+    monkeypatch.setattr(
+        install, "_probe_lock_path", lambda _p: (True, 4213, default_dir / "config.json")
+    )
     monkeypatch.setattr(install, "is_installed", lambda: True)
     st = install.agent_status_detail(default_dir / "config.json")
     assert (st.installed, st.loaded, st.running, st.pid, st.managed) == (
@@ -367,16 +391,17 @@ def test_agent_status_detail_default_config_path_is_still_managed(monkeypatch, t
 
 
 def test_agent_status_detail_symlinked_default_probes_canonical_lock(monkeypatch, tmp_path):
-    # --config is a symlink to the default config.json -> status must probe the CANONICAL
-    # data_dir/agent.lock (not the symlink's parent) so a live default agent is seen.
+    # --config is a symlink to the default config.json -> status probes the CANONICAL
+    # data_dir/agent.lock and the recorded config resolves to the same file, so a live
+    # default agent is seen.
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     default_dir.mkdir(parents=True)
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))
     monkeypatch.setattr(install, "is_installed", lambda: False)
     (default_dir / "config.json").write_text("{}")
-    holder = (default_dir / "agent.lock").open("w")  # a live agent holds the canonical lock
-    holder.write("4242")
+    holder = (default_dir / "agent.lock").open("w")  # a live agent serving config.json
+    holder.write(f"4242\n{default_dir / 'config.json'}\n")
     holder.flush()
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
@@ -385,39 +410,57 @@ def test_agent_status_detail_symlinked_default_probes_canonical_lock(monkeypatch
         link = elsewhere / "link.json"
         link.symlink_to(default_dir / "config.json")
         st = install.agent_status_detail(link)
-        assert st.running is True and st.pid == 4242  # saw the live default agent
+        assert st.running is True and st.pid == 4242  # saw the live default agent (resolved match)
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
 
 
-def test_agent_status_detail_alt_config_reports_shared_default_agent(monkeypatch, tmp_path):
-    # F4: an alt config kept inside the default dir shares data_dir/agent.lock (same store),
-    # so a running agent on that store is reported for the alt config too -- not a false
-    # negative (which previously also blinded the uninstall --purge guard). But F-b:
-    # installed/loaded/managed are NOT inherited from the default LaunchAgent (launchd
-    # manages config.json, not alt.json), so those stay False even when it is loaded.
+def test_agent_status_detail_alt_config_not_running_when_default_holds_lock(monkeypatch, tmp_path):
+    # F2 (root fix): an alt config kept in the default dir shares data_dir/agent.lock with the
+    # default. When the DEFAULT (config.json) agent holds it, `status --config alt.json` must
+    # report NOT running -- alt.json was never started (the recorded config disambiguates, so
+    # no false positive). installed/loaded/managed also stay False (not the managed config).
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     default_dir.mkdir(parents=True)
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, 4213))
     monkeypatch.setattr(install, "is_installed", lambda: True)
-    holder = (default_dir / "agent.lock").open("w")  # an agent holds the shared lock
-    holder.write("4213")
+    holder = (default_dir / "agent.lock").open("w")  # held by the config.json agent
+    holder.write(f"4213\n{default_dir / 'config.json'}\n")
     holder.flush()
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
         st = install.agent_status_detail(default_dir / "alt.json")
-        assert (st.running, st.pid) == (True, 4213)  # the shared lock is held
-        assert (st.installed, st.loaded, st.managed) == (False, False, False)  # not inherited
+        assert (st.installed, st.loaded, st.running, st.managed) == (False, False, False, False)
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+
+def test_agent_status_detail_alt_config_running_when_alt_holds_lock(monkeypatch, tmp_path):
+    # The flip side (no false negative): when an agent STARTED with alt.json holds the shared
+    # lock (recording alt.json), `status --config alt.json` reports running + unmanaged.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))
+    monkeypatch.setattr(install, "is_installed", lambda: False)
+    holder = (default_dir / "agent.lock").open("w")  # held by the alt.json agent
+    holder.write(f"9001\n{default_dir / 'alt.json'}\n")
+    holder.flush()
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        st = install.agent_status_detail(default_dir / "alt.json")
+        assert (st.running, st.managed, st.pid) == (True, False, 9001)
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
 
 
 def test_agent_status_detail_idle_alt_config_not_marked_installed(monkeypatch, tmp_path):
-    # F-b: an IDLE alt config in the default dir (no agent holds the lock) must not inherit
-    # the default LaunchAgent's installed/loaded just because it shares the dir -> all False.
+    # An IDLE alt config in the default dir (no agent holds the lock) must not inherit the
+    # default LaunchAgent's installed/loaded just because it shares the dir -> all False.
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     default_dir.mkdir(parents=True)
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
@@ -427,24 +470,49 @@ def test_agent_status_detail_idle_alt_config_not_marked_installed(monkeypatch, t
     assert (st.installed, st.loaded, st.running, st.managed) == (False, False, False, False)
 
 
-def test_agent_status_detail_alt_config_reports_foreground_shared_agent(monkeypatch, tmp_path):
-    # Same shared store, but a FOREGROUND agent holds the lock (launchctl not loaded) ->
-    # running + unmanaged, with the lock-file pid. This is what makes the purge guard refuse.
+def test_unmanaged_default_lock_holder_blocks_any_foreground_holder(monkeypatch, tmp_path):
+    # The purge guard is LOCK-level, not config-aware: a foreground agent holding the default
+    # store lock blocks the default purge even if it serves an ALT config (it shares the
+    # store's labels/displays) -- the data-safety hole the config-aware status check left.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))  # not managed
+    holder = (default_dir / "agent.lock").open("w")  # a foreground alt.json agent holds it
+    holder.write(f"9001\n{default_dir / 'alt.json'}\n")
+    holder.flush()
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert install.unmanaged_default_lock_holder() == (True, 9001)  # blocks despite alt config
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+
+def test_unmanaged_default_lock_holder_allows_managed_agent(monkeypatch, tmp_path):
+    # The managed launchd agent holding the lock does NOT block (uninstall stops it): its
+    # recorded lock pid equals the launchctl pid.
+    default_dir = tmp_path / "AppSupport" / "spacelabel"
+    default_dir.mkdir(parents=True)
+    monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
+    monkeypatch.setattr(install, "_launchctl_service_state", lambda: (True, 4242))  # managed pid
+    holder = (default_dir / "agent.lock").open("w")
+    holder.write(f"4242\n{default_dir / 'config.json'}\n")
+    holder.flush()
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert install.unmanaged_default_lock_holder() == (False, None)  # managed -> allowed
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+
+
+def test_unmanaged_default_lock_holder_none_when_lock_free(monkeypatch, tmp_path):
     default_dir = tmp_path / "AppSupport" / "spacelabel"
     default_dir.mkdir(parents=True)
     monkeypatch.setattr(install.store, "data_dir", lambda: default_dir)
     monkeypatch.setattr(install, "_launchctl_service_state", lambda: (False, None))
-    monkeypatch.setattr(install, "is_installed", lambda: False)
-    holder = (default_dir / "agent.lock").open("w")
-    holder.write("9001")
-    holder.flush()
-    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    try:
-        st = install.agent_status_detail(default_dir / "alt.json")
-        assert (st.running, st.managed, st.pid) == (True, False, 9001)
-    finally:
-        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
-        holder.close()
+    assert install.unmanaged_default_lock_holder() == (False, None)  # no lock file -> not held
 
 
 # ---- uninstall --purge: target resolution + deletion -----------------------

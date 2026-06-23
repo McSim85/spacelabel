@@ -614,8 +614,10 @@ def test_status_json(runner, monkeypatch):
 
 
 def _agent_not_running(monkeypatch):
-    # The real --purge flow checks for a live foreground agent before deleting; stub it
-    # to "not running" so the deletion path runs (a dedicated test covers the refusal).
+    # The real --purge flow checks the default store lock for a live foreground agent before
+    # deleting; stub it to "not held" so the deletion path runs (a dedicated test covers the
+    # refusal). Also stub agent_status_detail for any status-path callers.
+    monkeypatch.setattr("spacelabel.install.unmanaged_default_lock_holder", lambda: (False, None))
     monkeypatch.setattr(
         "spacelabel.install.agent_status_detail",
         lambda _cfg=None: AgentStatus(
@@ -739,13 +741,9 @@ def test_uninstall_purge_interactive_confirm(runner, monkeypatch):
 
 
 def test_uninstall_purge_refuses_while_foreground_agent_running(runner, monkeypatch):
-    # A live foreground agent holds agent.lock -> refuse to delete its store from under it.
-    monkeypatch.setattr(
-        "spacelabel.install.agent_status_detail",
-        lambda _cfg=None: AgentStatus(
-            installed=False, loaded=False, running=True, pid=50803, managed=False
-        ),
-    )
+    # Any unmanaged holder of the default store lock -> refuse (lock-level guard, so it also
+    # catches an alt config in the default dir, which a config-aware status check would miss).
+    monkeypatch.setattr("spacelabel.install.unmanaged_default_lock_holder", lambda: (True, 50803))
     monkeypatch.setattr(
         "spacelabel.install.purge_targets", lambda paths, remove_completion: [Path("/x/data")]
     )

@@ -267,15 +267,17 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
         log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
         raise SystemExit(1) from exc
     log.debug("acquired single-instance lock %s", lock_path)
-    # Won the lock: NOW record our pid (truncate the stale content first) so `spacelabel
-    # status` can report it for a foreground agent (the flock itself is anonymous);
-    # best-effort (DECISIONS.md §9).
+    # Won the lock: NOW record "<pid>\n<resolved-config>" (truncate the stale content first).
+    # The flock itself is anonymous, so `spacelabel status` reads the pid here; the config
+    # lets `status --config X` tell whether the agent holding a SHARED store lock is serving
+    # THIS config or a sibling (several config files can share one store dir / lock).
+    # Best-effort (DECISIONS.md §9).
     try:
         handle.truncate(0)
-        handle.write(str(os.getpid()))
+        handle.write(f"{os.getpid()}\n{paths.config_file.resolve()}\n")
         handle.flush()
     except OSError as exc:
-        log.debug("could not record agent pid in %s: %s", lock_path, exc)
+        log.debug("could not record agent pid/config in %s: %s", lock_path, exc)
     return handle
 
 
@@ -344,6 +346,22 @@ class AppDelegate(NSObject):
         self._lock_handle = handle
 
     @objc.python_method
+    def _wallpaper_cache_dir(self) -> Path | None:
+        """Per-store wallpaper cache dir, or ``None`` for the shared default cache.
+
+        The default store uses the shared ``~/Library/Caches/spacelabel/wallpaper`` (cleared
+        by ``uninstall --purge`` under the default-lock guard). A genuinely custom ``--config``
+        caches under ITS OWN store dir, so a default purge can't delete a live custom-config
+        agent's wallpaper composites / original-tracking map -- mirrors the per-store log
+        routing (:func:`_agent_log_dir`), keeping each instance's shared state isolated.
+        """
+        from spacelabel import install as install_mod
+
+        if install_mod._is_default_store(self._paths.config_file):
+            return None  # WallpaperRenderer's global default
+        return self._paths.directory / "wallpaper"
+
+    @objc.python_method
     def set_managed_run(self, managed: bool) -> None:
         """Record whether this is the launchd-managed production run (see run_agent)."""
         self._is_managed_run = managed
@@ -405,7 +423,7 @@ class AppDelegate(NSObject):
         if config.modes.get("wallpaper"):
             from spacelabel.agent.wallpaper import WallpaperRenderer
 
-            self._wallpaper = WallpaperRenderer()
+            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
         # Overlays are built lazily per display in _refresh (one panel per display).
 
     @objc.python_method
@@ -951,7 +969,7 @@ class AppDelegate(NSObject):
         if self._wallpaper is None:  # lazily built so a runtime mode-toggle takes effect
             from spacelabel.agent.wallpaper import WallpaperRenderer
 
-            self._wallpaper = WallpaperRenderer()
+            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
         # Write to the display the active Space is on, not whatever holds the key
         # window (the title is the active Space's label) -- same mapping as the HUD.
         active_uuid = self._active_display_uuid()

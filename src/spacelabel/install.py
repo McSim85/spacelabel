@@ -632,14 +632,24 @@ def _launchctl_service_state() -> tuple[bool, int | None]:
     return (True, pid)
 
 
-def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None]:
-    """Return ``(held, pid)`` for a specific lock file -- the core single-instance probe.
+def _same_path(a: Path, b: Path) -> bool:
+    """Return True if ``a`` and ``b`` denote the same file (resolved), tolerant of errors."""
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
 
-    Opens the file **read-only** and attempts a non-blocking ``flock``: if it blocks
-    (``BlockingIOError``/``EAGAIN``) an agent -- managed or foreground -- holds it; if it
-    succeeds the lock is released immediately and no agent is running. The holder's pid is
-    read from the file's contents (the agent records its pid after locking); a stale file
-    from a crashed agent reads as not-held because the OS drops its ``flock``.
+
+def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None, Path | None]:
+    """Return ``(held, pid, config)`` for a lock file -- the core single-instance probe.
+
+    Opens the file **read-only** and attempts a non-blocking ``flock``: if it blocks an
+    agent -- managed or foreground -- holds it; if it succeeds the lock is released and no
+    agent is running. After locking, the agent writes two lines -- the pid, then the resolved
+    config path it is serving -- so ``pid`` is line 1 and ``config`` is line 2 (``None`` for a
+    legacy pid-only lock). The recorded config disambiguates several config files that share
+    one store dir / lock. A stale file from a crashed agent reads as not-held (the OS drops
+    its ``flock``).
 
     Read-only is deliberate. BSD ``flock(2)`` advisory locks attach to the open file
     *description*, not the access mode, so ``LOCK_EX`` works on an ``O_RDONLY`` fd on
@@ -650,25 +660,26 @@ def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None]:
     try:
         handle = lock_path.open("r")
     except OSError:
-        return (False, None)  # no lock file -> the agent has never run here
+        return (False, None, None)  # no lock file -> the agent has never run here
     try:
-        recorded = handle.read().strip()
+        lines = handle.read().splitlines()
         try:
-            pid: int | None = int(recorded)
+            pid: int | None = int(lines[0]) if lines else None
         except ValueError:
             pid = None
+        config = Path(lines[1]) if len(lines) > 1 and lines[1].strip() else None
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            return (True, pid)  # contended -> an agent holds the lock
+            return (True, pid, config)  # contended -> an agent holds the lock
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return (False, None)  # acquired freely -> not running
+        return (False, None, None)  # acquired freely -> not running
     finally:
         handle.close()
 
 
-def _probe_agent_lock(config_path: Path | None) -> tuple[bool, int | None]:
-    """Return ``(held, pid)`` for the ``agent.lock`` of the ``--config`` selection's store."""
+def _probe_agent_lock(config_path: Path | None) -> tuple[bool, int | None, Path | None]:
+    """Return ``(held, pid, config)`` for the ``agent.lock`` of the ``--config`` store."""
     return _probe_lock_path(store.StorePaths.resolve(config_path).directory / "agent.lock")
 
 
@@ -681,35 +692,58 @@ def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
     launchd one (``launchctl`` reports its pid); ``pid`` prefers the launchd pid, else the
     pid recorded in the lock file.
 
-    :param config_path: ``--config`` selection, so the probe targets the matching
-        ``agent.lock`` (a custom-config agent has its own store/lock).
+    :param config_path: ``--config`` selection, so the probe targets the matching store's
+        ``agent.lock`` and reports the agent for THAT config (see below).
     :raises InstallError: Only if ``launchctl`` itself cannot be executed.
     """
     paths = store.StorePaths.resolve(config_path)
-    canonical_lock = store.data_dir() / "agent.lock"
-    custom_lock = paths.directory / "agent.lock"
-    try:
-        shares_default_lock = custom_lock.resolve() == canonical_lock.resolve()
-    except OSError:
-        shares_default_lock = custom_lock == canonical_lock
-    # The genuinely-managed default config (its config file IS config.json, even via a
-    # symlink/relative spelling) gets the full launchctl + canonical-lock report.
-    if _is_default_store(paths.config_file):
-        lock_held, lock_pid = _probe_lock_path(canonical_lock)
+    is_default = _is_default_store(paths.config_file)
+    # The default store's lock is the CANONICAL data_dir/agent.lock -- a symlinked/relative
+    # spelling of the default config has paths.directory = the symlink's parent, not the data
+    # dir, so never key the default lock off paths.directory. A custom store uses its own dir.
+    lock_path = (store.data_dir() if is_default else paths.directory) / "agent.lock"
+    held, pid, recorded = _probe_lock_path(lock_path)
+    # "running for THIS config": an agent holds the store's lock AND recorded the SAME config
+    # file. Several config files can share one store dir (hence one agent.lock) -- e.g. an
+    # alt config kept inside the default dir, or two configs in /tmp -- so config.json's agent
+    # holding the shared lock does NOT mean alt.json's agent is running, and vice-versa. The
+    # config the running agent recorded disambiguates; a legacy pid-only lock records None and
+    # is treated as not-this-config (it restarts and rewrites the lock on upgrade).
+    running_here = held and recorded is not None and _same_path(recorded, paths.config_file)
+    running_pid = pid if running_here else None
+    if is_default:
+        # The managed LaunchAgent runs the default config.json -> fold in launchctl (the
+        # authority for the managed instance; the lock-config check covers a foreground run).
         loaded, launchctl_pid = _launchctl_service_state()
         return AgentStatus(
             installed=is_installed(),
             loaded=loaded,
-            running=lock_held or launchctl_pid is not None,
-            pid=launchctl_pid if launchctl_pid is not None else lock_pid,
+            running=running_here or launchctl_pid is not None,
+            pid=launchctl_pid if launchctl_pid is not None else running_pid,
             managed=launchctl_pid is not None,
         )
-    # A custom --config is unmanaged/foreground. Probe ITS lock -- but if that lock IS the
-    # default store's shared lock (an alt config kept inside the default dir), probe the
-    # CANONICAL lock so a running agent on that shared store is still reported (no false
-    # negative). installed/loaded/managed stay False either way: launchd manages only the
-    # default config.json, not this alternate file, so we must not claim it for this config.
-    lock_held, lock_pid = _probe_lock_path(canonical_lock if shares_default_lock else custom_lock)
+    # A custom --config is necessarily unmanaged/foreground (launchd runs only config.json).
     return AgentStatus(
-        installed=False, loaded=False, running=lock_held, pid=lock_pid, managed=False
+        installed=False, loaded=False, running=running_here, pid=running_pid, managed=False
     )
+
+
+def unmanaged_default_lock_holder() -> tuple[bool, int | None]:
+    """Return ``(blocked, pid)`` if a FOREGROUND agent holds the default store's lock.
+
+    The purge guard's question differs from :func:`agent_status_detail`'s. Status asks "is
+    *this config's* agent running" (config-aware). But ``uninstall --purge`` deletes the
+    **shared** default store -- ``labels.json``/``displays.json``/``agent.lock`` plus the
+    global caches/logs -- which **every** agent in that directory uses, whatever ``--config``
+    it serves. So it must refuse while *any* unmanaged process holds the canonical lock, not
+    only one serving ``config.json``. The managed launchd agent is excluded (uninstall stops
+    it below): a held lock whose recorded pid equals the launchd pid is the managed agent;
+    anything else (a foreground run, or an unparseable pid) blocks, conservatively.
+    """
+    held, lock_pid, _config = _probe_lock_path(store.data_dir() / "agent.lock")
+    if not held:
+        return (False, None)
+    _loaded, launchctl_pid = _launchctl_service_state()
+    if launchctl_pid is not None and lock_pid == launchctl_pid:
+        return (False, None)  # the managed agent -- uninstall stops it before the purge
+    return (True, lock_pid)  # a foreground (or unknown) holder would lose the shared store
