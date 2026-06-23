@@ -160,6 +160,20 @@ _SETTINGS_URL_ACCESSIBILITY = (
 _SETTINGS_URL_KEYBOARD = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"
 
 
+def _agent_log_dir(paths: store.StorePaths) -> Path | None:
+    """Return the agent's file-log dir, or ``None`` for the shared default ``logs_dir``.
+
+    The default store logs to the shared ``~/Library/Logs/spacelabel`` (where the managed
+    agent and its boot log live, and which ``uninstall --purge`` clears under the
+    default-lock guard). A genuinely custom ``--config`` logs to its OWN store directory
+    instead, so a default purge can never pull the log dir from a live custom-config agent
+    (review F3) and each instance's logs stay isolated beside its own store files.
+    """
+    from spacelabel import install as install_mod
+
+    return None if install_mod._is_default_store(paths.config_file) else paths.directory
+
+
 def run_agent(
     config_path: Path | None = None, *, verbose: bool = False, debug: bool = False
 ) -> None:
@@ -181,9 +195,10 @@ def run_agent(
     if verbose or debug:
         setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
     else:
-        config = store.load_config(store.StorePaths.resolve(config_path))
+        paths = store.StorePaths.resolve(config_path)
+        config = store.load_config(paths)
         agent_level = getattr(logging, config.log_level, logging.WARNING)
-        setup_logging(LogMode.AGENT, agent_level=agent_level)
+        setup_logging(LogMode.AGENT, agent_level=agent_level, log_dir=_agent_log_dir(paths))
 
     # Route uncaught (top-level) exceptions into the configured sink, not raw stderr.
     install_logging_excepthook()
