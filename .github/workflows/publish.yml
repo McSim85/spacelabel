@@ -12,6 +12,10 @@ name: Build and attach release artifacts
 #                 the cask installs.
 #   update-cask:  computes the asset sha256 and opens a PR bumping Casks/spacelabel.rb
 #                 (version + sha256) — mirrors the quiknode-labs optic update-formula job.
+#                 The sha256 can only be computed AFTER the asset is uploaded, so this is a
+#                 follow-up PR: `brew install --cask` is not installable for the release
+#                 until that PR is merged (the default branch carries the placeholder until
+#                 then). Merge it promptly, or have CI push the bump straight to main.
 #   build-wheel:  also attaches the pure-Python wheel + sdist for dev / source installs
 #                 (`uv pip install <wheel-url>`); pipx is deprecated in favour of the cask.
 #
