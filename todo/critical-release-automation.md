@@ -4,9 +4,10 @@
 before running.
 **Run in a fresh session.**
 
-> **Status (2026-06-22):** release-please + Renovate are **shipped** and releasing (currently v0.6.1); the repo is now **public**. Two things are **deferred — pipx-only for now** (Max's call: fewer manual/maintenance steps until the product is stable):
-> - **PyPI publish (§3):** keep the workflow staged but **do not flip it on** until the product is stable. Teammates install via `pipx install git+https://github.com/McSim85/spacelabel`.
-> - **Homebrew tap (§4): DEFERRED to post-PyPI / v1.0.** When revived, change the plan below: use an **in-repo self-tap** (`Formula/spacelabel.rb` in *this* repo, mirroring quiknode-labs `optic`/`ssh-mcp`) rather than a separate `McSim85/homebrew-spacelabel` repo; ship a Python `virtualenv_install_with_resources` formula (not a frozen binary); and **land the `_resolve_install_shim` brew-path fix FIRST** (prerequisite — `spacelabel install` must resolve the real brew bin path, not the hardcoded `~/.local/bin/spacelabel` pipx shim, or the agent can't be installed under a brew install). Cross-refs: phase-6 §1C (deferred), `todo/uninstall-purge.md`.
+> **Status (2026-06-22, ✅ PIVOT IMPLEMENTED on `feat/signed-app-cask`):** the Homebrew path is now a **cask** shipping the signed `.app`, not a source formula. Landed: `Casks/spacelabel.rb`; `publish.yml` `build-app` (py2app build + inside-out ad-hoc sign + `ditto`-zip + attach) and `update-cask` (sha256 + PR bump) jobs; `_resolve_install_shim`→`_enclosing_app_exe`; the obsolete `packaging/homebrew/spacelabel.rb` source formula removed. Developer-ID/notarization (durable grant, Gatekeeper-clean) is the documented follow-on. **The CI jobs are untested until the first release (no push this session).** release-please + Renovate were already shipped (currently v0.6.1); the repo is **public**.
+> - **DISTRIBUTION PIVOT (Max, 2026-06-22 — reverses the prior pipx-only call, #30):** ship spacelabel as a **signed `.app` distributed via a Homebrew CASK**, replacing pipx. This is driven by the Phase-6 click-to-switch finding (the agent needs its own stable TCC identity — a shared homebrew-python identity can't be granted Accessibility reliably). **The authoritative plan is now `todo/phase-6-blockers.md` Tier 1.** A brew **cask shipping a prebuilt signed `.app`** — NOT the `virtualenv_install_with_resources` source **formula** sketched in §4 below (a source formula keeps the broken shared-python identity). §4's in-repo self-tap location still applies, but as `Casks/spacelabel.rb`, and the `_resolve_install_shim` fix (resolve the bundle exe, not the pipx shim) is a prerequisite. Extend the release pipeline to build + ad-hoc-sign + attach the `.app` and bump the cask. Developer-ID signing + notarization = a later follow-on for friction-free public installs.
+> - **PyPI publish (§3):** keep the workflow staged but **do not flip it on** until stable (now lower priority given the cask path).
+> - **§4 below is superseded by `todo/phase-6-blockers.md` Tier 1** for the Homebrew approach (cask, not formula). Cross-refs: `todo/uninstall-purge.md` (the cask `zap` stanza must match `--purge`).
 
 ---
 
@@ -20,8 +21,7 @@ before running.
   `--strict` + pytest + pre-commit.
 - **Commit standard:** Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, etc.)
   — Max's standing standard; every commit in this repo already follows it.
-- **Repo:** private under github.com/McSim85/spacelabel; MIT © Max Kramarenko.
-  Will go public before v1.0.
+- **Repo:** public at github.com/McSim85/spacelabel; MIT © Max Kramarenko.
 - **Version source of truth:** `version` field in `pyproject.toml` (PEP 517/518).
   Currently `0.1.0-dev` or similar — check before starting.
 - **Hand-off rule:** read `DESIGN.md` + `DECISIONS.md` (incl. §8 repo layout, §6.5
@@ -49,11 +49,9 @@ goals, in delivery order:
    GitHub Actions versions, and pre-commit hook revs; weekly batched schedule to
    limit CI minutes churn.
 
-**Timing note:** the repo is currently private. Release-please and Renovate work
-fine on private repos. PyPI publish will not be wired to a real PyPI project until
-the repo goes public and the PyPI project is created — but the workflow should be
-ready to flip on. Document the go-public checklist in `.github/SETTINGS.md`
-(a file already mentioned in DECISIONS §8.5 as the go-public checklist location).
+**Timing note:** the repo is public. Release-please and Renovate are wired and
+working (currently v0.6.1). PyPI publish is not wired to a real PyPI project yet
+(the project must be created first) — but the workflow should be ready to flip on.
 
 ---
 
@@ -126,18 +124,18 @@ Create `renovate.json` at the repo root:
 }
 ```
 Adjust as needed. Document that Max must install the Renovate GitHub App on the
-private repo (Settings → GitHub Apps → Renovate). Add a note to `.github/SETTINGS.md`.
+repo (Settings → GitHub Apps → Renovate). Add a note to `.github/SETTINGS.md`.
 
 ### 6. `.github/SETTINGS.md` update
 
 Ensure the go-public checklist includes:
-- [ ] Flip repo to public
+- [x] Flip repo to public — **done** (repo is public)
 - [ ] Register `spacelabel` on PyPI and configure OIDC trusted publishing
       (publisher: `McSim85/spacelabel`, workflow: `publish.yml`, env: `pypi`)
-- [ ] Create `McSim85/homebrew-spacelabel` tap repo + formula
-- [ ] Install Renovate GitHub App on the repo
-- [ ] Enable branch protection on `main` (required status checks: CI)
-- [ ] Enable GitHub Discussions
+- [x] ~~Create `McSim85/homebrew-spacelabel` tap repo + formula~~ — **N/A**: the cask lives in-repo (`Casks/spacelabel.rb`, DECISIONS §10.5); tapped via `brew tap McSim85/spacelabel <repo-url>`, no separate tap repo
+- [x] Install Renovate GitHub App on the repo — **done** (PR #5)
+- [x] Enable branch protection on `main` (required status checks: CI) — **done**
+- [ ] Enable GitHub Discussions — optional (enable when wanted)
 
 ### 7. `DECISIONS.md` update
 

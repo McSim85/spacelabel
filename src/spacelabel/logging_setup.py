@@ -230,6 +230,11 @@ def setup_logging(
             target_dir / "agent.log",
             maxBytes=_AGENT_LOG_MAX_BYTES,
             backupCount=_AGENT_LOG_BACKUP_COUNT,
+            # Force UTF-8: under the LaunchAgent there is no locale (LANG unset), so the
+            # default file encoding is ASCII and the agent's non-ASCII log lines (curly
+            # quotes / “→” in the click-to-switch reasons) raise on write — silently
+            # losing every agent.log record and spilling tracebacks to agent.boot.log.
+            encoding="utf-8",
         )
     except OSError as exc:
         # Cannot create the log dir or open the file sink; do not go silent. Fall

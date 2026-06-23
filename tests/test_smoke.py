@@ -21,6 +21,30 @@ def test_bundle_id_constant() -> None:
     assert BUNDLE_ID == "dev.mcsim.spacelabel"
 
 
+def test_version_from_app_bundle_only_trusts_our_bundle(tmp_path, monkeypatch) -> None:
+    # The frozen-bundle version fallback must read the version only from OUR bundle's
+    # Info.plist — never borrow a host app's version when run under a foreign bundle.
+    import plistlib
+
+    contents = tmp_path / "Host.app" / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    exe = contents / "MacOS" / "exe"
+    exe.write_text("")
+    monkeypatch.setattr(spacelabel.sys, "executable", str(exe))
+
+    (contents / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {"CFBundleIdentifier": "com.other.app", "CFBundleShortVersionString": "9.9.9"}
+        )
+    )
+    assert spacelabel._version_from_app_bundle() is None  # foreign bundle -> not trusted
+
+    (contents / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleIdentifier": BUNDLE_ID, "CFBundleShortVersionString": "1.2.3"})
+    )
+    assert spacelabel._version_from_app_bundle() == "1.2.3"  # our bundle -> use it
+
+
 def test_cli_help_lists_agent() -> None:
     result = CliRunner().invoke(cli, ["--help"])
     assert result.exit_code == 0

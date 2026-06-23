@@ -292,32 +292,60 @@ def _fish_completion_path() -> Path:
     return Path(base) / "fish" / "completions" / f"{_PROG}.fish"
 
 
-def _bash_too_old() -> bool:
-    """Return whether the ``bash`` on PATH is known to be older than 4.4.
-
-    click cannot generate working completion for bash < 4.4 (macOS ships 3.2).
-    Best-effort: if ``bash`` can't be found or its version can't be parsed, returns
-    ``False`` so we don't block a user whose target bash lives elsewhere.
-    """
+def _bash_version(binary: str) -> tuple[int, int] | None:
+    """Return ``(major, minor)`` for ``binary``, or ``None`` if it can't be determined."""
     try:
         proc = subprocess.run(
-            ["bash", "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
+            [binary, "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        log.debug("completion: could not determine bash version: %s", exc)
-        return False
+        log.debug("completion: could not run %s for its version: %s", binary, exc)
+        return None
     parts = proc.stdout.split()
     if len(parts) < 2:
-        return False
+        return None
     try:
-        version = (int(parts[0]), int(parts[1]))
+        return (int(parts[0]), int(parts[1]))
     except ValueError:
+        return None
+
+
+def _bash_too_old() -> bool:
+    """Return whether every discoverable ``bash`` is older than 4.4.
+
+    click cannot generate working completion for bash < 4.4 (macOS ships 3.2). The user's
+    interactive bash may not be the one on PATH (e.g. PATH resolves to ``/bin/bash`` 3.2 while
+    a newer bash is installed), so probe several candidates -- PATH, ``$SHELL`` if it is bash,
+    and the common package-manager prefixes (Homebrew arm64/Intel, MacPorts, Nix) -- and judge
+    by the NEWEST: a usable bash existing anywhere means we must not reject completion.
+    Best-effort -- if no candidate's version can be parsed, returns ``False`` so a user whose
+    bash lives somewhere unprobed is never blocked.
+    """
+    candidates = [
+        "bash",  # PATH
+        "/opt/homebrew/bin/bash",  # Homebrew (Apple Silicon)
+        "/usr/local/bin/bash",  # Homebrew (Intel)
+        "/opt/local/bin/bash",  # MacPorts
+        "/run/current-system/sw/bin/bash",  # Nix (system)
+    ]
+    shell = os.environ.get("SHELL", "")
+    if shell and Path(shell).name == "bash":
+        candidates.append(shell)  # the user's actual login shell, wherever it lives
+    home = os.environ.get("HOME")
+    if home:
+        candidates.append(str(Path(home) / ".nix-profile" / "bin" / "bash"))  # Nix (user)
+    newest: tuple[int, int] | None = None
+    for binary in candidates:
+        version = _bash_version(binary)
+        if version is not None and (newest is None or version > newest):
+            newest = version
+    if newest is None:
         return False
-    return version < (4, 4)
+    return newest < (4, 4)
 
 
 def _bash_completion_path() -> Path:
@@ -451,6 +479,56 @@ def completion_target(shell: str) -> Path:
     return _zsh_completion_path()[0]
 
 
+def _default_completion_path(shell: str) -> Path | None:
+    """Env-independent DEFAULT completion path for ``shell`` (``None`` if undeterminable).
+
+    Checked alongside the current-environment target in :func:`installed_completion_files`,
+    so purge still finds a script left at the default location after ``$XDG_CONFIG_HOME`` /
+    ``$XDG_DATA_HOME`` / ``$BASH_COMPLETION_USER_DIR`` / zsh ``$fpath`` changed since install.
+    """
+    try:
+        home = _home()
+    except (RuntimeError, OSError):
+        return None
+    if shell == "fish":
+        return home / ".config" / "fish" / "completions" / f"{_PROG}.fish"
+    if shell == "bash":
+        return home / ".local" / "share" / "bash-completion" / "completions" / _PROG
+    return home / ".zfunc" / f"_{_PROG}"  # zsh's conventional default user dir
+
+
+def installed_completion_files() -> list[Path]:
+    """Return existing per-shell completion scripts (for ``uninstall --purge``).
+
+    For each shell, check BOTH the current-environment target AND the env-independent default
+    location, so a script left at the default is still removed after the user changed
+    ``$XDG_*`` / ``$BASH_COMPLETION_USER_DIR`` / zsh ``$fpath`` since install. A script under a
+    *custom* env-var directory that was unset or changed between install and purge can't be
+    rediscovered and is left behind (``completion install`` printed the path it wrote).
+    Per-shell resolution failures are skipped (logged at DEBUG).
+    """
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for shell in SHELLS:
+        candidates: list[Path] = []
+        try:
+            candidates.append(completion_target(shell))
+        except (CompletionError, UnknownShellError, OSError) as exc:
+            log.debug("completion: could not resolve %s target for purge: %s", shell, exc)
+        default = _default_completion_path(shell)
+        if default is not None:
+            candidates.append(default)
+        for target in candidates:
+            try:
+                exists = target.exists()
+            except OSError:
+                continue
+            if exists and target not in seen:
+                seen.add(target)
+                found.append(target)
+    return found
+
+
 def _write_if_changed(path: Path, content: str) -> bool:
     """Atomically write ``content`` to ``path`` only if it differs; return changed.
 
@@ -545,8 +623,8 @@ def install_completion(shell: str) -> InstallResult:
     elif shell == "bash":
         if _bash_too_old():
             raise CompletionError(
-                "the `bash` on PATH is older than 4.4 (macOS ships 3.2), which cannot "
-                "use click completion. Install Homebrew bash + bash-completion@2, then retry."
+                "no `bash` >= 4.4 was found (macOS ships 3.2), and click completion needs it. "
+                "Install Homebrew bash + bash-completion@2, then retry."
             )
         target = _bash_completion_path()
         hint = "Restart your shell. Requires bash-completion v2 to be sourced."

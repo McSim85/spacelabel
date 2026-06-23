@@ -263,6 +263,18 @@ def test_topology_signature_distinguishes_unlabelable_by_id64():
     assert _topology_signature([u1, u2]) != _topology_signature([u2, u1])
 
 
+def test_agent_log_dir_global_for_default_store_per_store_for_custom(tmp_path):
+    # F3: the default store logs to the shared logs_dir (None -> setup_logging's default); a
+    # genuinely custom --config logs to its OWN store dir, so a default `uninstall --purge`
+    # can never pull a live custom-config agent's logs out from under it.
+    from spacelabel import store
+    from spacelabel.agent.app import _agent_log_dir
+
+    assert _agent_log_dir(store.StorePaths.resolve(None)) is None  # default -> shared logs_dir
+    custom = store.StorePaths.resolve(tmp_path / "other.json")
+    assert _agent_log_dir(custom) == custom.directory  # custom -> its own store dir
+
+
 def test_is_interactive_tolerates_closed_stream(monkeypatch):
     import sys as _sys
 

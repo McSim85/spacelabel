@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -205,53 +206,218 @@ def install(no_load: bool) -> None:
 
 @cli.command()
 @click.option(
+    "--purge",
+    is_flag=True,
+    help="Also delete spacelabel data, caches, logs, and completion scripts (apt purge).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    help="Skip the --purge confirmation (required for --purge when not on a TTY).",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="With --purge, print the paths that would be deleted (to stdout) and exit.",
+)
+@click.option(
     "--keep-labels",
     "keep_labels",
     is_flag=True,
-    help="Reserved for a future destructive variant; labels are always kept today.",
+    hidden=True,
+    help="Deprecated no-op: data is kept by default; use --purge to delete it.",
 )
-def uninstall(keep_labels: bool) -> None:
-    """Unload and remove the login LaunchAgent."""
+@click.pass_context
+def uninstall(
+    ctx: click.Context, purge: bool, assume_yes: bool, dry_run: bool, keep_labels: bool
+) -> None:
+    """Unload and remove the login LaunchAgent.
+
+    By default user data (labels, config) is KEPT, like ``apt remove``. Pass ``--purge``
+    to also delete spacelabel's data, caches, logs, and completion scripts, like
+    ``apt purge`` (``--dry-run`` previews the paths; ``--yes`` skips the prompt and is
+    required when not running on a TTY). Never touches the WallpaperAgent store, the
+    pipx venv, or the ``~/.local/bin/spacelabel`` shim.
+    """
     from spacelabel import install as install_mod
 
-    # --keep-labels is the documented default behavior today (DESIGN/CLI.md 3.2):
-    # labels.json and config.json are never deleted, so the flag is a no-op.
-    del keep_labels
+    if keep_labels:
+        _diag("--keep-labels is the default and now a no-op; use --purge to delete data.")
+
+    app_ctx: AppContext = ctx.obj
+    paths = store.StorePaths.resolve(app_ctx.config_path)
+    # The LaunchAgent is a single GLOBAL login item tied to the default store (it only ever
+    # runs the default config -- `install` ignores --config). So a custom --config uninstall
+    # must NOT tear it down: that would disable a working default install for someone merely
+    # cleaning up an alternate config. Only the default store touches the LaunchAgent.
+    is_default = install_mod._is_default_store(paths.config_file)
+
+    if not purge:
+        if dry_run:
+            if is_default:
+                click.echo(str(install_mod.plist_path()))  # all a plain uninstall removes
+                _diag("(dry run) would remove the LaunchAgent above; data kept. Nothing deleted.")
+            else:
+                _diag(
+                    "(dry run) custom --config: the global LaunchAgent is not tied to it; "
+                    "nothing would be removed."
+                )
+            return
+        if not is_default:
+            _diag(
+                "Custom --config: the LaunchAgent is the global default login item, not tied "
+                f"to {paths.config_file}; nothing to uninstall. (Run 'spacelabel uninstall' "
+                "with no --config to remove the login agent; add --purge for the data.)"
+            )
+            return
+        _uninstall_agent_or_die()
+        _diag(
+            f"Removed {_AGENT_LABEL} (labels and config kept; "
+            "run 'spacelabel uninstall --purge' to also delete them)."
+        )
+        return
+
+    targets = install_mod.purge_targets(paths, remove_completion=True)
+    if dry_run:
+        for target in targets:
+            click.echo(str(target))  # resolved paths -> stdout (mirrors `label prune --dry-run`)
+        if is_default:
+            _diag("(dry run) nothing deleted.")
+        else:
+            _diag(
+                f"(dry run) custom --config: nothing is auto-purged. Remove {paths.directory} "
+                "manually; run the default 'spacelabel uninstall --purge' for the shared "
+                "caches/logs/completion."
+            )
+        return
+    # Only the DEFAULT purge deletes shared data (the default store's labels/displays/lock +
+    # the global caches/logs). Refuse while ANY unmanaged process holds the default store
+    # lock -- not just one serving config.json: an alt config kept in the default dir shares
+    # that lock + labels/displays, so a config-aware status check would miss it (this is a
+    # lock-level question, not a per-config one). The managed LaunchAgent is excluded (it is
+    # stopped below). A custom --config deletes nothing, so it never reaches this guard; and
+    # an agent on a *different* store dir keeps its own logs/wallpaper cache (per-store), so a
+    # default purge can't pull live state from it.
+    if is_default:
+        blocked, holder_pid = install_mod.unmanaged_default_lock_holder()
+        if blocked:
+            raise click.ClickException(
+                f"a foreground spacelabel agent is still running (pid {holder_pid}); quit it "
+                "before 'uninstall --purge' so the shared store isn't deleted out from under it."
+            )
+    # Confirm only when there is something to delete. A custom --config purges nothing
+    # (empty targets), so it needs neither --yes nor a TTY -- requiring them would break
+    # harmless scripted uninstalls that delete no data.
+    if targets and not assume_yes:
+        if not _isatty():
+            raise click.UsageError(
+                "--purge needs --yes when not run interactively (refusing to delete data "
+                "non-interactively)."
+            )
+        _diag("--purge will permanently delete:")
+        for target in targets:
+            _diag(f"  {target}")
+        # err=True keeps the prompt on stderr so stdout stays machine-readable (CLI.md).
+        click.confirm("Delete these?", abort=True, err=True)
+
+    if is_default:
+        _uninstall_agent_or_die()  # only the default store owns the global LaunchAgent
+    failed = install_mod.purge_user_data(targets)
+    if is_default:
+        # Remove the now-emptied data dir, but keep it (and any foreign file a user stashed
+        # there, e.g. an alternate --config) if something non-spacelabel remains.
+        install_mod.remove_default_store_dir_if_empty()
+        _diag(
+            "Note: any '.zshrc' fpath line added by 'completion install' is left in place "
+            "(remove it manually if you no longer use spacelabel)."
+        )
+        if failed:
+            _diag("Purged with errors; could not remove: " + ", ".join(str(p) for p in failed))
+            ctx.exit(1)
+        _diag(f"Removed {_AGENT_LABEL} and purged spacelabel data, caches, logs, and completion.")
+        return
+    # A custom --config owns nothing we can safely auto-delete: its directory isn't ours
+    # (a sibling labels.json could be another app's) and the caches/logs/completions are
+    # global — shared with the default install. So we delete nothing AND we leave the global
+    # LaunchAgent in place (it is not tied to this config).
+    _diag(
+        f"Custom --config: the global LaunchAgent was left in place (not tied to this config), "
+        f"and your store under {paths.directory} was NOT auto-purged (spacelabel only deletes "
+        "what it exclusively owns) — remove it manually. Run the default 'spacelabel uninstall "
+        "--purge' (no --config) to remove the LaunchAgent and the shared caches/logs/completion."
+    )
+
+
+def _isatty() -> bool:
+    """Return whether stdin is a TTY (a seam for tests; --purge refuses non-interactively).
+
+    A closed/detached stdin (e.g. ``cmd <&-`` or some service wrappers) makes
+    ``isatty()`` raise; treat that as non-interactive so ``--purge`` cleanly refuses
+    (exit 2) rather than crashing.
+    """
+    try:
+        return sys.stdin.isatty()
+    except (ValueError, OSError):
+        return False
+
+
+def _uninstall_agent_or_die() -> None:
+    """Remove the LaunchAgent, converting an InstallError into a clean exit-1."""
+    from spacelabel import install as install_mod
+
     try:
         install_mod.uninstall_agent()
     except install_mod.InstallError as exc:
         log.error("uninstall failed: %s", exc)
         raise click.ClickException(str(exc)) from exc
-    _diag(f"Removed {_AGENT_LABEL} (labels and config kept).")
 
 
 @cli.command()
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON status object to stdout.")
 @click.pass_context
 def status(ctx: click.Context, as_json: bool) -> None:
-    """Report whether the agent / LaunchAgent is running."""
+    """Report agent install + run state (managed LaunchAgent or a foreground agent).
+
+    Reports the agent for the **selected store** -- the default store, or the ``--config``
+    store when one is given -- whether it is the managed LaunchAgent or a foreground
+    ``spacelabel agent`` (both hold that store's ``agent.lock``). Exit 0 when that agent is
+    running, else 3; the install/loaded fields are informational (DECISIONS.md §9).
+
+    A foreground agent started against a *different* ``--config`` is a separate store with
+    its own lock (and, per review F3, its own logs); check it with ``status --config <that
+    file>`` -- bare ``status`` cannot enumerate agents for arbitrary config paths.
+    """
     from spacelabel import install as install_mod
 
+    app_ctx: AppContext = ctx.obj
     try:
-        running, pid = install_mod.agent_status()
+        st = install_mod.agent_status_detail(app_ctx.config_path)
     except install_mod.InstallError as exc:
         log.error("status query failed: %s", exc)
         raise click.ClickException(str(exc)) from exc
 
     if as_json:
         payload: dict[str, object] = {
-            "running": running,
-            "pid": pid,
+            "installed": st.installed,
+            "loaded": st.loaded,
+            "running": st.running,
+            "pid": st.pid,
+            "managed": st.managed,
             "label": _AGENT_LABEL,
         }
         click.echo(json.dumps(payload))
-    elif running:
-        pid_part = f"pid={pid}" if pid is not None else "pid=?"
-        click.echo(f"running  {pid_part}  label={_AGENT_LABEL}")
+    elif st.running:
+        mode = "managed" if st.managed else "foreground"
+        pid_part = f"pid={st.pid}" if st.pid is not None else "pid=?"
+        click.echo(f"running ({mode})  {pid_part}  label={_AGENT_LABEL}")
     else:
-        click.echo("not running")
+        detail = "installed, not running" if st.installed else "not installed"
+        click.echo(f"not running ({detail})  label={_AGENT_LABEL}")
 
-    if not running:
+    if not st.running:
         ctx.exit(3)
 
 

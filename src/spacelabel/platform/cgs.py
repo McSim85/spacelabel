@@ -57,6 +57,12 @@ _FUNCS: tuple[tuple[str, str, bytes, dict[str, object] | None], ...] = (
 #: Memoized map of resolved callables, keyed by the canonical ``CGS*`` name.
 _NS: dict[str, Any] = {}
 
+#: Memoized framework bundles. CoreGraphics holds the ``CGS*`` re-exports (§0); SkyLight
+#: holds the ``SLS*`` implementations and is loaded lazily, only if a ``CGS*`` alias misses
+#: (on Tahoe CoreGraphics exports only ``CGS*`` and SkyLight only ``SLS*``, so the SLS
+#: fallback MUST target SkyLight, not CoreGraphics -- DECISIONS.md §1.1).
+_BUNDLES: dict[str, Any] = {}
+
 
 class CGSUnavailableError(RuntimeError):
     """A required CGS/SLS symbol could not be resolved (e.g. renamed on a new macOS)."""
@@ -193,44 +199,84 @@ def parse_spaces(
 
 
 def _load() -> dict[str, Any]:
-    """Resolve the four CGS functions from CoreGraphics, memoizing into ``_NS``.
+    """Resolve the four CGS functions, memoizing into ``_NS``.
 
-    Binds the CoreGraphics bundle and resolves each symbol ``CGS``-name-then-
-    ``SLS``-name via ``objc.loadBundleFunctions`` (DESIGN.md §3.3); the two ``Copy``
-    functions carry ``already_retained`` so PyObjC balances the ``+1`` retain (never
-    also ``CFRelease``). Resolved callables are normalized under their canonical
-    ``CGS*`` key.
+    Each symbol is resolved ``CGS``-name-against-**CoreGraphics**, then (on a miss) the
+    ``SLS`` name against a **separately-loaded SkyLight** bundle. This is the real
+    per-symbol fallback: on Tahoe CoreGraphics exports only the ``CGS*`` re-exports and
+    SkyLight only the ``SLS*`` implementations, so trying the ``SLS`` name against
+    CoreGraphics (the old code) was a no-op (DECISIONS.md §1.1, improvements.md item H).
+    The two ``Copy`` functions carry ``already_retained`` so PyObjC balances the ``+1``
+    retain (never also ``CFRelease``). Both bundles are cached in ``_BUNDLES``; SkyLight
+    is loaded lazily, only if some ``CGS*`` alias is missing.
 
     Returns:
-        The memoized map of resolved callables.
+        The memoized map of resolved callables, keyed by the canonical ``CGS*`` name.
 
     Raises:
-        CGSUnavailableError: If neither the ``CGS`` nor the ``SLS`` name resolves for
-            any required symbol (e.g. a rename on a future macOS).
+        CGSUnavailableError: If neither the ``CGS`` name (CoreGraphics) nor the ``SLS``
+            name (SkyLight) resolves for any required symbol (e.g. a future-macOS rename).
     """
     if _NS:
         return _NS
 
     import objc
 
-    bundle = objc.loadBundle("CoreGraphics", {}, bundle_identifier="com.apple.CoreGraphics")
     resolved: dict[str, Any] = {}
-    for cgs_name, sls_name, sig, meta in _FUNCS:
-        for name in (cgs_name, sls_name):  # CGS alias first, SLS implementation fallback
-            spec = (name, sig) if meta is None else (name, sig, "", meta)
-            # loadBundleFunctions returns None even when a symbol is skipped, so do
-            # NOT trust its return: check that `name` was actually bound (and is a
-            # real callable) before accepting it -- otherwise a removed CGS alias
-            # would store None and skip the SLS fallback (NoneType-not-callable later).
-            objc.loadBundleFunctions(bundle, resolved, [spec])
-            func = resolved.get(name)
-            if func is not None:
-                resolved[cgs_name] = func
-                break
-        else:
-            raise CGSUnavailableError(
-                f"neither {cgs_name} nor {sls_name} resolved from CoreGraphics"
+
+    def _resolve(
+        bundle: Any, name: str, canonical: str, sig: bytes, meta: dict[str, object] | None
+    ) -> bool:
+        """Bind ``name`` from ``bundle`` into ``resolved[canonical]``; True on success.
+
+        ``loadBundleFunctions`` returns ``None`` even when it skips a missing symbol, so
+        success is decided by whether ``name`` was actually bound to a real callable --
+        not by the return value (else a removed ``CGS`` alias stores ``None`` and the
+        ``SLS`` fallback is skipped, failing later as NoneType-not-callable).
+        """
+        spec = (name, sig) if meta is None else (name, sig, "", meta)
+        objc.loadBundleFunctions(bundle, resolved, [spec])
+        func = resolved.get(name)
+        if func is None:
+            return False
+        resolved[canonical] = func
+        return True
+
+    if "CoreGraphics" not in _BUNDLES:
+        try:
+            _BUNDLES["CoreGraphics"] = objc.loadBundle(
+                "CoreGraphics", {}, bundle_identifier="com.apple.CoreGraphics"
             )
+        except Exception as exc:
+            # A bundle-load failure must degrade to the plist parser (callers catch
+            # CGSUnavailableError), not crash out of the read path.
+            raise CGSUnavailableError(f"could not load the CoreGraphics bundle: {exc}") from exc
+    core_graphics = _BUNDLES["CoreGraphics"]
+
+    for cgs_name, sls_name, sig, meta in _FUNCS:
+        # 1. The CGS* alias against CoreGraphics (the re-export — §0 / DECISIONS 1.1).
+        if _resolve(core_graphics, cgs_name, cgs_name, sig, meta):
+            continue
+        # 2. Fall back to the SLS* implementation against a SEPARATELY-loaded SkyLight
+        #    bundle (CoreGraphics has no SLS* exports on Tahoe — see _BUNDLES).
+        if "SkyLight" not in _BUNDLES:
+            try:
+                _BUNDLES["SkyLight"] = objc.loadBundle(
+                    "SkyLight", {}, bundle_identifier="com.apple.SkyLight"
+                )
+            except Exception as exc:
+                # SkyLight unavailable too -> the symbol is unresolvable; fall back to
+                # the plist parser via CGSUnavailableError rather than letting the raw
+                # load error escape the read path.
+                raise CGSUnavailableError(
+                    f"{cgs_name} missing from CoreGraphics and SkyLight could not be loaded: {exc}"
+                ) from exc
+        if _resolve(_BUNDLES["SkyLight"], sls_name, cgs_name, sig, meta):
+            log.warning("resolved %s via the SLS fallback %s from SkyLight", cgs_name, sls_name)
+            continue
+        raise CGSUnavailableError(
+            f"neither {cgs_name} (CoreGraphics) nor {sls_name} (SkyLight) could be resolved"
+        )
 
     _NS.update(resolved)
     return _NS

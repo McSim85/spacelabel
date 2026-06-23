@@ -19,6 +19,7 @@ import fcntl
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -72,6 +73,12 @@ _BOOT_CAP_EVERY_TICKS = 60
 #: AppKit main thread, so it runs every ~3 s — reorder freshness stays imperceptible
 #: while cutting main-thread CGS load ~3x (off-main read deferred — DECISIONS 4.2/4.3).
 _TOPOLOGY_POLL_EVERY_TICKS = 3
+# Single-instance acquisition retries briefly: a status/purge probe (install._probe_lock_path)
+# momentarily flocks agent.lock to test it, so a starting agent must ride out that microsecond
+# hold rather than mistake it for a real second instance. ~10 x 30 ms = 300 ms worst case
+# before a genuine duplicate is rejected.
+_LOCK_RETRY_ATTEMPTS = 10
+_LOCK_RETRY_DELAY_S = 0.03
 
 
 def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, int], ...]:
@@ -160,6 +167,20 @@ _SETTINGS_URL_ACCESSIBILITY = (
 _SETTINGS_URL_KEYBOARD = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"
 
 
+def _agent_log_dir(paths: store.StorePaths) -> Path | None:
+    """Return the agent's file-log dir, or ``None`` for the shared default ``logs_dir``.
+
+    The default store logs to the shared ``~/Library/Logs/spacelabel`` (where the managed
+    agent and its boot log live, and which ``uninstall --purge`` clears under the
+    default-lock guard). A genuinely custom ``--config`` logs to its OWN store directory
+    instead, so a default purge can never pull the log dir from a live custom-config agent
+    (review F3) and each instance's logs stay isolated beside its own store files.
+    """
+    from spacelabel import install as install_mod
+
+    return None if install_mod._is_default_store(paths.config_file) else paths.directory
+
+
 def run_agent(
     config_path: Path | None = None, *, verbose: bool = False, debug: bool = False
 ) -> None:
@@ -181,9 +202,10 @@ def run_agent(
     if verbose or debug:
         setup_logging(LogMode.CLI, verbose=verbose, debug=debug)
     else:
-        config = store.load_config(store.StorePaths.resolve(config_path))
+        paths = store.StorePaths.resolve(config_path)
+        config = store.load_config(paths)
         agent_level = getattr(logging, config.log_level, logging.WARNING)
-        setup_logging(LogMode.AGENT, agent_level=agent_level)
+        setup_logging(LogMode.AGENT, agent_level=agent_level, log_dir=_agent_log_dir(paths))
 
     # Route uncaught (top-level) exceptions into the configured sink, not raw stderr.
     install_logging_excepthook()
@@ -242,14 +264,35 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
     paths = store.StorePaths.resolve(config_path)
     paths.directory.mkdir(parents=True, exist_ok=True)
     lock_path = paths.directory / "agent.lock"
-    handle = lock_path.open("w")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        handle.close()
-        log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
-        raise SystemExit(1) from exc
+    # Open WITHOUT truncating ("a+", not "w"): a losing second instance must not clear the
+    # current holder's recorded pid before its flock fails (else `status` reports pid=?).
+    handle = lock_path.open("a+")
+    # Retry the non-blocking flock briefly: a transient holder is almost always a status/purge
+    # probe testing the lock, not a real second agent (which holds it persistently and will
+    # still be rejected after the retries). This rides out the probe's microsecond hold so a
+    # harmless `spacelabel status` during startup can't make us spuriously exit 1.
+    for attempt in range(_LOCK_RETRY_ATTEMPTS):
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError as exc:
+            if attempt + 1 >= _LOCK_RETRY_ATTEMPTS:
+                handle.close()  # the loser leaves the winner's recorded pid intact
+                log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
+                raise SystemExit(1) from exc
+            time.sleep(_LOCK_RETRY_DELAY_S)
     log.debug("acquired single-instance lock %s", lock_path)
+    # Won the lock: NOW record "<pid>\n<resolved-config>" (truncate the stale content first).
+    # The flock itself is anonymous, so `spacelabel status` reads the pid here; the config
+    # lets `status --config X` tell whether the agent holding a SHARED store lock is serving
+    # THIS config or a sibling (several config files can share one store dir / lock).
+    # Best-effort (DECISIONS.md §9).
+    try:
+        handle.truncate(0)
+        handle.write(f"{os.getpid()}\n{paths.config_file.resolve()}\n")
+        handle.flush()
+    except OSError as exc:
+        log.debug("could not record agent pid/config in %s: %s", lock_path, exc)
     return handle
 
 
@@ -318,6 +361,22 @@ class AppDelegate(NSObject):
         self._lock_handle = handle
 
     @objc.python_method
+    def _wallpaper_cache_dir(self) -> Path | None:
+        """Per-store wallpaper cache dir, or ``None`` for the shared default cache.
+
+        The default store uses the shared ``~/Library/Caches/spacelabel/wallpaper`` (cleared
+        by ``uninstall --purge`` under the default-lock guard). A genuinely custom ``--config``
+        caches under ITS OWN store dir, so a default purge can't delete a live custom-config
+        agent's wallpaper composites / original-tracking map -- mirrors the per-store log
+        routing (:func:`_agent_log_dir`), keeping each instance's shared state isolated.
+        """
+        from spacelabel import install as install_mod
+
+        if install_mod._is_default_store(self._paths.config_file):
+            return None  # WallpaperRenderer's global default
+        return self._paths.directory / "wallpaper"
+
+    @objc.python_method
     def set_managed_run(self, managed: bool) -> None:
         """Record whether this is the launchd-managed production run (see run_agent)."""
         self._is_managed_run = managed
@@ -379,7 +438,7 @@ class AppDelegate(NSObject):
         if config.modes.get("wallpaper"):
             from spacelabel.agent.wallpaper import WallpaperRenderer
 
-            self._wallpaper = WallpaperRenderer()
+            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
         # Overlays are built lazily per display in _refresh (one panel per display).
 
     @objc.python_method
@@ -760,11 +819,18 @@ class AppDelegate(NSObject):
             return
         if not switching.accessibility_trusted(prompt=not self._ax_prompted):
             self._ax_prompted = True
+            # Name the right Accessibility row: the signed cask bundle (frozen) appears as
+            # "spacelabel"; a legacy pipx/dev run appears under the Python interpreter.
+            if getattr(sys, "frozen", False):
+                entry_hint = "enable “spacelabel”"
+            else:
+                entry_hint = (
+                    "enable this agent's entry (a legacy pipx/dev install appears under your "
+                    "Python interpreter, e.g. “python3.x”, not “spacelabel”)"
+                )
             self._disable_click_to_switch(
-                "Accessibility permission is required — enable the entry in System "
-                "Settings → Privacy & Security → Accessibility (on a pipx install it "
-                "appears under your Python interpreter, e.g. “python3.x”, not "
-                "“spacelabel”), then re-enable click-to-switch.",
+                f"Accessibility permission is required — {entry_hint} in System Settings → "
+                "Privacy & Security → Accessibility, then re-enable click-to-switch.",
                 settings_url=_SETTINGS_URL_ACCESSIBILITY,
             )
             return
@@ -918,7 +984,7 @@ class AppDelegate(NSObject):
         if self._wallpaper is None:  # lazily built so a runtime mode-toggle takes effect
             from spacelabel.agent.wallpaper import WallpaperRenderer
 
-            self._wallpaper = WallpaperRenderer()
+            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
         # Write to the display the active Space is on, not whatever holds the key
         # window (the title is the active Space's label) -- same mapping as the HUD.
         active_uuid = self._active_display_uuid()

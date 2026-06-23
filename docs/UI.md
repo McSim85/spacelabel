@@ -135,10 +135,12 @@ one-time steps:
 1. **Enable the Mission Control shortcuts** — *System Settings → Keyboard →
    Keyboard Shortcuts → Mission Control → "Switch to Desktop 1…N"* (ships **off**;
    covers only existing Spaces, max 16).
-2. **Grant Accessibility** to the spacelabel agent. *On a pipx install the agent
-   runs as the Python interpreter, so the Accessibility entry appears under
-   **"python3.x"**, not "spacelabel" — enable that entry. A code-signed `.app`
-   bundle (v1.0 packaging) is what makes it read "spacelabel"; see DECISIONS §6.*
+2. **Grant Accessibility** to the spacelabel agent. *With the **cask** (signed `.app`,
+   the supported install) the entry reads **"spacelabel"** and a single grant binds —
+   that's the point of the bundle (DECISIONS §6.8). Because it is ad-hoc-signed, the
+   grant must be **re-approved after a cask upgrade** (§6.9). On a legacy **pipx**
+   install the agent instead appears under **"python3.x"** and the grant is unreliable
+   (shared Python identity) — prefer the cask.*
 
 Then a left-click on a pill maps the clicked Space's **UUID → its current ordinal**
 at click time (ordinals shift on reorder, so resolve live, never cache) and posts

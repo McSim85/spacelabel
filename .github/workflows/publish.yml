@@ -2,17 +2,33 @@ name: Build and attach release artifacts
 
 # Triggered when the release-please PR is merged and a GitHub Release is created.
 #
-# build-and-upload: builds the pure-Python wheel + sdist on ubuntu (no macOS
-# runner needed — no C extensions; PyObjC resolves from PyPI at install time)
-# and attaches the artifacts to the release so users can:
-#   pipx install https://github.com/McSim85/spacelabel/releases/download/vX.Y.Z/spacelabel-X.Y.Z-py3-none-any.whl
+# Distribution is a signed .app shipped via a Homebrew CASK (DECISIONS.md §6 — the
+# 2026-06-22 pivot that reversed pipx-only). The jobs:
 #
-# update-homebrew-formula: runs only once Formula/spacelabel.rb is committed to
-# this repo (set FORMULA_IN_REPO=true in Settings → Variables when ready).
-# Uses GITHUB_TOKEN — no extra PAT or separate tap repo needed.
-# Install after going public:
-#   brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
-#   brew install McSim85/spacelabel/spacelabel
+#   build-app:    builds the self-contained spacelabel.app on a macOS arm64 runner
+#                 (py2app, ad-hoc signed inside-out — no Apple account/secrets/cost),
+#                 zips it with `ditto` (preserves the code signature), and attaches
+#                 spacelabel-<version>.zip to the GitHub Release. This is the artifact
+#                 the cask installs.
+#   update-cask:  computes the asset sha256 and opens a PR bumping Casks/spacelabel.rb
+#                 (version + sha256) — mirrors the quiknode-labs optic update-formula job.
+#                 The sha256 can only be computed AFTER the asset is uploaded, so this is a
+#                 follow-up PR: `brew install --cask` is not installable for the release
+#                 until that PR is merged (the default branch carries the placeholder until
+#                 then). Merge it promptly, or have CI push the bump straight to main.
+#   build-wheel:  also attaches the pure-Python wheel + sdist for dev / source installs
+#                 (`uv pip install <wheel-url>`); pipx is deprecated in favour of the cask.
+#
+# Rerun safety (manual workflow_dispatch backfills + retries): every build job checks out
+# the COMMIT THE TAG POINTS AT (not the dispatch branch tip); tagged release assets are
+# treated as IMMUTABLE (uploads skip an asset that already exists rather than --clobber, so
+# an already-published sha256 in a merged cask bump stays valid); and the cask bump forks
+# from main and is idempotent (reuses its branch/PR), so a retry never corrupts a release.
+#
+# Ad-hoc caveats (documented in README/UI.md): the cdhash changes each build so the
+# Accessibility grant drops on upgrade until re-granted, and downloads hit Gatekeeper
+# quarantine (right-click→Open). Developer-ID signing + notarization (paid Apple Developer
+# Program + secrets) is a deferred follow-on for friction-free public installs.
 
 on:
   release:
@@ -20,18 +36,188 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and upload (e.g. v0.1.0)"
+        description: "Release tag to build and upload (e.g. v0.6.2)"
         required: true
 
 permissions:
-  contents: write       # upload release assets + push formula branch
-  pull-requests: write  # open formula update PR
+  contents: write       # upload release assets + push the cask-bump branch
+  pull-requests: write  # open the cask-bump PR
+
+# Serialize runs for the SAME tag so overlapping reruns/backfills can't race on the
+# check-then-act guards below (asset upload, cask-bump branch/PR). cancel-in-progress: false
+# queues a rerun behind an in-flight release build instead of killing it mid-upload.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-upload:
+  build-app:
+    runs-on: macos-15  # Apple Silicon (arm64); the ad-hoc build is arm64-only for now
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Build the COMMIT THE TAG POINTS AT. On a manual workflow_dispatch, github.ref
+          # is the launch branch, so without this a rerun/backfill for tag=vX would publish
+          # branch-tip bytes under that tag. On the release trigger this is github.ref (the
+          # tag) unchanged.
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install framework Python 3.14
+        # py2app needs a *framework* build of Python (it embeds Python.framework); the
+        # Homebrew interpreter is a framework build, uv-managed standalones are not.
+        run: brew install python@3.14
+
+      - name: Build + ad-hoc sign spacelabel.app
+        run: |
+          set -euo pipefail
+          # Resolve the framework Python via `brew --prefix` so the build works on either
+          # Homebrew prefix (Apple Silicon /opt/homebrew, Intel /usr/local) instead of a
+          # hardcoded /opt/homebrew path.
+          export SPACELABEL_PY_VERSION="$(brew --prefix python@3.14)/bin/python3.14"
+          ./tools/build_app.sh   # always ad-hoc-signs inside-out
+
+      - name: Zip the bundle (ditto preserves the code signature + symlinks)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ditto -c -k --sequesterRsrc --keepParent dist/spacelabel.app "spacelabel-${VERSION}.zip"
+
+      - name: Attach the .app zip to the GitHub Release (immutable — never overwrite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ASSET="spacelabel-${TAG#v}.zip"
+          # Tagged assets are IMMUTABLE. An ad-hoc rebuild has a different cdhash (different
+          # bytes), so clobbering would break the sha256 in an already-open/merged cask bump.
+          # Upload only if absent; a rerun leaves the published bytes untouched.
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
+          if printf '%s\n' "$existing" | grep -qx "$ASSET"; then
+            echo "::notice::$ASSET already attached to $TAG — leaving published bytes immutable."
+          else
+            gh release upload "$TAG" "$ASSET"
+          fi
+
+  update-cask:
+    needs: build-app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main  # fork the cask-bump branch from main (NOT the dispatch ref), so the PR
+                     # contains only the checksum bump — never a feature branch's commits
+
+      - name: Bump cask version + sha256 and open a PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ASSET="spacelabel-${VERSION}.zip"
+          # Download the asset via gh (uses $GH_TOKEN, goes through the release API) rather
+          # than hardcoding the raw download URL. Keep $ASSET in sync with the build-app zip.
+          gh release download "$TAG" --pattern "$ASSET" --clobber
+          SHA256=$(sha256sum "$ASSET" | awk '{print $1}')
+
+          # Bump the top-level version + sha256 (url uses #{version} interpolation), but
+          # REFUSE to downgrade: a manual rerun for an OLDER tag after main advanced must not
+          # regress the cask. The python step exits 42 to signal "skip" (requested <= current);
+          # `set +e` captures that without aborting under pipefail.
+          set +e
+          python3 - "$VERSION" "$SHA256" << 'PYEOF'
+          import re, sys
+
+          version, sha = sys.argv[1], sys.argv[2]
+          path = "Casks/spacelabel.rb"
+          content = open(path).read()
+          match = re.search(r'  version "([^"]*)"', content)
+          current = match.group(1) if match else ""
+
+          def parse(v):
+              try:
+                  return tuple(int(p) for p in v.split("."))
+              except ValueError:
+                  return ()
+
+          if current and parse(version) and parse(version) <= parse(current):
+              print(f"::notice::cask is already at {current}; not bumping to older/equal {version}")
+              sys.exit(42)
+          content = re.sub(r'  version "[^"]*"', f'  version "{version}"', content, count=1)
+          content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
+          open(path, "w").write(content)
+          PYEOF
+          rc=$?
+          set -e
+          if [ "$rc" -eq 42 ]; then
+            echo "::notice::skipping cask bump for ${VERSION} (would not advance the version)"
+            exit 0
+          fi
+          [ "$rc" -eq 0 ] || exit "$rc"
+
+          # Already bumped on main (a prior cask PR merged) -> clean no-op BEFORE touching any
+          # branch/PR. The checkout is `main` and the edit above is unstaged, so an empty diff
+          # means main already carries this version+sha256. This also avoids a failed empty
+          # `gh pr create` when a merged bump branch still lingers on origin.
+          if git diff --quiet -- Casks/spacelabel.rb; then
+            echo "::notice::Casks/spacelabel.rb on main already at ${VERSION} with this sha256; nothing to bump."
+            exit 0
+          fi
+
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          BRANCH="chore/bump-cask-${VERSION}"
+          # Idempotent across SEQUENTIAL reruns (overlaps are prevented by `concurrency`):
+          # reuse the bump branch if a prior run already pushed it. The asset is immutable, so
+          # its bump content is identical; and main lacking the bump (checked above) guarantees
+          # the branch differs from main, so the `gh pr create` below has commits.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::notice::bump branch $BRANCH already exists; ensuring it has a PR."
+          else
+            git checkout -b "$BRANCH"
+            git add Casks/spacelabel.rb
+            git commit -m "chore: bump spacelabel cask to ${VERSION}"
+            git push origin "$BRANCH"
+          fi
+          # PR idempotency. main lacks the bump (checked above), so re-propose it: reuse an
+          # OPEN PR, REOPEN a closed-but-unmerged one (e.g. mistakenly closed on an earlier
+          # run), else create. A merged bump would have landed on main and exited earlier,
+          # so it can't reach here.
+          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            echo "::notice::PR #$open_pr for $BRANCH already open."
+          else
+            closed_pr="$(gh pr list --head "$BRANCH" --state closed --json number,state \
+              --jq 'map(select(.state == "CLOSED")) | .[0].number // empty')"
+            if [ -n "$closed_pr" ]; then
+              echo "::notice::reopening previously closed cask-bump PR #$closed_pr for $BRANCH."
+              gh pr reopen "$closed_pr"
+            else
+              gh pr create \
+                --title "chore: bump spacelabel cask to ${VERSION}" \
+                --body "Automated cask bump for release ${TAG} (version + sha256 of ${ASSET})." \
+                --base main \
+                --head "$BRANCH"
+            fi
+          fi
+
+  build-wheel:
+    # Pure-Python wheel + sdist for dev / source installs (no macOS runner needed —
+    # no C extensions; PyObjC resolves from PyPI at install time). pipx is deprecated
+    # in favour of the cask, but the wheel stays useful for `uv pip install`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Build the tag's commit (same reason as build-app) — a dispatch rerun must not
+          # publish branch-tip wheels/sdists under an existing tag.
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.2.0
@@ -39,53 +225,21 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
-      - name: Attach artifacts to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG" dist/*.whl dist/*.tar.gz
-
-  update-homebrew-formula:
-    # Deferred until Formula/spacelabel.rb is committed to this repo.
-    # Enable by adding a repository variable FORMULA_IN_REPO=true.
-    needs: build-and-upload
-    if: vars.FORMULA_IN_REPO == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Update formula url and sha256
+      - name: Attach artifacts to the GitHub Release (immutable — never overwrite)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
-          ARCHIVE_URL="https://github.com/McSim85/spacelabel/archive/refs/tags/${TAG}.tar.gz"
-          export SHA256
-          SHA256=$(curl -fsSL "$ARCHIVE_URL" | sha256sum | awk '{print $1}')
-          export ARCHIVE_URL
-
-          # Update the top-level url and sha256 (count=1 skips resource blocks).
-          python3 << 'PYEOF'
-          import re, os
-
-          content = open("Formula/spacelabel.rb").read()
-          url = os.environ["ARCHIVE_URL"]
-          sha = os.environ["SHA256"]
-          content = re.sub(r'  url "[^"]*"', f'  url "{url}"', content, count=1)
-          content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
-          open("Formula/spacelabel.rb", "w").write(content)
-          PYEOF
-
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git checkout -b "chore/bump-formula-${VERSION}"
-          git add Formula/spacelabel.rb
-          git commit -m "chore: bump Homebrew formula to ${VERSION}"
-          git push origin "chore/bump-formula-${VERSION}"
-          gh pr create \
-            --title "chore: bump Homebrew formula to ${VERSION}" \
-            --body "Automated formula bump for release ${TAG}." \
-            --base main \
-            --head "chore/bump-formula-${VERSION}"
+          # Tagged Python artifacts are IMMUTABLE: the build env isn't version-locked, so a
+          # rerun can produce different wheel/sdist bytes for the same version, breaking
+          # consumers that verify by checksum. Upload each only if it isn't already attached.
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
+          for f in dist/*.whl dist/*.tar.gz; do
+            name="$(basename "$f")"
+            if printf '%s\n' "$existing" | grep -qx "$name"; then
+              echo "::notice::$name already attached to $TAG — leaving it immutable."
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
