@@ -126,17 +126,40 @@ jobs:
           gh release download "$TAG" --pattern "$ASSET" --clobber
           SHA256=$(sha256sum "$ASSET" | awk '{print $1}')
 
-          # Bump only the top-level version + sha256 (url uses #{version} interpolation).
+          # Bump the top-level version + sha256 (url uses #{version} interpolation), but
+          # REFUSE to downgrade: a manual rerun for an OLDER tag after main advanced must not
+          # regress the cask. The python step exits 42 to signal "skip" (requested <= current);
+          # `set +e` captures that without aborting under pipefail.
+          set +e
           python3 - "$VERSION" "$SHA256" << 'PYEOF'
           import re, sys
 
           version, sha = sys.argv[1], sys.argv[2]
           path = "Casks/spacelabel.rb"
           content = open(path).read()
+          match = re.search(r'  version "([^"]*)"', content)
+          current = match.group(1) if match else ""
+
+          def parse(v):
+              try:
+                  return tuple(int(p) for p in v.split("."))
+              except ValueError:
+                  return ()
+
+          if current and parse(version) and parse(version) <= parse(current):
+              print(f"::notice::cask is already at {current}; not bumping to older/equal {version}")
+              sys.exit(42)
           content = re.sub(r'  version "[^"]*"', f'  version "{version}"', content, count=1)
           content = re.sub(r'  sha256 "[^"]*"', f'  sha256 "{sha}"', content, count=1)
           open(path, "w").write(content)
           PYEOF
+          rc=$?
+          set -e
+          if [ "$rc" -eq 42 ]; then
+            echo "::notice::skipping cask bump for ${VERSION} (would not advance the version)"
+            exit 0
+          fi
+          [ "$rc" -eq 0 ] || exit "$rc"
 
           # Already bumped on main (a prior cask PR merged) -> clean no-op BEFORE touching any
           # branch/PR. The checkout is `main` and the edit above is unstaged, so an empty diff
