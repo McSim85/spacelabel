@@ -524,11 +524,17 @@ def _launchctl_service_state() -> tuple[bool, int | None]:
 def _probe_lock_path(lock_path: Path) -> tuple[bool, int | None]:
     """Return ``(held, pid)`` for a specific lock file -- the core single-instance probe.
 
-    Opens the file read-only and attempts a non-blocking ``flock``: if it blocks
+    Opens the file **read-only** and attempts a non-blocking ``flock``: if it blocks
     (``BlockingIOError``/``EAGAIN``) an agent -- managed or foreground -- holds it; if it
     succeeds the lock is released immediately and no agent is running. The holder's pid is
     read from the file's contents (the agent records its pid after locking); a stale file
     from a crashed agent reads as not-held because the OS drops its ``flock``.
+
+    Read-only is deliberate. BSD ``flock(2)`` advisory locks attach to the open file
+    *description*, not the access mode, so ``LOCK_EX`` works on an ``O_RDONLY`` fd on
+    macOS (verified) -- unlike POSIX ``fcntl``/``lockf`` *write* locks, which do need write
+    access. Opening read-only also keeps a status probe from *creating* ``agent.lock`` as a
+    side effect (a writable open mode like ``"a+"`` would) and needs no write permission.
     """
     try:
         handle = lock_path.open("r")
