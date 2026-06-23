@@ -319,12 +319,25 @@ def _bash_too_old() -> bool:
 
     click cannot generate working completion for bash < 4.4 (macOS ships 3.2). The user's
     interactive bash may not be the one on PATH (e.g. PATH resolves to ``/bin/bash`` 3.2 while
-    a newer Homebrew bash is installed), so probe several candidates and judge by the NEWEST:
-    a usable bash existing anywhere means we must not reject completion. Best-effort -- if no
-    candidate's version can be parsed, returns ``False`` so a user whose bash lives somewhere
-    unprobed is never blocked.
+    a newer bash is installed), so probe several candidates -- PATH, ``$SHELL`` if it is bash,
+    and the common package-manager prefixes (Homebrew arm64/Intel, MacPorts, Nix) -- and judge
+    by the NEWEST: a usable bash existing anywhere means we must not reject completion.
+    Best-effort -- if no candidate's version can be parsed, returns ``False`` so a user whose
+    bash lives somewhere unprobed is never blocked.
     """
-    candidates = ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"]
+    candidates = [
+        "bash",  # PATH
+        "/opt/homebrew/bin/bash",  # Homebrew (Apple Silicon)
+        "/usr/local/bin/bash",  # Homebrew (Intel)
+        "/opt/local/bin/bash",  # MacPorts
+        "/run/current-system/sw/bin/bash",  # Nix (system)
+    ]
+    shell = os.environ.get("SHELL", "")
+    if shell and Path(shell).name == "bash":
+        candidates.append(shell)  # the user's actual login shell, wherever it lives
+    home = os.environ.get("HOME")
+    if home:
+        candidates.append(str(Path(home) / ".nix-profile" / "bin" / "bash"))  # Nix (user)
     newest: tuple[int, int] | None = None
     for binary in candidates:
         version = _bash_version(binary)
