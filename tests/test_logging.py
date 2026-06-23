@@ -55,6 +55,35 @@ def test_setup_logging_agent_honors_config_level(tmp_path):
         root.setLevel(saved_level)
 
 
+def test_setup_logging_agent_file_handler_is_utf8(tmp_path):
+    # Under the LaunchAgent there is no locale, so the agent.log handler must force UTF-8;
+    # otherwise the agent's non-ASCII log lines (curly quotes / “→”) raise on write and
+    # every record is lost to agent.boot.log (caught live on the cask install, 2026-06-22).
+    import logging.handlers
+
+    from spacelabel.logging_setup import LogMode, setup_logging
+
+    root = logging.getLogger("spacelabel")
+    saved_level, saved_handlers = root.level, root.handlers[:]
+    try:
+        setup_logging(LogMode.AGENT, agent_level=logging.WARNING, log_dir=tmp_path)
+        file_handlers = [
+            h for h in root.handlers if isinstance(h, logging.handlers.RotatingFileHandler)
+        ]
+        assert file_handlers, "agent mode must attach a rotating file handler"
+        assert file_handlers[0].encoding == "utf-8"
+        # Behavioral: a non-ASCII record round-trips through agent.log without raising.
+        logging.getLogger("spacelabel.test").warning("Switch to Desktop “1” → ok")
+        file_handlers[0].flush()
+        assert "→ ok" in (tmp_path / "agent.log").read_text(encoding="utf-8")
+    finally:
+        for handler in root.handlers:
+            if isinstance(handler, logging.handlers.RotatingFileHandler):
+                handler.close()
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
 def test_use_color_requires_tty_and_no_no_color(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     assert _use_color(_Tty()) is True
