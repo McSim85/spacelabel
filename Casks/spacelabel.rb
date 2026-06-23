@@ -34,10 +34,16 @@ cask "spacelabel" do
             quit:      "dev.mcsim.spacelabel",
             trash:     "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist"
 
-  # `brew uninstall --zap` deep-clean. Keep in sync with `spacelabel uninstall --purge`
-  # (install.purge_user_data). Per-shell completion files live outside ~/Library and are
-  # removed by `spacelabel uninstall --purge`.
+  # `brew uninstall --zap` deep-clean. The fixed ~/Library paths mirror the default-store
+  # side of `spacelabel uninstall --purge`. Shell completions are trickier: their install
+  # location is shell- and environment-specific (zsh resolves a writable dir on $fpath;
+  # fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR), so a static
+  # cask can't enumerate them all. The two well-known DEFAULT paths below are removed as a
+  # best effort; for zsh or any non-default location, `spacelabel uninstall --purge`
+  # (which resolves them at runtime) is the authoritative completion remover.
   zap trash: [
+    "~/.config/fish/completions/spacelabel.fish",
+    "~/.local/share/bash-completion/completions/spacelabel",
     "~/Library/Application Support/spacelabel",
     "~/Library/Caches/spacelabel",
     "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist",
