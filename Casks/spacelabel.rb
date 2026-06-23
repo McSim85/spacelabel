@@ -34,21 +34,39 @@ cask "spacelabel" do
             quit:      "dev.mcsim.spacelabel",
             trash:     "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist"
 
-  # `brew uninstall --zap` deep-clean. The fixed ~/Library paths mirror the default-store
-  # side of `spacelabel uninstall --purge`. Shell completions are trickier: their install
-  # location is shell- and environment-specific (zsh resolves a writable dir on $fpath;
-  # fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR), so a static
-  # cask can't enumerate them all. The two well-known DEFAULT paths below are removed as a
-  # best effort; for zsh or any non-default location, `spacelabel uninstall --purge`
-  # (which resolves them at runtime) is the authoritative completion remover.
-  zap trash: [
-    "~/.config/fish/completions/spacelabel.fish",
-    "~/.local/share/bash-completion/completions/spacelabel",
-    "~/Library/Application Support/spacelabel",
-    "~/Library/Caches/spacelabel",
-    "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist",
-    "~/Library/Logs/spacelabel",
-  ]
+  # `brew uninstall --zap` deep-clean — mirrors `spacelabel uninstall --purge`
+  # (install.purge_targets) rather than nuking the whole data dir:
+  #   * stop the agent FIRST (launchctl/quit/signal) so the store is never trashed out from
+  #     under a running instance whose agent.lock still guards single-instance startup;
+  #   * trash only spacelabel-OWNED files in Application Support (config/labels/displays +
+  #     their .lock + agent.lock + leaked "<json>.<rand>.tmp" temps) so a foreign file a
+  #     user kept there (e.g. an alternate --config) survives, plus the dedicated
+  #     caches/logs and the well-known DEFAULT completion paths (best effort);
+  #   * `rmdir` the data dir LAST — removed only if it is now empty (preserves foreign files).
+  # Completions at non-default locations (zsh resolves a writable dir on $fpath;
+  # fish/bash honor $XDG_CONFIG_HOME/$XDG_DATA_HOME/$BASH_COMPLETION_USER_DIR) can't be
+  # enumerated statically — `spacelabel uninstall --purge` resolves those at runtime.
+  zap launchctl: "dev.mcsim.spacelabel",
+      quit:      "dev.mcsim.spacelabel",
+      signal:    ["TERM", "dev.mcsim.spacelabel"],
+      trash:     [
+        "~/.config/fish/completions/spacelabel.fish",
+        "~/.local/share/bash-completion/completions/spacelabel",
+        "~/Library/Application Support/spacelabel/agent.lock",
+        "~/Library/Application Support/spacelabel/config.json",
+        "~/Library/Application Support/spacelabel/config.json.*.tmp",
+        "~/Library/Application Support/spacelabel/config.json.lock",
+        "~/Library/Application Support/spacelabel/displays.json",
+        "~/Library/Application Support/spacelabel/displays.json.*.tmp",
+        "~/Library/Application Support/spacelabel/displays.json.lock",
+        "~/Library/Application Support/spacelabel/labels.json",
+        "~/Library/Application Support/spacelabel/labels.json.*.tmp",
+        "~/Library/Application Support/spacelabel/labels.json.lock",
+        "~/Library/Caches/spacelabel",
+        "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist",
+        "~/Library/Logs/spacelabel",
+      ],
+      rmdir:     "~/Library/Application Support/spacelabel"
 
   caveats <<~CAVEATS
     spacelabel ships ad-hoc-signed (no Apple Developer account yet). After install:
