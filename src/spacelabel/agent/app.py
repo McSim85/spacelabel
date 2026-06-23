@@ -242,17 +242,21 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
     paths = store.StorePaths.resolve(config_path)
     paths.directory.mkdir(parents=True, exist_ok=True)
     lock_path = paths.directory / "agent.lock"
-    handle = lock_path.open("w")
+    # Open WITHOUT truncating ("a+", not "w"): a losing second instance must not clear the
+    # current holder's recorded pid before its flock fails (else `status` reports pid=?).
+    handle = lock_path.open("a+")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        handle.close()
+        handle.close()  # the loser leaves the winner's recorded pid intact
         log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
         raise SystemExit(1) from exc
     log.debug("acquired single-instance lock %s", lock_path)
-    # Record our pid under the held lock so `spacelabel status` can report it for a
-    # foreground agent (the flock itself is anonymous); best-effort (DECISIONS.md §9).
+    # Won the lock: NOW record our pid (truncate the stale content first) so `spacelabel
+    # status` can report it for a foreground agent (the flock itself is anonymous);
+    # best-effort (DECISIONS.md §9).
     try:
+        handle.truncate(0)
         handle.write(str(os.getpid()))
         handle.flush()
     except OSError as exc:
