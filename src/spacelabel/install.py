@@ -260,6 +260,13 @@ def refresh_plist_if_stale() -> bool:
     never repoints the agent or drops customizations. No-op when not installed or
     already current.
 
+    This deliberately does **not** migrate a legacy pipx ``ProgramArguments[0]``
+    (``~/.local/bin/spacelabel``) to the cask bundle exe: it cannot (the pipx plist runs
+    the pipx agent, not the bundle one, so the bundle's startup never sees that plist),
+    and silently repointing someone's program path would be surprising. The pipx→cask
+    migration is instead an explicit, documented step — re-run ``spacelabel install``
+    (which resolves and writes the bundle exe via ``_resolve_install_shim``).
+
     Best-effort: a read/parse/write failure is logged and returns ``False`` rather
     than raising — a logging-housekeeping refresh must never block agent startup.
 

@@ -116,6 +116,10 @@ brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
 brew install --cask spacelabel
 ```
 
+> Available **once the first signed `.app` release is published** (the cask's `sha256`
+> is populated by the release pipeline). Until then, build + install locally:
+> `tools/build_app.sh` then copy `dist/spacelabel.app` to `/Applications`.
+
 This installs `spacelabel.app` and puts the `spacelabel` CLI on your PATH (the cask
 symlinks the bundle's executable). Start the menu-bar agent at login:
 
@@ -123,6 +127,12 @@ symlinks the bundle's executable). Start the menu-bar agent at login:
 spacelabel install     # installs + loads the LaunchAgent (pointed at the app bundle)
 spacelabel status      # check it's running
 ```
+
+> **Upgrading from a pipx install?** After `brew install --cask`, **re-run
+> `spacelabel install`** so the login agent is repointed from the old
+> `~/.local/bin/spacelabel` shim to the app bundle (then `pipx uninstall spacelabel`).
+> Until you do, the previous pipx LaunchAgent keeps running the shim — and would stop
+> launching if you remove pipx first.
 
 > **Ad-hoc signing caveat.** The bundle is ad-hoc-signed (no Apple Developer account
 > yet), so on first launch Gatekeeper may block it — right-click → **Open** once, or
