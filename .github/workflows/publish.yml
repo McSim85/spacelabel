@@ -71,9 +71,13 @@ jobs:
         run: brew install python@3.14
 
       - name: Build + ad-hoc sign spacelabel.app
-        env:
-          SPACELABEL_PY_VERSION: /opt/homebrew/opt/python@3.14/bin/python3.14
-        run: ./tools/build_app.sh   # always ad-hoc-signs inside-out
+        run: |
+          set -euo pipefail
+          # Resolve the framework Python via `brew --prefix` so the build works on either
+          # Homebrew prefix (Apple Silicon /opt/homebrew, Intel /usr/local) instead of a
+          # hardcoded /opt/homebrew path.
+          export SPACELABEL_PY_VERSION="$(brew --prefix python@3.14)/bin/python3.14"
+          ./tools/build_app.sh   # always ad-hoc-signs inside-out
 
       - name: Zip the bundle (ditto preserves the code signature + symlinks)
         env:
@@ -158,16 +162,26 @@ jobs:
             git commit -m "chore: bump spacelabel cask to ${VERSION}"
             git push origin "$BRANCH"
           fi
-          # Open the PR only if NONE exists for this head in ANY state (open/closed/merged) --
-          # never recreate one the user closed, and never fail on an already-created PR.
-          if gh pr list --head "$BRANCH" --state all --json number --jq '.[0].number // empty' | grep -q .; then
-            echo "::notice::a PR for $BRANCH already exists (open/closed/merged); not creating another."
+          # PR idempotency. main lacks the bump (checked above), so re-propose it: reuse an
+          # OPEN PR, REOPEN a closed-but-unmerged one (e.g. mistakenly closed on an earlier
+          # run), else create. A merged bump would have landed on main and exited earlier,
+          # so it can't reach here.
+          open_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            echo "::notice::PR #$open_pr for $BRANCH already open."
           else
-            gh pr create \
-              --title "chore: bump spacelabel cask to ${VERSION}" \
-              --body "Automated cask bump for release ${TAG} (version + sha256 of ${ASSET})." \
-              --base main \
-              --head "$BRANCH"
+            closed_pr="$(gh pr list --head "$BRANCH" --state closed --json number,state \
+              --jq 'map(select(.state == "CLOSED")) | .[0].number // empty')"
+            if [ -n "$closed_pr" ]; then
+              echo "::notice::reopening previously closed cask-bump PR #$closed_pr for $BRANCH."
+              gh pr reopen "$closed_pr"
+            else
+              gh pr create \
+                --title "chore: bump spacelabel cask to ${VERSION}" \
+                --body "Automated cask bump for release ${TAG} (version + sha256 of ${ASSET})." \
+                --base main \
+                --head "$BRANCH"
+            fi
           fi
 
   build-wheel:
