@@ -213,6 +213,17 @@ binary identity, so the Accessibility prompt/list shows **"python3.x"**, not
 **silently drops** until re-granted. `argv[0]`/process-title tricks do **not** change
 this (TCC ignores them). The only fix is shipping a real, code-signed `.app` bundle.
 
+**Phase-6 LIVE REPRO (2026-06-22) — Max enabled "python3.14" but click-to-switch stayed disabled:**
+Verified empirically (`AXIsProcessTrusted()` called from the exact binaries, fresh processes):
+- The agent runs as the framework **app stub** `…/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python` — signing id **`org.python.python`**, **adhoc**, no team, cdhash **`b4955ea0…`**.
+- The pipx CLI stub `bin/python3.14` is a **different** Mach-O — signing id **`python3-5555…`**, **adhoc**, cdhash **`f740ae36…`**.
+- `AXIsProcessTrusted()` returns **False from a *fresh* process of BOTH** despite "python3.14" showing enabled in Settings. ⇒ the enabled entry's identity matches **neither** binary, and **relaunching the agent will not help** (a fresh process is already untrusted — the grant isn't bound to the agent's identity). The Accessibility list collides multiple "python3.14" entries (every pipx PyObjC tool + stale grants from the old 0.1.0 cdhash), so the user almost certainly toggled a different "python3.14" than the agent's app-stub.
+- TCC.db is SIP-locked (`authorization denied` even read-only), so the enabled identity can't be enumerated from the CLI — the `False` result is the proof.
+
+**Interim workaround (fragile, document until the signed bundle lands):** remove ALL "python3.14"/"Python" rows from Settings → Accessibility → quit the agent → click a pill to trigger a **fresh** prompt → enable the newly-added entry → **quit and relaunch the agent** so it starts trusted. Verify with:
+`PYTHONPATH=~/.local/pipx/venvs/spacelabel/lib/python3.14/site-packages "$(ps -o comm= -p "$(pgrep -f 'spacelabel agent')")" -c "from spacelabel.platform import switching;print(switching.accessibility_trusted())"` → expect `True`.
+This still breaks on `brew upgrade python` (cdhash rotates). The durable fix is the signed `.app` below.
+
 **Read first:**
 - `DECISIONS.md` §2.7 (accessory policy, no LSUIElement/bundle today), §6.3 (no
   codesigning/LV today), §6 residual risks (the TCC note), §9.5 (click-to-switch)
@@ -306,6 +317,94 @@ LaunchAgent present but prefers to start the agent manually has no option.
 5. **Tests:** unit test that `build_launch_agent(..., run_at_load=False)` omits both
    `RunAtLoad` and `KeepAlive`; the existing test that the default plist matches the
    packaging template must still pass (default `run_at_load=True`).
+
+---
+
+### H. CGS→SLS fallback loads the wrong framework bundle  *(Phase-6 finding, 2026-06-22)*
+
+**Context (surfaced by the Phase-6 CGS probe):**
+`cgs._load()` (`platform/cgs.py:195`) loads the **CoreGraphics** bundle once and resolves each
+symbol by trying its `CGS*` name then its `SLS*` name **against that same CoreGraphics bundle**.
+Verified on macOS 26.5.1 (Tahoe), via `objc.loadBundleFunctions`:
+- CoreGraphics exports `CGS*` ✅ but **not** `SLS*`.
+- SkyLight exports `SLS*` ✅ but **not** `CGS*`.
+
+So the documented per-symbol **CGS→SLS fallback is a no-op** on this OS: the `SLS*` names can
+never resolve from CoreGraphics. **No functional impact today** — the `CGS*` names resolve, and the
+spaces-plist parser is the real safety net — but it contradicts `DECISIONS.md` §1.1 ("CGS→SLS
+getattr/loadBundle fallback per symbol"). If Apple ever drops the `CGS` alias from CoreGraphics, the
+fallback as written would fail too (straight to the plist parser).
+
+**Read first:** `platform/cgs.py` `_load`/`_FUNCS`; `DECISIONS.md` §0, §1.1.
+
+**Implementation (pick one):**
+1. **Make the fallback real (recommended, cheap):** in `_load`, when the `CGS` name misses against
+   CoreGraphics, try the `SLS` name against a **separately-loaded SkyLight bundle**
+   (`objc.loadBundle("SkyLight", {}, bundle_identifier="com.apple.SkyLight")`). Cache both bundles.
+2. **Or** update `DECISIONS.md` §1.1 to state the SLS fallback is aspirational and the **plist parser
+   is the real fallback**, and drop the SLS name from the CoreGraphics-only loop to avoid implying a
+   safety net that doesn't exist.
+3. **Tests:** unit-test that with the `CGS` name forced absent, the loader resolves the `SLS` name
+   from SkyLight (mock the two bundles), and that total failure still raises `CGSUnavailableError`.
+
+Severity: **low** (future-proofing only). Surfaced because Phase 6 is the first run of the bridge on
+this OS — exactly the assumption DESIGN §12 item 2 flags.
+
+---
+
+### I. `status` should detect an unmanaged (foreground) agent + report install state  *(Max, 2026-06-22)*
+
+**Context:**
+`spacelabel status` only parses `launchctl print gui/$UID/dev.mcsim.spacelabel` (`install.py:223`),
+so it reports `not running` whenever the agent is alive as a **foreground** `spacelabel agent`
+(dev/debug) rather than via the LaunchAgent — even though the process holds `agent.lock`. Today this
+is technically by-design (status tracks the *managed* agent), but it is misleading. Max wants status
+to: (a) detect **any** running agent (managed or foreground), and (b) report **install state**
+(is the LaunchAgent plist present / loaded?) distinctly from run state.
+
+**Read first:** `install.py` (`status`, the launchctl parse), `agent/app.py:111` (the single-instance
+`flock` on `agent.lock`), `DECISIONS.md` §9 (exit-code contract), plan rows E16–E20.
+
+**Implementation:**
+1. Add a launchctl-independent **process check**: open `agent.lock` and attempt a non-blocking
+   `flock(LOCK_EX|LOCK_NB)` — `BlockingIOError`/`EAGAIN` means an agent holds it → running. (Same lock
+   `app.py` uses for single-instance; works for foreground and LaunchAgent alike.)
+2. Report three facts: **install** (plist present? `launchctl print` finds the service?), **running**
+   (lock held? pid if resolvable), **mode** (managed vs unmanaged/foreground).
+3. Extend `--json` with `{installed, loaded, running, pid, managed}`. Define the exit-code contract for
+   the new states (e.g. running-but-unmanaged → 0; installed-not-loaded → ?) and record it in
+   `DECISIONS.md` §9 + `docs/CLI.md`. Update plan rows E16–E20 expectations to match.
+4. **Tests:** mock the lock + launchctl to cover: managed-running, foreground-running, installed-not-
+   loaded, not-installed.
+
+Severity: **low–medium** (UX/observability; changes the documented status contract → DECISIONS update).
+
+---
+
+### J. Menu-bar dropdown + Preferences toggle for click-to-switch  *(Max, 2026-06-22)*
+
+**Context:**
+Click-to-switch is enable-only via the CLI (`config set menubar.click_to_switch true/false`). The
+dropdown menu exposes the four **mode** toggles (Menu-bar / HUD / Overlay / Wallpaper) but **no**
+click-to-switch toggle; the Preferences top strip has checkboxes for the modes + buttons-row but
+**no** click-to-switch checkbox. Max wants an enable/disable toggle in **both** surfaces.
+
+**Read first:** `agent/app.py` `_rebuild_menu`/`toggleMode_` (`:211`/`:731`), `_sync_click_to_switch_state`
+(`:456`), the ⚠️-reason row logic (`:277`); `agent/prefs.py` `_build`/`toggleCheckbox_` (`:436`/`:480`);
+`todo/critical-click-to-switch.md` (the shipped feature spec); `DECISIONS.md` §9.5.
+
+**Implementation:**
+1. **Dropdown:** add a "Switch to Space on click" toggle item near the mode toggles in `_rebuild_menu`;
+   route through `toggleMode_`-style handler to flip `menubar.click_to_switch` via
+   `store.set_config_value` + live reload. The existing off→on reset (`_sync_click_to_switch_state`)
+   and the ⚠️ Accessibility/shortcut reason row already handle the not-available case.
+2. **Preferences:** add a checkbox to the top strip in `prefs.py` writing `menubar.click_to_switch`
+   (mirror `toggleCheckbox_`/`write_config`). Preselect from current config.
+3. Consider only showing/enabling the toggle when the buttons-row (pills) is on, since click-to-switch
+   acts on pills (`app.py:277` gating). Decide and document.
+4. **Tests:** the config write happens and the agent reloads; checkbox reflects current value.
+
+Severity: **low** (UX). Cross-refs `critical-click-to-switch.md` (shipped).
 
 ---
 

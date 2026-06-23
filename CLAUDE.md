@@ -114,7 +114,13 @@ uv run spacelabel agent --debug    # run the agent in the foreground
 - **pre-commit is installed** locally and mirrors the CI gates.
 - **CI is macOS-only** (`macos-latest`) — PyObjC framework wheels don't install on
   Linux, so a Linux runner can't even build the package.
-- **Distribute via pipx** (`pipx install .`); pipx exposes `~/.local/bin/spacelabel`.
+- **Distribute as a signed `.app` via a Homebrew cask** (DECISIONS §6.8, reverses
+  pipx-only #30): `brew install --cask spacelabel`. Build the bundle with
+  `tools/build_app.sh [--sign]` (py2app, build-time only — never a runtime dep); the
+  agent process **is** the bundle so Accessibility keys on `dev.mcsim.spacelabel`. The
+  cask `binary` stanza puts the same exe on PATH as the `spacelabel` CLI. pipx
+  (`pipx install .`, `~/.local/bin/spacelabel`) is the **deprecated** legacy path,
+  kept only as a dev/source convenience.
 
 ### Pre-commit checklist (required before every commit)
 

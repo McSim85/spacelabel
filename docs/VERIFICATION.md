@@ -1,0 +1,154 @@
+# spacelabel — Phase 6 Verification Results
+
+User-acceptance verification of the shipped build, per `spacelabel-plan/phase-6-verification.md`
+(mirrors DESIGN.md §12 probe checklist; gate = DECISIONS.md §1 uuid reboot-stability).
+
+## Environment
+
+| | |
+|---|---|
+| Date | 2026-06-22 |
+| macOS | 26.5.1 "Tahoe" (build 25F80) |
+| Hardware | Apple M3 Pro, arm64, SIP enabled |
+| Displays | LG UltraFine 4K **3840×2160** (horizontal) + LG UltraFine **2160×3840** (portrait, rotation 270°); separate Spaces per display |
+| Python (pipx venv) | 3.14.4 |
+| spacelabel | **0.6.1** (installed via `pipx install git+https://github.com/McSim85/spacelabel`, built from `main` @ 39a8d2c) |
+| Verification branch | `docs/phase-6-verification` (off `main` @ 39a8d2c = v0.6.1 + pipx-only backlog #30) |
+
+### Notes / drift from the plan text
+- Plan says repo is at **v0.6.0**; repo is actually **v0.6.1** with an open release-please PR for **0.6.2**. Version-string checks (1A.1, A4) are scored as "matches installed metadata", not the literal `0.6.0`.
+- The overview's branch-reconciliation warning (`feat/live-refresh-reorder`) is **stale**: that branch no longer exists (its feature shipped in v0.6.0 #25), and the `docs/backlog-pipx-only` work already merged to main (#30). No reconciliation was needed.
+
+Legend: ✅ pass · ⚠️ pass-with-note · ❌ fail · 🟡 N/A (by design / feature not shipped) · ⏳ deferred (hardware/UI, pending Max)
+
+---
+
+## Part 1 — Install & distribution acceptance (pipx) — COMPLETE
+
+### 1A. pipx install matrix
+
+| # | Result | Evidence |
+|---|---|---|
+| 1A.1 | ✅ | Fresh `pipx install git+https://github.com/McSim85/spacelabel` succeeded with **no credentials** (public repo confirmed), built in ~16s, isolated venv, **5 deps resolved** (`click` 8.4.1, `pyobjc-core` 12.2.1, `pyobjc-framework-{Cocoa,CoreText,Quartz}` 12.2.1), shim linked at `~/.local/bin/spacelabel`. `--version` → `spacelabel, version 0.6.1` (metadata-derived; plan's literal "0.6.0" is stale). |
+| 1A.2 | ✅ | `which spacelabel` → `/Users/mc-sim/.local/bin/spacelabel` — canonical pipx shim (the path `install_agent()` expects). |
+| 1A.3 | ✅ | Isolated `uv venv` + `uv pip install -e '.[dev]'` succeeded; dev extras resolve (`ruff` 0.15.18, `mypy`, `pre-commit`, `pytest`); `--version` → 0.6.1 from the dev venv. Editable = dev-only, not the LaunchAgent target. (`pipx install .` lands the same shim — same mechanism as 1A.1 with a local path; not re-run to avoid churning the live shim.) |
+| 1A.4 | ✅ | `git+...@v0.6.1` (isolated venv) resolved to the exact tag commit `bbcaf64`, version 0.6.1, same shim outcome. |
+| 1A.5 | 🟡 | `pypi.org/pypi/spacelabel/json` → **HTTP 404**: package genuinely unpublished. N/A by design (PyPI deferred until stable; re-enable once OIDC trusted-publishing ships). Not a defect. |
+| 1A.6 | ✅ | `pipx list` shows `spacelabel 0.6.1`; `spacelabel --help` renders the full 11-command tree (agent, completion, config, display, install, label, mode, note, spaces, status, uninstall) **instantly — no PyObjC import cost on `--help`**. Exit 0. |
+| 1A.7 (extra — update path) | ⚠️ | `pipx upgrade spacelabel` → *"already at latest version 0.6.1"* (no-op). **Gotcha:** for `git+…` installs, `pipx upgrade` compares the package's static version metadata, which only bumps at release time, so it **won't pull new `main` commits** between releases. The real "get newest main" path for git installs is **`pipx install --force git+…`** or **`pipx reinstall spacelabel`**. Once versioned PyPI publishing ships, `pipx upgrade` works normally. Not a defect — documented for the README/install docs. |
+
+### 1B. Footprint & clean uninstall
+
+**1B-today (v0.6.0/0.6.1 as shipped):**
+
+| # | Result | Evidence |
+|---|---|---|
+| 1B.1 | ✅ | `spacelabel uninstall` → `Removed dev.mcsim.spacelabel (labels and config kept).` exit 0. (No LaunchAgent plist was installed, so the bootout/unlink were no-ops; the full plist-removal path is exercised in Part 3E E7→E13.) |
+| 1B.2 | ✅ | After uninstall, `~/Library/Application Support/spacelabel/` still has `labels.json`, `config.json`, `displays.json` (+ `.lock` siblings + `agent.lock`) — user data untouched. |
+| 1B.3 | ✅ | `spacelabel uninstall --keep-labels` → identical output, exit 0. `--help` documents it: *"Reserved for a future destructive variant; labels are always kept today."* (documented no-op). |
+| 1B.4 | ✅ | `launchctl print gui/$UID/dev.mcsim.spacelabel` → service not found. |
+
+**1B-after (`uninstall --purge`) — 🟡 feature not shipped:** `spacelabel uninstall --purge` → `Error: No such option '--purge'.` exit **2** (both `--dry-run` and `--yes` forms). Rows 1B.5–1B.9 are **deferred-pending-feature** and have been wired into `todo/uninstall-purge.md` as that feature's acceptance matrix (definition-of-done) — re-run and mark ✅ here once `feat(cli): add uninstall --purge` lands.
+
+**1B advisory (auto-cleanup reality):** accepted as documented design — neither `pipx uninstall` nor `brew uninstall` can auto-run the LaunchAgent cleanup (no uninstall hooks in pip/wheel/pipx; no `pre/post_uninstall` in brew formulae). Mitigations documented: run `spacelabel uninstall` *before* `pipx uninstall`; runtime breadcrumb (lands with `--purge`); cask `zap` if a cask is ever added. No code action this run.
+
+### 1C. Homebrew — 🟡 deferred (out of scope)
+No `Formula/` in the repo; brew not tested this run, matching the pipx-only decision (`todo/critical-release-automation.md`). N/A.
+
+**Part 1 verdict: PASS.** All scriptable install/distribution rows pass; PyPI-by-name and `--purge`/Homebrew correctly N/A (deferred features). No defects.
+
+> **⚠ Distribution pivot (Max, 2026-06-22):** during Part 2, click-to-switch testing surfaced that the pipx shared-python identity can't be granted Accessibility reliably (see the finding below). Decision: **move from pipx to a signed `.app` shipped via a Homebrew cask** (reverses #30). Part 1's pipx results remain a **valid record of the current build's behavior**, but the install/distribution path will be **re-verified under the cask** in the follow-up session (`todo/phase-6-blockers.md` Tier 1). The CLI/agent behavior tested in Parts 2–4 is distribution-agnostic and stands regardless.
+
+---
+
+## Part 2 — Technical probe (hardware-gated) — IN PROGRESS
+
+Agent running as **foreground** `spacelabel agent --debug` (PID 50803, started by Max; holds `agent.lock` → single-instance flock confirmed). `spacelabel status` reports "not running" because it tracks only the *LaunchAgent* — see backlog item I (`todo/improvements.md`).
+
+### Step 1 — CGS read smoke-test (the project gate) — ✅ PASS
+
+Read-only probe (`scratchpad/cgs_probe.py`) exercising the **shipped** `spacelabel.platform.cgs`/`spaces_plist` against DESIGN §12 priority items. All hard checks passed:
+
+| DESIGN §12 | Check | Result |
+|---|---|---|
+| §12.2 | All four CGS symbols resolve from CoreGraphics (`CGSMainConnectionID`, `CGSCopyManagedDisplaySpaces`, `CGSManagedDisplayGetCurrentSpace`, `CGSCopyActiveMenuBarDisplayIdentifier`); connection id non-zero | ✅ conn=2716715 |
+| §12.4 | PyObjC↔CFArray bridge round-trips: `CGSCopyManagedDisplaySpaces` → native `list[dict]` (2 displays); `enumerate_spaces` → Space objects (**15 total, 14 labelable**, 1 unlabelable default Space) | ✅ |
+| (step 1) | `read_active_space_uuid()` → a current UUID present in the live set (`3A9B361D-…`); active display = `874A623F-…` (the portrait LG UltraFine — matches the reference rig) | ✅ |
+| §12.5 | Dict keys: `id64` present on all 15, `ManagedSpaceID` present on all 15, 15 user (`type==0`), 0 `TileLayoutManager`, 0 special. (Fullscreen/tiled `type!=0` not present now — exercised in Part 4 H1–H3 by Max.) | ✅ |
+| **§12.1 GATE** | **uuid reboot-stability proxy:** every one of the 14 live CGS labelable uuids is present in the **on-disk** `~/Library/Preferences/com.apple.spaces.plist` (21 persisted uuids; independent `plistlib` read). `defaults read com.apple.spaces` corroborates. → live ⊆ persisted | ✅ **subset=True, none missing** |
+| (step 1) | **Forced CGS-nil → plist fallback:** monkeypatching `CGSCopyManagedDisplaySpaces`→None raises `CGSUnavailableError` (not a false "0 Spaces"); the plist fallback then yields the **identical** 14 labelable uuids, all `is_current=False` (plist lags live) | ✅ exact set match |
+| §12.6 | Active-display fallback: forcing `CGSCopyActiveMenuBarDisplayIdentifier`→nil → `NSScreen.mainScreen()` yields a real display UUID (`899EDEF9-…`, the 4K) | ✅ |
+| §12.3 | Memory/ownership: 4000 tight `enumerate_spaces` reads, RSS did **not** grow like a per-read CF leak (net −42 MB; no crash) → `already_retained` annotation correct (no leak, no over-release) | ✅ |
+
+**Finding (logged, minor):** the per-symbol **CGS→SLS fallback is a no-op on Tahoe 26.5.1**. `cgs._load()` resolves `SLS*` names against the *CoreGraphics* bundle, but verified: CoreGraphics exports `CGS*` only, SkyLight exports `SLS*` only. No functional impact (CGS resolves; plist parser is the real safety net) but it contradicts DECISIONS §1.1. → `todo/improvements.md` item **H**; flag DECISIONS §1.1 for an accuracy update.
+
+**§12.9 "Main" sentinel:** not exercised — "Displays have separate Spaces" is **ON**, so both display identifiers are real UUIDs (`899EDEF9-…`, `874A623F-…`). The `"Main"` remap is unit-tested; live coverage needs the setting toggled OFF (Part 3 F3 / Part 4 H16) — pending Max.
+
+**Gate status:** uuid reboot-stability is at **~high confidence** via the read-only proxy (every live uuid is persisted in the login-reload source). The **literal reboot** (DESIGN §12 item 1 final gate) is **deferred** to Max's next natural restart — capture snippet below.
+
+### Finding — click-to-switch Accessibility on pipx (relates to B22, H4–H6) — ✅ **RESOLVED & VERIFIED LIVE** (signed `.app` via cask)
+> **Resolved (2026-06-22):** the signed `.app` so TCC keys on `dev.mcsim.spacelabel` is built, installed via the Homebrew cask, and **verified end-to-end on the reference machine**: the Accessibility entry shows a **named "spacelabel"** (no python collision); granting it makes the agent trusted; **clicking a menu-bar pill switches the Space** (Max, after re-arming `menubar.click_to_switch` off→on). Caveat confirmed live too: the **ad-hoc cdhash changes on each rebuild**, so the grant must be re-approved after an upgrade/rebuild (Developer-ID would make it durable — deferred, §6.9). See the **Phase-6 blockers session → Tier 1** section below.
+Max enabled "python3.14" in Settings → Accessibility but click-to-switch stayed disabled. **Root cause confirmed empirically:** the agent runs as the ad-hoc-signed framework app-stub `Python.app/Contents/MacOS/Python` (id `org.python.python`, cdhash `b4955ea0…`); `AXIsProcessTrusted()` returns **False from a fresh process of that exact binary**, so the enabled "python3.14" entry isn't bound to the agent's identity, and **relaunch won't fix it**. The pipx CLI stub `bin/python3.14` is a *different* binary (id `python3-5555…`, cdhash `f740…`), so multiple "python3.14" identities collide in the Accessibility list. This is exactly the TCC-identity risk in `todo/improvements.md` item **E** (signed `.app`) — now reproduced live; item E updated with the cdhashes, the "relaunch won't help" proof, and an interim workaround. Not a code defect in spacelabel's switching logic (it correctly disables with a visible reason rather than silently no-op'ing, per DECISIONS §9.5). **Deferred to item E** (signed bundle is the durable fix). Workaround to attempt this session is in item E.
+
+### Steps 2–7 — ⏳ pending Max (UI / hardware)
+Need the running agent + your hands/eyes: (2) WhichSpace reorder demo, (3) display modes on rotated 2160×3840 + 4K, (4) menu-bar/prefs rename live-reload, (5) reboot persistence [deferred], (6) experimental wallpaper revert, (7) generality spot-check (detach 4K / change res-orientation / add-remove Space). I'll drive each with exact steps and you report/screenshot.
+
+#### Reboot-capture snippet (run once, around your next natural restart — no live session needed)
+```sh
+# BEFORE reboot: label the current Space and record its uuid
+spacelabel label set current "REBOOT-TEST"
+spacelabel spaces --json > ~/spacelabel-prereboot.json
+/usr/libexec/PlistBuddy -c 'Print' ~/Library/Preferences/com.apple.spaces.plist >/dev/null 2>&1; \
+  python3 -c "import plistlib,pathlib;print('prereboot current uuid recorded')"
+# ... reboot ...
+# AFTER reboot: confirm the SAME uuid returned and the label re-bound
+spacelabel spaces --json > ~/spacelabel-postreboot.json
+spacelabel label list | grep REBOOT-TEST   # label survived, keyed to the same uuid
+diff <(python3 -c "import json;print('\n'.join(sorted(s['uuid'] for s in json.load(open('$HOME/spacelabel-prereboot.json')) if s['uuid'])))") \
+     <(python3 -c "import json;print('\n'.join(sorted(s['uuid'] for s in json.load(open('$HOME/spacelabel-postreboot.json')) if s['uuid'])))")
+# Empty diff = uuids identical across reboot = GATE CONFIRMED. Then: spacelabel label clear <that uuid>
+```
+
+---
+
+## Phase-6 blockers session (2026-06-22, branch `feat/signed-app-cask`)
+
+Cleared `todo/phase-6-blockers.md`. Distribution pivot: **signed `spacelabel.app` via a Homebrew cask replaces pipx** (DECISIONS §6.8/§6.9, reverses #30). Everything below was verified **headless on the reference machine**; the only outstanding items are the **on-hardware Accessibility grant + click-to-switch** (Max).
+
+### Tier 2a — CGS→SLS fallback now resolves from SkyLight — ✅ PASS (live)
+The old loader tried the `SLS*` name against the **CoreGraphics** bundle (which exports only `CGS*`), so the per-symbol fallback was a no-op. Fixed (`cgs._load` now loads a separate SkyLight bundle, cached). **Live proof:** forcing the `CGS*` names absent, all four symbols resolved via their `SLS*` names from SkyLight and `CGSMainConnectionID()` returned a real non-zero connection (`1357667`). Unit tests cover CGS-miss→SLS, CGS-present→SkyLight-not-loaded, total-miss→`CGSUnavailableError`. → resolves the Step-1 "Finding (logged, minor)" above; DECISIONS §1.1 updated.
+
+### Tier 2b — richer `status` (install + run state, incl. a foreground agent) — ✅ PASS (live)
+`status` now reports `{installed, loaded, running, pid, managed}` and detects a foreground `spacelabel agent` via a non-blocking `flock` on `agent.lock` (the agent records its pid there). **Live proof:** a foreground `spacelabel agent --debug` (pid 4723) →
+`status --json` = `{"installed":false,"loaded":false,"running":true,"pid":4723,"managed":false,…}` exit 0 (`running (foreground)`); after kill → `not running (not installed)` exit 3. Exit-code contract unchanged (0 running / 3 not). → **flips the Part-2 note** "status reports not running because it tracks only the LaunchAgent" (line ~66): a foreground agent is now correctly reported. Rows **E16–E20** expectations updated to the `{installed,loaded,running,pid,managed}` model (DECISIONS §9.1).
+
+### Tier 3 — `uninstall --purge` — ✅ PASS (live, isolated)
+`apt remove` (default, keeps data + breadcrumb) vs `apt purge` (`--purge` deletes only spacelabel-owned paths). **Live proofs:**
+- **1B.6** `uninstall --purge --dry-run` → printed the resolved paths to **stdout** (`~/Library/Application Support|Caches|Logs/spacelabel`), deleted nothing, exit 0; real data dir intact. ✅
+- **1B.7** non-TTY `--purge` without `--yes` → refuses, exit 2 (unit-verified via the `_isatty` seam). ✅
+- **1B.8/1B.9** real `uninstall --purge --yes` run under a **throwaway `$HOME`**: all three fake spacelabel dirs deleted, exit 0, and **the real `~/Library/.../spacelabel` was untouched** (proving the "named targets only" guarantee). ✅ The `.zshrc` fpath line is left for manual removal (printed). Default `uninstall` now appends the breadcrumb (**1B.5**). ✅
+- `--keep-labels` is a hidden, deprecated no-op (stderr deprecation). The cask `zap trash:` lists the same four paths (kept in sync). DECISIONS §9.3.
+
+### Tier 1 — signed `.app` via Homebrew cask — ✅ COMPLETE (built, installed, granted, click-to-switch verified live)
+**Built + signed (`tools/build_app.sh --sign`):**
+- py2app builds a **self-contained** `spacelabel.app` (embeds `Python.framework` + PyObjC + click); `Info.plist` = `CFBundleName/Executable=spacelabel`, `CFBundleIdentifier=dev.mcsim.spacelabel`, `LSUIElement=true`. ✅
+- `codesign -dvvv` → `Identifier=dev.mcsim.spacelabel`, `Signature=adhoc` (inside-out via `tools/codesign_app.sh`; `--verify --deep --strict` passes). ✅
+- icon: committed master `packaging/icon/spacelabel-1024.png` → `.icns` embedded (`CFBundleIconFile`). ✅
+
+**Installed live on the reference machine (2026-06-22):**
+- `brew install --cask` (local self-tap, `--appdir=~/Applications`) → **moved** `spacelabel.app` to `~/Applications` (a **real dir**, stable across `brew upgrade` — NOT a Caskroom-versioned symlink) + symlinked the CLI to `/opt/homebrew/bin/spacelabel`. ✅
+- **CLI on PATH works**: `spacelabel --version` → `0.6.1`, `spaces --json` reads **live CGS**. ✅
+- **`spacelabel install` points the LaunchAgent at the stable bundle exe** `~/Applications/spacelabel.app/Contents/MacOS/spacelabel` (verified: no Caskroom path) and loads it. ✅
+- **The agent runs AS THE BUNDLE**: `launchctl` → `state=running`, `program=~/Applications/spacelabel.app/Contents/MacOS/spacelabel`; `spacelabel status` → `running (managed) pid=…`. The process **is** `dev.mcsim.spacelabel` — the whole point of the pivot. ✅
+
+**Live-discovered fixes (all landed + codex-clean):**
+- **CLI-via-symlink** broke (py2app stub computes `@executable_path` from the symlink dir): added a symlink-resolving shim at `Contents/Resources/spacelabel`, pointed the cask `binary` at it, + a build self-test. ✅
+- `build_app.sh` `--clear` (re-runnable); cask `uninstall trash:` not `delete:` (avoids a `sudo` prompt on a user-owned plist); `_enclosing_app_exe` keeps scanning past an inner `Python.app` helper + `abspath`-normalizes (stable path).
+- **Agent logging was silently lost under launchd**: the `RotatingFileHandler` had no `encoding`, so with no locale (LANG unset) it defaulted to ASCII and the agent's non-ASCII WARNING lines (curly quotes / “→”) raised on write — `agent.log` stayed empty and tracebacks spilled to `agent.boot.log`. Fixed: `encoding="utf-8"` (+ a unit test). Surfaced live on the cask install (the old foreground dev runs inherited the shell's UTF-8 locale, hiding it). ✅
+- **The click-to-switch dropdown message** said "(on a pipx install it appears under python3.x…)" — corrected to name **"spacelabel"** (it's the cask now). ✅
+- `Casks/spacelabel.rb` passes `brew style`; `publish.yml` gained `build-app` + `update-cask` (untested until the first real release — no push this session).
+
+**✅ Hardware verification (2026-06-22, Max — Phase-6 rows B18–B26 + H4–H6):**
+1. *System Settings → Privacy & Security → Accessibility* showed a **named "spacelabel"** entry (not python3.x). The pre-rebuild grant was stale (ad-hoc cdhash changed on rebuild — the documented caveat), so the row was removed and **re-granted** for the current build. ✅
+2. With the "Switch to Desktop N" shortcuts enabled and `menubar.click_to_switch` re-armed (off→on), **clicking a menu-bar pill switches the Space** — confirming `AXIsProcessTrusted()` is True for the granted bundle and the bound chord posts. ✅
+**→ Tier 1 verified end-to-end: a Homebrew-cask-installed signed `.app`, running as `dev.mcsim.spacelabel`, gets a durable named Accessibility grant and click-to-switch works.** The only residual is the ad-hoc re-grant-on-upgrade caveat (§6.9; Developer-ID is the deferred durable fix). Part-1 install rows are covered above (cask install, CLI on PATH, agent runs as the bundle).

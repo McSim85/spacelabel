@@ -99,26 +99,42 @@ spacelabel config set menubar.click_to_switch true
 
 ## Requirements
 
-- macOS 26 "Tahoe" or newer (Apple Silicon or Intel).
+- macOS 26 "Tahoe" or newer. The signed cask bundle is **Apple Silicon (arm64)** for
+  now (a universal2 build is a follow-on); Intel users can run from source.
 - **No SIP disable required.** `spacelabel` only *reads* private window-server
   state; switching Spaces uses the standard, user-enabled Mission Control shortcut.
-- Python 3.11+ (a Homebrew `python@3.14` is the reference interpreter).
+- Python 3.11+ for a source/dev install only — the cask bundles its own `python@3.14`.
 
-## Install (via pipx)
+## Install
+
+**Homebrew cask (recommended)** — ships a signed `spacelabel.app` bundle so the agent
+has its own stable, named Accessibility identity (this is what makes click-to-switch's
+grant work — see [`DECISIONS.md`](DECISIONS.md) §6.8):
 
 ```sh
-pipx install .
-# or, once published:  pipx install spacelabel
+brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
+brew install --cask spacelabel
 ```
 
-This installs a single `spacelabel` command at `~/.local/bin/spacelabel`.
-
-Start the menu-bar agent at login:
+This installs `spacelabel.app` and puts the `spacelabel` CLI on your PATH (the cask
+symlinks the bundle's executable). Start the menu-bar agent at login:
 
 ```sh
-spacelabel install     # installs + loads the LaunchAgent
+spacelabel install     # installs + loads the LaunchAgent (pointed at the app bundle)
 spacelabel status      # check it's running
 ```
+
+> **Ad-hoc signing caveat.** The bundle is ad-hoc-signed (no Apple Developer account
+> yet), so on first launch Gatekeeper may block it — right-click → **Open** once, or
+> `xattr -dr com.apple.quarantine /Applications/spacelabel.app`. An ad-hoc cdhash
+> changes each release, so the Accessibility grant (below) must be **re-approved after
+> `brew upgrade --cask spacelabel`**. Developer-ID + notarization would make both
+> durable (deferred — [`DECISIONS.md`](DECISIONS.md) §6.9).
+
+**From source (dev / pip)** — a pure-Python wheel for hacking on it
+(`uv pip install -e '.[dev]'`, or `pipx install .`). Distribution via pipx is
+**deprecated** in favour of the cask, because under pipx the agent runs as the shared
+Homebrew Python and can't get a reliable Accessibility grant (§6.8).
 
 ## System Settings to grant / enable
 
@@ -127,11 +143,12 @@ Most features need nothing. Two macOS settings matter:
 ### For click-to-switch (only if you enable it)
 
 1. **Accessibility** — *System Settings → Privacy & Security → Accessibility* →
-   enable `spacelabel`'s entry. The first pill click prompts for this.
-   > On a **pipx** install the agent runs as the Python interpreter, so the entry
-   > appears under **"python3.x"**, not "spacelabel" — enable that one. (A code-signed
-   > `.app` bundle is what makes it read "spacelabel"; tracked for v1.0, see
-   > [`DECISIONS.md`](DECISIONS.md) §6.) A `brew upgrade python` can reset this grant.
+   enable the **"spacelabel"** entry. The first pill click prompts for this.
+   > With the **cask** (signed `.app`) the entry reads **"spacelabel"** and one grant
+   > sticks — that's the whole point of the bundle (§6.8). It must be **re-granted after
+   > a cask upgrade** (ad-hoc cdhash rotates, §6.9). On a legacy **pipx** install the
+   > agent instead appears under **"python3.x"** and the grant is unreliable — prefer
+   > the cask.
 
 2. **Mission Control shortcuts** — *System Settings → Keyboard → Keyboard Shortcuts →
    Mission Control* → enable **"Switch to Desktop 1", "Switch to Desktop 2", …**.
@@ -151,8 +168,9 @@ Control Center) can hide status items.
 spacelabel [--config PATH] [--verbose] [--debug] [--version]
 
   agent                         run the menu-bar agent in the foreground
-  install | uninstall           manage the login LaunchAgent
-  status                        is the agent / LaunchAgent running?
+  install                       install + load the login LaunchAgent
+  uninstall [--purge]           remove the LaunchAgent; --purge also deletes data
+  status                        install + run state (managed or foreground agent)
   spaces                        list current Spaces + UUIDs, mark the active one
   mode <menubar|hud|overlay|wallpaper> [--on/--off]
   label set <uuid|current> <text>
@@ -208,6 +226,11 @@ The **nine anchors** are `top-left`, `top`, `top-right`, `left`, `center`,
 
 ## Caveats
 
+- **Ad-hoc signed → grant re-prompts on upgrade.** The cask bundle is ad-hoc-signed,
+  so its code-signing hash changes every release: the one-time Accessibility grant must
+  be re-approved after `brew upgrade --cask spacelabel`, and first launch may need
+  right-click → Open (Gatekeeper). Developer-ID signing + notarization (deferred) would
+  make both durable. The bundle is **arm64-only** for now.
 - **Wallpaper mode is experimental and best-effort.** macOS exposes no per-Space
   wallpaper API, and a system `WallpaperAgent` may revert or flicker programmatic
   changes. It ships disabled by default.

@@ -93,8 +93,8 @@ This is exactly what the LaunchAgent's `ProgramArguments` invoke
 ### 3.2 `install` / `uninstall` — manage the login LaunchAgent
 
 ```text
-spacelabel install   [--no-load]        (--no-load: proposed)
-spacelabel uninstall [--keep-labels]    (--keep-labels: proposed — no-op today)
+spacelabel install   [--no-load]
+spacelabel uninstall [--purge] [--yes] [--dry-run]    (--keep-labels: deprecated, hidden)
 ```
 
 `install` writes `~/Library/LaunchAgents/dev.mcsim.spacelabel.plist` with the
@@ -103,35 +103,55 @@ real `$HOME` substituted into the absolute paths, creates
 `launchctl bootstrap gui/$UID` (DESIGN §9.2). `uninstall` runs
 `launchctl bootout …` and removes the plist.
 
-- **Requires the pipx install.** The login agent must point at the durable
-  `~/.local/bin/spacelabel` shim (launchd has no shell `$PATH`), so `install`
-  **refuses** (exit 1) unless that canonical shim exists — run
-  `pipx install spacelabel` first. It will never write a transient venv/dev-shell
-  path into the plist.
+- **Points the agent at the app bundle.** `install` resolves the cask-installed
+  `spacelabel.app` executable (the running process is inside the bundle) and writes
+  *that* absolute path into the plist, so the agent process **is** the bundle and
+  Accessibility keys on `dev.mcsim.spacelabel` (DECISIONS §6.8). A legacy pipx install
+  falls back to the `~/.local/bin/spacelabel` shim (deprecated); with neither, `install`
+  **refuses** (exit 1) rather than write a transient venv/dev-shell path.
+- **`--no-load`:** write/refresh the plist but don't load it now (load happens at next
+  login). Useful in dotfiles bootstrap.
+- **`uninstall` (default = `apt remove`):** removes the LaunchAgent, **keeps** all user
+  data; prints a breadcrumb pointing to `--purge`.
+- **`uninstall --purge` (= `apt purge`):** after removing the agent, deletes **only**
+  paths spacelabel *exclusively owns* — the default store
+  `~/Library/Application Support/spacelabel/` (removed wholesale, only for the default
+  config), the global `~/Library/Caches/spacelabel/` and `~/Library/Logs/spacelabel/`,
+  and the per-shell completion scripts. A **custom `--config`** purges those global dirs
+  but **never deletes files in the `--config`'s own directory** (spacelabel doesn't own
+  that directory — a sibling `labels.json` could be another app's); its config/labels
+  there are left for manual removal (the command says so). Refuses if a **foreground
+  agent** still holds `agent.lock`. **Never** the WallpaperAgent store, the pipx venv,
+  or the `~/.local/bin/spacelabel` shim. Mirrors the cask's `zap` stanza.
+  - `--dry-run` prints the resolved paths to **stdout** and deletes nothing (exit 0).
+  - `--yes`/`-y` skips the confirmation; **non-TTY without `--yes` refuses (exit 2)**.
+  - Each delete is independent/best-effort; a partial failure lists what remained and
+    exits 1.
+- **`--keep-labels` (deprecated, hidden):** data is kept by default, so it is a no-op;
+  it now emits a stderr deprecation pointing to `--purge`.
+- Progress (“Removed dev.mcsim.spacelabel …”) → stderr. **Exit:** `0` on success;
+  `1` if `launchctl` fails / a purge delete fails; `2` for the non-TTY purge guard.
 
-- **`--no-load` (proposed):** write/refresh the plist but don't load it now
-  (load happens at next login). Useful in dotfiles bootstrap.
-- `uninstall` never deletes `labels.json`/`config.json`; the `--keep-labels`
-  flag is reserved for a future destructive variant and is documented now so the
-  default (keep) is explicit.
-- Progress (“Loaded dev.mcsim.spacelabel”) → stderr. **Exit:** `0` on success;
-  `1` if `launchctl` fails or the plist can't be written.
-
-### 3.3 `status` — is the agent running?
+### 3.3 `status` — install + run state
 
 ```text
-spacelabel status [--json]              (--json: proposed)
+spacelabel status [--json]
 ```
 
-Reports whether the menu-bar agent / LaunchAgent is currently running.
+Reports the agent's **install** state (LaunchAgent plist present / loaded) and **run**
+state — detecting **any** running agent, the managed LaunchAgent **or** a foreground
+`spacelabel agent` (both hold `agent.lock`; the agent records its pid there).
 
 - **Default (human):** one line to **stdout**, e.g.
-  `running  pid=4213  label=dev.mcsim.spacelabel` or `not running`.
-- **`--json` (proposed):** `{"running": true, "pid": 4213, "label": "dev.mcsim.spacelabel"}`
-  to stdout.
-- **Exit codes** (LSB-style, so it composes in conditionals):
-  - `0` — agent is running
-  - `3` — agent is **not** running (clean negative; distinct from an error)
+  `running (managed)  pid=4213  label=dev.mcsim.spacelabel`,
+  `running (foreground)  pid=50803  …`, or `not running (installed, not running)` /
+  `not running (not installed)`.
+- **`--json`:** `{"installed": true, "loaded": true, "running": true, "pid": 4213,
+  "managed": true, "label": "dev.mcsim.spacelabel"}` to stdout.
+- **Exit codes** (LSB-style, unchanged so it still composes in conditionals):
+  - `0` — an agent is running (managed **or** foreground)
+  - `3` — **not** running (clean negative; `installed`/`loaded` are informational and
+    do not change the exit code)
   - `1` — could not determine status (e.g. `launchctl` query failed)
 
   ```sh
