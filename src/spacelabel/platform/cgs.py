@@ -105,7 +105,7 @@ def _normalize_display_identifier(raw: object, main_display_uuid: str | None) ->
 def parse_spaces(
     managed: Sequence[Mapping[str, object]],
     *,
-    current_ids: frozenset[int] | set[int] = frozenset(),
+    current_by_display: Mapping[str, int] | None = None,
     main_display_uuid: str | None = None,
     include_unlabelable: bool = False,
 ) -> list[Space]:
@@ -121,23 +121,31 @@ def parse_spaces(
     DECISIONS.md 1.6) -- those with a real UUID. With ``include_unlabelable=True``
     an ordinary (``type == 0``) Space whose ``uuid`` is empty/non-UUID is also
     returned, with ``uuid=""`` (macOS has not yet assigned that Space a persistent
-    UUID -- e.g. a display's single default Space, marked by a ``wsid`` key). Such a
-    Space cannot be labeled but the diagnostic ``spaces`` command surfaces it so the
-    display is visible. ``is_current`` is set when the Space's session id (``id64``,
-    falling back to ``ManagedSpaceID``) is in ``current_ids``.
+    UUID -- e.g. a display's single default Space, marked by a ``wsid`` key) -- BUT only
+    when it carries a real session ``id64`` (``!= 0``); a ``uuid=""`` ``id64=0`` row is a
+    header/placeholder, not a real desktop, so it is never surfaced (it would otherwise
+    fabricate an extra ``Desktop N`` and shift later ordinals).
+
+    ``is_current`` is keyed by **(display, id64)**, not a bare id64: a Space is current
+    only when ``current_by_display[its display] == its id64``. Session ``id64`` is
+    globally unique for labelable Spaces, but a display's default Space can report a
+    low/reused id (``1``), so a bare-id64 set could mark the wrong display's default
+    current. (DECISIONS.md 1.5/9.5.)
 
     Args:
         managed: Per-display dicts as returned by ``CGSCopyManagedDisplaySpaces``.
-        current_ids: Live current-Space session ids (one per display); a Space whose
-            id64 is in this set is marked current.
+        current_by_display: Map of display UUID -> that display's live current-Space
+            ``id64``; a Space is marked current iff its display's entry equals its id64.
         main_display_uuid: Primary display UUID used to remap the ``"Main"`` sentinel
             and any other non-UUID display identifier (DESIGN.md §3.5).
-        include_unlabelable: Also return ordinary Spaces with no real UUID (``uuid=""``).
+        include_unlabelable: Also return ordinary Spaces with a real id64 but no real
+            UUID (``uuid=""``).
 
     Returns:
         Spaces in display-then-Space order (labelable only unless
         ``include_unlabelable``).
     """
+    current = current_by_display or {}
     spaces: list[Space] = []
     for display in managed:
         raw_identifier = display.get("Display Identifier")
@@ -182,14 +190,17 @@ def parse_spaces(
 
             raw_uuid = space.get("uuid")
             labelable = _is_real_uuid(raw_uuid)
-            if not labelable and not include_unlabelable:
+            # Surface an unlabelable Space only with include_unlabelable AND a real
+            # session id64: a uuid="" id64=0 row is a header/placeholder, not a desktop,
+            # and counting it would fabricate an extra Desktop N (shifting later ordinals).
+            if not labelable and (not include_unlabelable or id64 == 0):
                 continue
 
             spaces.append(
                 Space(
                     uuid=canonical_uuid(str(raw_uuid)) if labelable else "",
                     display_uuid=display_uuid,
-                    is_current=id64 in current_ids,
+                    is_current=current.get(display_uuid) == id64,
                     id64=id64,
                     space_type=space_type,
                     is_fullscreen=False,
@@ -447,7 +458,7 @@ def enumerate_spaces(*, include_unlabelable: bool = False) -> list[Space]:
 
     main_uuid = displays.primary_display_uuid()
 
-    current_ids: set[int] = set()
+    current_by_display: dict[str, int] = {}
     for display in display_dicts:
         identifier = _normalize_display_identifier(display.get("Display Identifier"), main_uuid)
         if not identifier:
@@ -459,11 +470,14 @@ def enumerate_spaces(*, include_unlabelable: bool = False) -> list[Space]:
             log.warning("current-space read failed for display %s: %s; skipping", identifier, exc)
             continue
         if sid:
-            current_ids.add(sid)
+            # Key per display, not a flat id64 set: a display's default Space can report
+            # a low/reused id (e.g. 1), which a flat set would mark current on the wrong
+            # display (DECISIONS.md 1.5).
+            current_by_display[identifier] = sid
 
     return parse_spaces(
         display_dicts,
-        current_ids=frozenset(current_ids),
+        current_by_display=current_by_display,
         main_display_uuid=main_uuid,
         include_unlabelable=include_unlabelable,
     )

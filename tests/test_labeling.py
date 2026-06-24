@@ -43,6 +43,25 @@ def test_assign_ordinals_distinguishes_empty_uuid_spaces():
     assert len(ordinals) == 2
 
 
+def test_assign_ordinals_counts_default_desktop():
+    # macOS numbers a display's default unlabelable Space (uuid="") a Desktop too, so
+    # the FULL enumeration is the single source of truth shared by pills/Prefs/switch
+    # (item V, verified dual-display 2026-06-24). A labelable Space preceded by a
+    # default Space is "Desktop 2", not 1 -- numbering only labelable Spaces (the old
+    # Preferences path) drifted -1 from the pill/menu number.
+    default = _space("", display="4K")  # the 4K display's default desktop
+    first = _space("A", display="4K")  # the added labelable 2nd desktop on the 4K
+    portrait = _space("B", display="P")  # the portrait's first desktop
+    ordinals = assign_ordinals([default, first, portrait])
+    assert ordinals[id(default)] == 1
+    assert ordinals[id(first)] == 2  # counts the default desktop ahead of it
+    assert ordinals[id(portrait)] == 3
+    # A surface that HIDES the default Space (Preferences) still numbers by identity
+    # over the full enumeration, so each shown Space keeps its true Desktop number.
+    shown = [s for s in (default, first, portrait) if s.uuid]
+    assert [ordinals[id(s)] for s in shown] == [2, 3]
+
+
 def test_ordinal_for_uuid_resolves_live_position():
     # Click-to-switch maps the clicked Space's UUID to its current ordinal at click
     # time (DECISIONS.md 9.5); reordering shifts the answer, which is why it is never

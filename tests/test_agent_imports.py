@@ -93,6 +93,37 @@ def test_click_to_switch_reopt_in_clears_stale_disable_before_menu():
     assert delegate._click_to_switch_reason is None
 
 
+def test_find_active_space_resolves_default_unlabelable_desktop(monkeypatch):
+    # Item AA: when the focused display sits on its default unlabelable Space (uuid=""),
+    # _find_active_space returns THAT Space (the is_current Space on the active display),
+    # so the title shows its "Desktop N" -- not the first current Space on another
+    # display (which the old first-current fallback would wrongly pick).
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Space
+    from spacelabel.platform import cgs
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    active = "899EDEF9-1840-4DE5-A049-D7FFA8ECEB7A"
+    other = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    current_on_other = Space(
+        uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA", display_uuid=other, is_current=True, id64=9
+    )
+    default_on_active = Space(uuid="", display_uuid=active, is_current=True, id64=1)
+    # 'other' is first in the list, so the old first-current fallback would mispick it.
+    spaces = [current_on_other, default_on_active]
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: active)
+
+    assert delegate._find_active_space(spaces) is default_on_active
+    # Active display KNOWN but its current Space is filtered out (a fullscreen/tiled
+    # Space is not in `spaces`): no is_current Space on it -> neutral (None), never
+    # another display's Space (item Z's neutral case).
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: "CCCCFFFF-no-current-here")
+    assert delegate._find_active_space(spaces) is None
+    # Only an UNRESOLVABLE active display falls back to the first current Space.
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: "")
+    assert delegate._find_active_space(spaces) is current_on_other
+
+
 def test_prefs_color_well_persists_to_store(tmp_path):
     # Picking a color in the prefs color well must write it onto the Space's label.
     from AppKit import NSColor
@@ -142,6 +173,44 @@ def test_prefs_color_well_disabled_for_notes_only_space(tmp_path):
         [node], store.load_labels(paths), labeling.assign_ordinals([space]), paths
     )
     assert data_source._color_cell(None, space).isEnabled() is False
+
+
+def test_prefs_load_tree_counts_default_desktop(tmp_path, monkeypatch):
+    # Item V: Preferences must number "Desktop N" over the FULL enumeration (incl. a
+    # display's default uuid="" Space) so it matches the menu-bar pill + switch path.
+    # The default Space is counted but NOT shown as a row (it can't be labeled). A
+    # regression to the labelable-only enumeration would number on_4k as Desktop 1.
+    from spacelabel.agent.prefs import PreferencesWindow
+    from spacelabel.model import Display, Space
+    from spacelabel.platform import cgs, displays
+
+    default = Space(uuid="", display_uuid="D1")  # the 4K display's default desktop
+    on_4k = Space(uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA", display_uuid="D1")
+    on_portrait = Space(uuid="1A0F5C2E-7B3D-4C8A-9E1F-2D4B6A8C0E12", display_uuid="D2")
+
+    def fake_enumerate(*, include_unlabelable=False):
+        spaces = [default, on_4k, on_portrait]
+        return spaces if include_unlabelable else [s for s in spaces if s.uuid]
+
+    monkeypatch.setattr(cgs, "enumerate_spaces", fake_enumerate)
+    monkeypatch.setattr(
+        displays,
+        "discover_topology",
+        lambda: [Display(uuid="D1", cg_display_id=1), Display(uuid="D2", cg_display_id=2)],
+    )
+
+    window = PreferencesWindow(config_path=tmp_path / "config.json")
+    nodes, _labels, ordinals, _paths = window._load_tree()
+
+    # The default desktop is counted, so the 4K's labelable Space is Desktop 2 (matches
+    # the pill), and the portrait's first is Desktop 3.
+    assert ordinals[id(on_4k)] == 2
+    assert ordinals[id(on_portrait)] == 3
+    # ...but the unlabelable default Space is never shown as a tree row.
+    shown = [space for node in nodes for space in node.spaces]
+    assert default not in shown
+    assert on_4k in shown
+    assert on_portrait in shown
 
 
 def test_wallpaper_is_ours_distinguishes_cache_from_real(tmp_path):

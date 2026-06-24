@@ -12,6 +12,7 @@ from __future__ import annotations
 from spacelabel.platform.switching import (
     KeyBinding,
     is_grant_stale,
+    is_switchable_target,
     parse_desktop_binding,
     symbolic_hotkey_id,
 )
@@ -41,6 +42,25 @@ def test_parse_disabled_binding_is_none():
     # so the caller disables the action with a visible reason (no silent no-op).
     hotkeys = {"118": _entry(_CTRL_1_PARAMS, enabled=False)}
     assert parse_desktop_binding(hotkeys, 1) is None
+
+
+def test_is_switchable_target_only_on_active_display():
+    # macOS reliably switches only the focused display's Space; a chord for a Space on
+    # another display is a near-silent no-op (item O, verified dual-display 2026-06-24).
+    active = "899EDEF9-1840-4DE5-A049-D7FFA8ECEB7A"
+    other = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    assert is_switchable_target(active, active) is True
+    assert is_switchable_target(other, active) is False
+
+
+def test_is_switchable_target_refuses_when_active_unknown():
+    # An unresolvable active display can't confirm the target is focused, so refuse --
+    # never silently post a possibly cross-display chord (item O / DECISIONS 9.5). In
+    # practice the active display resolves (CGS + NSScreen fallback), so single-display
+    # setups are unaffected; refusing here is the conservative, per-click, visible choice.
+    some = "899EDEF9-1840-4DE5-A049-D7FFA8ECEB7A"
+    assert is_switchable_target(some, None) is False
+    assert is_switchable_target(some, "") is False
 
 
 def test_parse_missing_entry_is_none():

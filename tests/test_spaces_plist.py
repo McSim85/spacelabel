@@ -32,6 +32,32 @@ def test_extracts_labelable_uuids():
     assert all(s.display_uuid == DISP for s in spaces)
 
 
+def test_include_unlabelable_surfaces_default_space_on_fallback():
+    # Item V: with include_unlabelable the plist fallback surfaces an ordinary (type 0)
+    # Space with no real uuid (uuid="") so it counts a display's default desktop like the
+    # live CGS read; special Spaces (type != 0 / tiled) are still always skipped. Without
+    # this, the CGS-fallback path reverts to the old off-by-one "Desktop N".
+    from spacelabel.labeling import assign_ordinals
+
+    data = _plist(
+        [
+            {
+                "Display Identifier": DISP,
+                "Spaces": [
+                    {"uuid": "", "type": 0, "id64": 1},  # default desktop -> counted
+                    {"uuid": U_A, "type": 0},
+                    {"uuid": "ABCDEF01-2345-6789-ABCD-EF0123456789", "type": 4},  # special skip
+                    {"uuid": U_B, "type": 0, "TileLayoutManager": {}},  # tiled -> skipped
+                ],
+            }
+        ]
+    )
+    spaces = parse_spaces_plist(data, include_unlabelable=True)
+    assert [s.uuid for s in spaces] == ["", U_A]
+    # The default Space precedes U_A, so U_A is Desktop 2 -- matching the live read / pill.
+    assert assign_ordinals(spaces)[id(spaces[1])] == 2
+
+
 def test_current_always_false_because_plist_is_stale():
     data = _plist([{"Display Identifier": DISP, "Spaces": [{"uuid": U_A, "type": 0}]}])
     spaces = parse_spaces_plist(data)

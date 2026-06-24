@@ -92,9 +92,16 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   **Phase-6 verified-gotcha:** the grant only binds when the agent runs as the
   **signed `.app`** (`dev.mcsim.spacelabel`) — a pipx/shared-`python3.x` identity
   can't be granted, and the **ad-hoc cdhash rotates each release so the grant goes
-  stale on upgrade** (re-grant; detection = todo **L**). Works on the **primary**
-  display (incl. past Desktop 3), but **fails on secondary displays** — the global
-  ordinal doesn't match macOS's per-display "Switch to Desktop N" numbering (todo **O**).
+  stale on upgrade** (re-grant; detection = todo **L**). **Multi-display (item O, fixed
+  2026-06-24):** the earlier "fails on secondary displays / ordinal mismatch" framing
+  was **wrong** — the ordinal *does* match macOS's Desktop-N numbering. The real limit
+  is **focus**: macOS only reliably switches the **active (focused) display's** Space;
+  a chord for a Space on another display is a near-silent no-op. So click-to-switch is
+  **gated to the active display** (`switching.is_switchable_target`) — off-display pills
+  show a visible "only works on the focused display" notice instead of failing silently.
+  And one **ordinal source of truth** (`labeling.assign_ordinals` over
+  `include_unlabelable=True`, counting each display's default desktop) now backs pills,
+  Preferences, and the switch path (item V). (DECISIONS §9.5)
 - **Never hardcode display/Space topology** — discover displays and Spaces at runtime;
   no hardcoded models, resolutions, UUIDs, scales, orientations, or counts. The
   reference machine is for testing only. (DESIGN §4 / DECISIONS §3)

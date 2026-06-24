@@ -44,17 +44,23 @@ def _is_real_uuid(value: object) -> bool:
 
 
 def parse_spaces_plist(
-    data: Mapping[str, object], *, main_display_uuid: str | None = None
+    data: Mapping[str, object],
+    *,
+    main_display_uuid: str | None = None,
+    include_unlabelable: bool = False,
 ) -> list[Space]:
-    """Parse a loaded Spaces plist mapping into labelable Spaces (PURE, DESIGN.md §11).
+    """Parse a loaded Spaces plist mapping into Spaces (PURE, DESIGN.md §11).
 
     Navigates ``data["SpacesDisplayConfiguration"]["Management Data"]["Monitors"]``
     (a list of per-monitor dicts); for each monitor reads ``"Display Identifier"``
-    and its ``"Spaces"`` list. Applies the same labelable filter as
-    :func:`spacelabel.platform.cgs.parse_spaces`: a Space is kept only when its
-    ``uuid`` is a real UUID, its ``type`` is ``0``, and it carries no
-    ``TileLayoutManager`` key. ``is_current`` is always ``False`` because the plist
-    lags the live current Space (DECISIONS.md 3.4).
+    and its ``"Spaces"`` list. Applies the same filter as
+    :func:`spacelabel.platform.cgs.parse_spaces`: special Spaces (``type != 0`` or a
+    ``TileLayoutManager`` key) are always skipped, and by default only Spaces with a
+    real ``uuid`` are kept. With ``include_unlabelable=True`` an ordinary Space whose
+    ``uuid`` is missing/non-UUID is also returned (``uuid=""``), so the ordinal count
+    matches the live :func:`spacelabel.platform.cgs.parse_spaces` on the CGS-fallback
+    path and "Desktop N" stays consistent with the live read (item V). ``is_current``
+    is always ``False`` because the plist lags the live current Space (DECISIONS.md 3.4).
 
     A non-UUID ``"Display Identifier"`` (the literal ``"Main"`` when 'Displays have
     separate Spaces' is off) is remapped to ``main_display_uuid`` when provided, the
@@ -111,8 +117,7 @@ def parse_spaces_plist(
                 log.warning("spaces plist: space entry is not a mapping; skipping")
                 continue
             raw_uuid = space.get("uuid")
-            if not _is_real_uuid(raw_uuid):
-                continue
+            labelable = _is_real_uuid(raw_uuid)
             # A malformed/changed entry (non-numeric type or id) must be SKIPPED, not
             # crash the best-effort fallback (read_spaces only guards plistlib.load).
             try:
@@ -126,14 +131,18 @@ def parse_spaces_plist(
                     exc,
                 )
                 continue
-            if space_type != 0:
+            # Surface an unlabelable Space only with include_unlabelable AND a real id64:
+            # a uuid="" id64=0 row is a header/placeholder, not a desktop (mirrors
+            # cgs.parse_spaces) -- counting it would fabricate an extra Desktop N.
+            if not labelable and (not include_unlabelable or id64 == 0):
                 continue
-            is_fullscreen = "TileLayoutManager" in space
-            if is_fullscreen:
+            # Special Spaces (fullscreen/tiled/system) are never labelable; skip always,
+            # mirroring cgs.parse_spaces so the fallback yields the identical Space set.
+            if space_type != 0 or "TileLayoutManager" in space:
                 continue
             spaces.append(
                 Space(
-                    uuid=canonical_uuid(str(raw_uuid)),
+                    uuid=canonical_uuid(str(raw_uuid)) if labelable else "",
                     display_uuid=display_uuid,
                     is_current=False,
                     id64=id64,
@@ -144,14 +153,15 @@ def parse_spaces_plist(
     return spaces
 
 
-def read_spaces() -> list[Space]:
+def read_spaces(*, include_unlabelable: bool = False) -> list[Space]:
     """Enumerate Spaces (UUID + display) from the plist; never current-Space liveness.
 
     Loads the plist at :func:`plist_path` and delegates to :func:`parse_spaces_plist`.
     A missing file (``FileNotFoundError``) or a corrupt plist
     (``plistlib.InvalidFileException`` / ``OSError`` / ``ValueError``) is logged at
     WARNING and recovered as an empty list -- this is a best-effort fallback path
-    (DECISIONS.md 3.4), never a hard error.
+    (DECISIONS.md 3.4), never a hard error. ``include_unlabelable`` is forwarded so the
+    CGS-fallback ordinal count matches the live read (item V).
     """
     path = plist_path()
     try:
@@ -176,4 +186,6 @@ def read_spaces() -> list[Space]:
         main_display_uuid = displays.primary_display_uuid()
     except (ImportError, OSError) as exc:
         log.debug("could not resolve primary display UUID for plist remap: %s", exc)
-    return parse_spaces_plist(data, main_display_uuid=main_display_uuid)
+    return parse_spaces_plist(
+        data, main_display_uuid=main_display_uuid, include_unlabelable=include_unlabelable
+    )

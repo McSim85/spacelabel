@@ -94,6 +94,11 @@ spacelabel config set menubar.click_to_switch true
   shortcut isn't enabled, the dropdown shows a ⚠️ "Click-to-switch off — …" row
   (click it to open the relevant System Settings pane) and the pills stop capturing
   clicks until you fix the cause and re-toggle the setting.
+- **Multi-display:** a pill switches only when its Space is on the display that
+  currently has focus (the menu bar). macOS only reliably switches the **focused**
+  display's Space, so clicking a pill on another display shows a brief *"Click-to-switch
+  only works on the focused display"* notice instead of failing silently — focus that
+  display first, then click. Single-display setups are unaffected. (See [Caveats](#caveats).)
 - While click-to-switch is on, the pills capture left-clicks, so open the dropdown
   menu (Preferences / Quit) with a **right-click** or a click off a pill.
 
@@ -254,6 +259,13 @@ The **nine anchors** are `top-left`, `top`, `top-right`, `left`, `center`,
   "enable" message; and a grant you removed by hand may also read as "stale". In every
   case the fix is identical: remove any existing "spacelabel" entry, then re-add it.
   Developer-ID + notarization (above) would remove the need for this entirely.
+- **Click-to-switch only targets the focused display.** With "Displays have separate
+  Spaces" on, macOS's "Switch to Desktop N" shortcut only reliably switches the Space on
+  the display that currently has the menu bar / keyboard focus; the same chord for another
+  display's Space is a near-silent no-op (a macOS limitation, not a numbering bug — the
+  desktop numbers do match). So spacelabel switches a pill only when its Space is on the
+  active display and shows a visible "only works on the focused display" notice otherwise —
+  focus that display first, then click its pill.
 - **Wallpaper mode is experimental and best-effort.** macOS exposes no per-Space
   wallpaper API, and a system `WallpaperAgent` may revert or flicker programmatic
   changes. It ships disabled by default.

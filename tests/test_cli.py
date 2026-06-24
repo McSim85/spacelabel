@@ -426,7 +426,7 @@ def test_spaces_both_paths_failing_exits_1(runner, cfg, monkeypatch):
         raise cgs_mod.CGSUnavailableError("symbols gone")
 
     monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", _boom)
-    monkeypatch.setattr("spacelabel.platform.spaces_plist.read_spaces", lambda: [])
+    monkeypatch.setattr("spacelabel.platform.spaces_plist.read_spaces", lambda **_kw: [])
     r = runner.invoke(cli, _base(cfg, "spaces"))
     assert r.exit_code == 1
     assert r.stdout == ""  # nothing on the data channel
@@ -829,7 +829,7 @@ def test_label_prune_refuses_on_empty_live_read(runner, cfg, monkeypatch):
     # DATA SAFETY: an empty live set means the read failed, not "delete everything".
     runner.invoke(cli, _base(cfg, "label", "set", U1, "keep"))
     monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", lambda **_kw: [])
-    monkeypatch.setattr("spacelabel.platform.spaces_plist.read_spaces", lambda: [])
+    monkeypatch.setattr("spacelabel.platform.spaces_plist.read_spaces", lambda **_kw: [])
     r = runner.invoke(cli, _base(cfg, "label", "prune"))
     assert r.exit_code == 1
     assert "refusing to prune" in r.stderr.lower()

@@ -48,7 +48,7 @@ def test_marks_current_via_id64():
             ],
         }
     ]
-    spaces = parse_spaces(managed, current_ids={102})
+    spaces = parse_spaces(managed, current_by_display={DISP_A: 102})
     by_uuid = {s.uuid: s for s in spaces}
     assert by_uuid[U_CODE].is_current is True
     assert by_uuid[U_EMAIL].is_current is False
@@ -93,7 +93,7 @@ def test_multi_display_separate_spaces():
             "Spaces": [{"uuid": U_TERM, "id64": 3, "type": 0}],
         },
     ]
-    spaces = parse_spaces(managed, current_ids={2, 3})
+    spaces = parse_spaces(managed, current_by_display={DISP_A: 2, DISP_B: 3})
     assert {s.uuid for s in spaces} == {U_EMAIL, U_CODE, U_TERM}
     a = [s for s in spaces if s.display_uuid == DISP_A]
     b = [s for s in spaces if s.display_uuid == DISP_B]
@@ -140,7 +140,7 @@ def test_include_unlabelable_surfaces_empty_uuid_spaces():
         }
     ]
     assert parse_spaces(managed) == []  # default skips it
-    surfaced = parse_spaces(managed, current_ids={1}, include_unlabelable=True)
+    surfaced = parse_spaces(managed, current_by_display={DISP_B: 1}, include_unlabelable=True)
     assert len(surfaced) == 1
     assert surfaced[0].uuid == ""
     assert surfaced[0].display_uuid == DISP_B
@@ -158,6 +158,38 @@ def test_include_unlabelable_still_skips_special_spaces():
         }
     ]
     assert parse_spaces(managed, include_unlabelable=True) == []
+
+
+def test_include_unlabelable_skips_id64_zero_placeholder():
+    # A uuid="" id64=0 row is a header/placeholder, not a real desktop: skipped even with
+    # include_unlabelable, so it can't fabricate an extra Desktop N and shift ordinals.
+    managed = [
+        {
+            "Display Identifier": DISP_A,
+            "Spaces": [
+                {"uuid": "", "id64": 0, "type": 0},  # placeholder -> skipped
+                {"uuid": U_EMAIL, "id64": 5, "type": 0},
+            ],
+        }
+    ]
+    assert [s.uuid for s in parse_spaces(managed, include_unlabelable=True)] == [U_EMAIL]
+
+
+def test_current_marking_keyed_by_display_not_bare_id64():
+    # Two displays each have a default Space with the SAME id64 (a low/reused default id).
+    # Only the display whose live current IS that id is marked current -- keying by
+    # (display, id64), not a flat id64 set which would mark BOTH (DECISIONS.md 1.5).
+    managed = [
+        {"Display Identifier": DISP_A, "Spaces": [{"uuid": "", "id64": 1, "type": 0}]},
+        {"Display Identifier": DISP_B, "Spaces": [{"uuid": "", "id64": 1, "type": 0}]},
+    ]
+    # DISP_A is on its default (id64 1); DISP_B's current is a different Space.
+    spaces = parse_spaces(
+        managed, current_by_display={DISP_A: 1, DISP_B: 99}, include_unlabelable=True
+    )
+    by_display = {s.display_uuid: s for s in spaces}
+    assert by_display[DISP_A].is_current is True
+    assert by_display[DISP_B].is_current is False  # NOT current despite id64 == 1
 
 
 def test_malformed_space_element_is_skipped_not_fatal():

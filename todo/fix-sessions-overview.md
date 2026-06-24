@@ -8,7 +8,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 
 | Prompt file | Items | Effort / model | Source files it touches |
 |---|---|---|---|
-| [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | **O + V** | **high** · Opus 4.8 | `labeling.py` `switching.py` `app.py` `prefs.py` `menubar.py` |
+| ✅ [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | **O + V** *(done 2026-06-24)* | **high** · Opus 4.8 | `labeling.py` `switching.py` `app.py` `prefs.py` (not `menubar.py`) |
 | ✅ [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | **L** *(done 2026-06-24)* | **high** · Opus 4.8 | `switching.py` `app.py` `store.py` |
 | [fix-overlay-behavior.md](fix-overlay-behavior.md) | **Z + P + Q** | medium · Sonnet 4.6 | `overlay.py` `app.py` `store.py` `prefs.py` |
 | [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
@@ -22,8 +22,8 @@ Four UI units (**O+V, L, Z+P+Q, T+U+W**) all edit **`app.py`** (different method
 
 - **Track B — run fully in parallel (no shared files):** **fix-cli-polish** (`cli.py`/launcher), **wallpaper-redesign** (`wallpaper.py`), **remove-pipx** (`install.py`). These don't touch `app.py`/`prefs.py`/`overlay.py`/`switching.py` — safe to run simultaneously with each other and with one Track-A unit.
 - **Track A — `app.py`-heavy: sequence, or parallelize with rebase discipline.** Suggested order (functional first; each rebases on the prior so `app.py` conflicts stay trivial):
-  1. **fix-multidisplay-ordinal** (O+V) — the headline functional bug.
-  2. **fix-stale-accessibility-grant** (L).
+  1. ✅ **fix-multidisplay-ordinal** (O+V) — the headline functional bug. **(done 2026-06-24, branch `fix/multidisplay-ordinal`)**
+  2. **fix-stale-accessibility-grant** (L) — rebase on O+V (the next Track-A unit).
   3. **fix-overlay-behavior** (Z+P+Q).
   4. **fix-prefs-menubar-ux** (T+U+W).
   If you do run Track-A units truly in parallel: keep each diff small/focused, **rebase on `main` before opening each PR**, and merge them one at a time (resolve the small `app.py` overlap on the trailing PRs).
