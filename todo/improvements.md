@@ -204,6 +204,36 @@ be absent on Tahoe, fall back to Option A.
 decisions 2.7 / 6.3, so it needs a deliberate `DECISIONS.md` update (not a quiet
 override). Pairs with `critical-release-automation.md` (the other distribution work).**
 
+**Status + why this is the durable cure for the item-L *stale-grant* class (2026-06-24):**
+The signed `.app` cask **shipped** (DECISIONS §6.8), but **ad-hoc** (§6.9), so the
+remaining residual is that the cdhash **rotates every release** → an already-enabled
+"spacelabel" Accessibility entry goes **stale** on `brew upgrade --cask` (the grant is
+keyed to the old cdhash). Item **L** detects that and guides remove-and-re-add, but it
+is necessarily **heuristic** — *no unprivileged API exposes the identity the existing
+grant is bound to*:
+- `AXIsProcessTrusted` / `…WithOptions` returns only a **Boolean** (trusted or not) —
+  never "trusted as whom", nor "an entry exists but doesn't match you".
+- The authoritative binding lives in **TCC.db** (`access.csreq`; for ad-hoc code the
+  requirement pins `cdhash H"…"`), but TCC.db is **SIP-protected** — reading it needs
+  the process to hold **Full Disk Access** + parsing a `SecRequirement` (asking for FDA
+  to diagnose an *Accessibility* problem is worse than the disease), and a
+  `com.apple.private.tcc.*` read entitlement is **Apple-private** (unavailable even with
+  notarization). This matches the live finding above: "TCC.db is SIP-locked
+  (`authorization denied` even read-only)".
+
+So item L can read only its **own** cdhash (`SecCodeCopySelf`/`kSecCodeInfoUnique`) and
+must **remember** it across runs (the `state.json` checkpoint) — there is no live source
+for "what cdhash was I last trusted under". Consequence (intrinsic, not a bug): the
+**first** item-L release can't retro-detect a *pre*-item-L stale grant — no checkpoint
+existed, so it shows the plain "enable" copy and seeds the checkpoint on the first
+successful grant; staleness detection then works from the **next** upgrade onward.
+
+**Developer-ID + notarization dissolves the whole class:** a **stable** cdhash across
+releases means the grant survives `brew upgrade --cask`, so there is *nothing stale to
+detect* — item L's heuristic and `state.json` become unnecessary (they remain a harmless
+no-op while the bundle stays ad-hoc). Item L is the best the ad-hoc bundle can do; **E**
+removes the need for it.
+
 **Context (surfaced live by click-to-switch, DECISIONS §9.5 / §6 residual risk):**
 On the pipx path the agent process is the ad-hoc-signed Homebrew `python3.x`
 (`Signature=adhoc`, `flags=0x2`, no TeamIdentifier — confirmed on the reference
