@@ -42,6 +42,22 @@ order (they are independent); fold Non-critical items into a single session usin
 | Menu-bar/Prefs toggle for click-to-switch | Non-critical | [improvements.md](improvements.md) item J | v0.7 | bundled | open (Max, 2026-06-22) |
 | Homebrew agent-path fix — `_resolve_install_shim` resolves the **app-bundle** exe (not the pipx shim) | **Critical** | [critical-release-automation.md](critical-release-automation.md) → [phase-6-blockers.md](phase-6-blockers.md) Tier 1 step 5 | next | folded into phase-6-blockers | **done** (2026-06-22; `_enclosing_app_exe` resolves the bundle exe, pipx shim kept as deprecated fallback) |
 
+### Phase-6 fix-session prompts (parallel — see [fix-sessions-overview.md](fix-sessions-overview.md))
+
+Backlog items **K–Z** split into per-session prompts, cut by shared-file footprint. **Track A** units share `app.py` (sequence or rebase); **Track B** are parallel-safe. Run with the template in the overview.
+
+| Prompt | Items | Effort / model | Track | Status |
+|---|---|---|---|---|
+| [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | O + V | high · Opus 4.8 | A (`app.py`) | **open — priority (functional)** |
+| [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | L | high · Opus 4.8 | A | ✅ **done** (2026-06-24, `fix/stale-accessibility-grant`) |
+| [fix-overlay-behavior.md](fix-overlay-behavior.md) | Z + P + Q | medium · Sonnet 4.6 | A | open |
+| [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | T + U + W + J | medium · Sonnet 4.6 | A | open |
+| [fix-cli-polish.md](fix-cli-polish.md) | K + M + N + Y | low · Sonnet 4.6 | **B (parallel-safe)** | open |
+| [wallpaper-redesign.md](wallpaper-redesign.md) | R + S | high (design) · Opus 4.8 | **B** | open |
+| [remove-pipx.md](remove-pipx.md) | — (deprecated pipx path) | medium · Sonnet 4.6 | **B** | open |
+
+Deferred (need a restart/hardware window, not parallel code work): literal **reboot** (uuid gate final confirm), **H16** (separate-Spaces OFF), **Part 2 §7** (detach-4K).
+
 ---
 
 ## Notes
