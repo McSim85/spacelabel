@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.2](https://github.com/McSim85/spacelabel/compare/v0.8.1...v0.8.2) (2026-06-24)
+
+
+### Bug Fixes
+
+* **switching:** correct multi-display ordinal / Desktop-N mapping ([#46](https://github.com/McSim85/spacelabel/issues/46)) ([4c865f3](https://github.com/McSim85/spacelabel/commit/4c865f3c0c5a549114f0dda37fd44d94952fbb73))
+
+
+### Documentation
+
+* **todo:** add the Phase-6 fix-session prompts to the README index table ([#45](https://github.com/McSim85/spacelabel/issues/45)) ([cbcc09d](https://github.com/McSim85/spacelabel/commit/cbcc09de0866c5a45ff8a29c2edd99bfe6c86f53))
+* **todo:** fix sessions DM Max via curlbot when done/blocked (no hook) ([#47](https://github.com/McSim85/spacelabel/issues/47)) ([3c7ccb4](https://github.com/McSim85/spacelabel/commit/3c7ccb48896529af059e57d46a94d1e7ba7893c6))
+* **todo:** fold item J (click-to-switch toggle) into fix-prefs-menubar-ux ([#43](https://github.com/McSim85/spacelabel/issues/43)) ([9f0124a](https://github.com/McSim85/spacelabel/commit/9f0124a425566b701bfc779e7e030e68e0ca0063))
+
 ## [0.8.1](https://github.com/McSim85/spacelabel/compare/v0.8.0...v0.8.1) (2026-06-24)
 
 
