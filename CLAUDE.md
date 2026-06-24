@@ -59,7 +59,11 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   only `SLS*`; CoreGraphics re-exports the `CGS*` aliases. Resolve each symbol
   `CGS`-name-then-`SLS`-name; on miss raise the logged **`CGSUnavailableError`** and
   fall back to the spaces-plist parser. Never `CFRelease` a `Copy` result that
-  PyObjC already owns (`already_retained`).
+  PyObjC already owns (`already_retained`). **Phase-6-verified on 26.5.1:** symbols
+  resolve, the PyObjC↔CFArray bridge round-trips, RSS stays flat over 4000 reads
+  (`already_retained` correct), forced-nil → plist fallback yields the identical set,
+  and every live uuid is persisted in the on-disk plist (uuid reboot-stability
+  ~high; literal-reboot confirm still pending — DECISIONS §1).
 - **Display UUID comes from `CGDisplayCreateUUIDFromDisplayID`, bound from
   ColorSync — NOT Quartz/CoreGraphics** (Phase-4 finding, DECISIONS §3.6). On Tahoe
   PyObjC's `Quartz` does not expose it and CoreGraphics does not export it; it lives
@@ -76,9 +80,21 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
 - **Wallpaper mode is cosmetic/best-effort** — `WallpaperAgent` self-reverts; it is
   never the source of truth, ships disabled-by-default, and you must **never edit the
   WallpaperAgent store/container plists**. (DESIGN §6.4 / DECISIONS §7)
+  **Phase-6 verified-gotcha:** the capture path is **unsafe on macOS Dynamic/Shuffle
+  wallpapers** (it grabs one frame + sets a static composite → clobbers them
+  irreversibly) and **wrong on per-Space wallpapers** (`NSWorkspace.desktopImageURL`
+  returns the system default, not the per-Space image). Treat as **largely
+  non-functional on real multi-Space/multi-display setups** until the detection
+  redesign (todo/improvements.md **R+S**). Composite static images only.
 - **Space *switching* is SIP/Dock-walled** → only via the opt-in Ctrl+N "Switch to
   Desktop N" shortcut + Accessibility, OFF by default; if it can't be confirmed,
   **disable with a visible reason, never silently no-op**. (DECISIONS §9.5 / DESIGN §6)
+  **Phase-6 verified-gotcha:** the grant only binds when the agent runs as the
+  **signed `.app`** (`dev.mcsim.spacelabel`) — a pipx/shared-`python3.x` identity
+  can't be granted, and the **ad-hoc cdhash rotates each release so the grant goes
+  stale on upgrade** (re-grant; detection = todo **L**). Works on the **primary**
+  display (incl. past Desktop 3), but **fails on secondary displays** — the global
+  ordinal doesn't match macOS's per-display "Switch to Desktop N" numbering (todo **O**).
 - **Never hardcode display/Space topology** — discover displays and Spaces at runtime;
   no hardcoded models, resolutions, UUIDs, scales, orientations, or counts. The
   reference machine is for testing only. (DESIGN §4 / DECISIONS §3)
@@ -171,5 +187,7 @@ for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
 
 ---
 
-> **This is a living doc.** Refresh it after **Phase 4** (final commands/modules)
-> and after **Phase 6** (verified gotchas).
+> **This is a living doc.** Refreshed after **Phase 4** (final commands/modules)
+> and after **Phase 6** (verified gotchas — CGS gate confirmed; click-to-switch
+> signed-`.app`/secondary-display + wallpaper Dynamic/Shuffle/per-Space caveats
+> added, 2026-06-23). Next: fold in fixes as the **K–Z** backlog lands.
