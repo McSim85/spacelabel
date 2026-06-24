@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/McSim85/spacelabel/compare/v0.7.0...v0.8.0) (2026-06-24)
+
+
+### Features
+
+* **switching:** detect stale Accessibility grant + targeted guidance ([#37](https://github.com/McSim85/spacelabel/issues/37)) ([0ff9ca7](https://github.com/McSim85/spacelabel/commit/0ff9ca7644248ac58b8d9ad6d75ee0465492f44c))
+
+
+### Documentation
+
+* Phase-6 verification results + backlog (verdict: PASS) ([#34](https://github.com/McSim85/spacelabel/issues/34)) ([868a7aa](https://github.com/McSim85/spacelabel/commit/868a7aa44f6e64d4bb75375e59273420678e5a33))
+* **todo:** split Phase-6 backlog into parallel fix-session prompts ([#36](https://github.com/McSim85/spacelabel/issues/36)) ([7599908](https://github.com/McSim85/spacelabel/commit/7599908155a4882a24a71cc19dc251a76afb3c42))
+
 ## [0.7.0](https://github.com/McSim85/spacelabel/compare/v0.6.1...v0.7.0) (2026-06-23)
 
 
