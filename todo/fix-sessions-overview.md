@@ -50,6 +50,8 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run
 Ask me before committing or pushing; use Conventional Commits. When it lands,
 mark the item(s) done in todo/improvements.md, tick the row in
 todo/fix-sessions-overview.md, and record the result in docs/VERIFICATION.md.
+When you finish (PR opened) or get blocked needing my input, DM me on Slack
+via curlbot (see the standing rules) — done/blocked only, not routine progress.
 
 Ask me questions, if any.
 ```
@@ -63,6 +65,7 @@ Model/effort per prompt header: Opus 4.8/high for `fix-multidisplay-ordinal`, `f
 - **codex review loop** until no critical findings before every commit (per `CLAUDE.md` / [[feedback_codex_review_loop]]).
 - Conventional Commits; **ask Max before committing/pushing**; update `DECISIONS.md` if a decision changes.
 - On landing: mark the item(s) **done** in `improvements.md`, tick the row here, and record the result in `docs/VERIFICATION.md` (it flips the corresponding ❌/⏳ rows to ✅).
+- **Ping Max when you finish or get blocked** (lightweight "don't make me babysit" signal — scoped to these sessions, no global hook): when the task is done (PR opened) or you hit something that needs Max's input, send a Slack DM via **`curlbot -m "<prompt name>: <PR #NN ready / blocked on X>"`** — Max's Slack notifier (DMs `maksim@quiknode.io`; resolves to `/Users/mc-sim/.virtualenvs/curlbot/bin/python3 /usr/local/bin/curlbot` — use the full path if the alias isn't available non-interactively). Keep it to **done / blocked / needs-a-decision** — don't ping for routine progress.
 
 ## Not in these prompts (deferred — need a restart/hardware window, not parallel code work)
 Literal **reboot** (uuid gate final confirm), **H16** ("Displays have separate Spaces" OFF → logout), **Part 2 §7** (detach-4K). Run during a natural restart; capture snippet in `docs/VERIFICATION.md`.
