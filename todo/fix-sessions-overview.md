@@ -11,7 +11,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | **O + V** | **high** · Opus 4.8 | `labeling.py` `switching.py` `app.py` `prefs.py` `menubar.py` |
 | ✅ [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | **L** *(done 2026-06-24)* | **high** · Opus 4.8 | `switching.py` `app.py` `store.py` |
 | [fix-overlay-behavior.md](fix-overlay-behavior.md) | **Z + P + Q** | medium · Sonnet 4.6 | `overlay.py` `app.py` `store.py` `prefs.py` |
-| [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W** | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
+| [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
 | [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |
 | [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** | **high (design)** · Opus 4.8 | `wallpaper.py` |
 | [remove-pipx.md](remove-pipx.md) | — | medium · Sonnet 4.6 | `install.py` tests docs |
@@ -40,7 +40,7 @@ Execute todo/<FIX_FILE> step by step.
 Before starting, read: DESIGN.md, DECISIONS.md, CLAUDE.md,
 todo/fix-sessions-overview.md, and the improvements.md item(s) that prompt
 references. Then fetch + merge origin/main and cut a fresh branch off main
-(use a git worktree if other fix sessions are running in parallel). If this is a
+use a git worktree. If this is a
 Track-A unit (touches app.py), rebase on origin/main before opening the PR.
 
 Keep the diff small and focused. Before every commit run the gates —
