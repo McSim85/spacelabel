@@ -25,19 +25,29 @@ cask "spacelabel" do
   # path. Same bundle, one dev.mcsim.spacelabel identity for both agent and CLI.
   binary "#{appdir}/spacelabel.app/Contents/Resources/spacelabel"
 
-  # The login agent is managed by `spacelabel install` (it writes the LaunchAgent
-  # plist). On uninstall: unload + quit it, and trash the (user-owned) plist so a normal
-  # `brew uninstall` leaves no stale login item pointing at the removed bundle. Use
-  # `trash:` not `delete:` -- `delete:` shells out to `sudo rm` (a password prompt), wrong
-  # for a file under the user's own ~/Library.
-  uninstall launchctl: "dev.mcsim.spacelabel",
-            quit:      "dev.mcsim.spacelabel",
-            trash:     "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist"
+  # The login agent is managed by `spacelabel install` (it writes the LaunchAgent plist).
+  # On uninstall just STOP it: `quit:` (clean exit; KeepAlive=SuccessfulExit:false won't
+  # relaunch it) + `signal: TERM` as a force-stop fallback. Both act on the user's own
+  # process, so NEITHER needs sudo.
+  #
+  # Deliberately NO `launchctl:` and NO plist `trash:` here:
+  #   * `launchctl:` makes Homebrew run `launchctl` under `sudo` (it always does a root pass
+  #     to catch a /Library/LaunchDaemons system daemon) -> a password prompt on every
+  #     upgrade/uninstall. spacelabel is only ever a USER agent (gui/$UID), which `quit:` +
+  #     `signal:` already stop without root.
+  #   * the plist is a runtime artifact of `spacelabel install`, so trashing it lives in `zap`
+  #     (below). Homebrew runs THIS `uninstall` stanza on every `brew upgrade` too (to remove
+  #     the old version), so trashing the plist here would drop the login item on each upgrade
+  #     and force a re-`spacelabel install`. Leaving it preserves the (path-stable) login item
+  #     across upgrades; `brew uninstall --zap` or `spacelabel uninstall` removes it.
+  uninstall quit:   "dev.mcsim.spacelabel",
+            signal: ["TERM", "dev.mcsim.spacelabel"]
 
   # `brew uninstall --zap` deep-clean. The data side mirrors `spacelabel uninstall --purge`
   # (install.purge_targets) rather than nuking the whole data dir:
-  #   * stop the agent FIRST (launchctl/quit/signal) so the store is never trashed out from
-  #     under a running instance whose agent.lock still guards single-instance startup;
+  #   * stop the agent FIRST (quit/signal -- no `launchctl:`, which would sudo-prompt) so the
+  #     store is never trashed out from under a running instance whose agent.lock still guards
+  #     single-instance startup;
   #   * trash only spacelabel-OWNED files in Application Support (config/labels/displays +
   #     their .lock + agent.lock + leaked "<json>.<rand>.tmp" temps) so a foreign file a
   #     user kept there (e.g. an alternate --config) survives, plus the dedicated caches/logs;
@@ -48,10 +58,9 @@ cask "spacelabel" do
   # or $BASH_COMPLETION_USER_DIR; those can't be enumerated statically and will be left
   # behind. To remove them, run `spacelabel uninstall --purge` (which resolves them at
   # runtime) BEFORE `brew uninstall` — afterwards the `spacelabel` CLI is gone.
-  zap launchctl: "dev.mcsim.spacelabel",
-      quit:      "dev.mcsim.spacelabel",
-      signal:    ["TERM", "dev.mcsim.spacelabel"],
-      trash:     [
+  zap quit:   "dev.mcsim.spacelabel",
+      signal: ["TERM", "dev.mcsim.spacelabel"],
+      trash:  [
         "~/.config/fish/completions/spacelabel.fish",
         "~/.local/share/bash-completion/completions/spacelabel",
         "~/.zfunc/_spacelabel",
@@ -65,11 +74,14 @@ cask "spacelabel" do
         "~/Library/Application Support/spacelabel/labels.json",
         "~/Library/Application Support/spacelabel/labels.json.*.tmp",
         "~/Library/Application Support/spacelabel/labels.json.lock",
+        "~/Library/Application Support/spacelabel/state.json",
+        "~/Library/Application Support/spacelabel/state.json.*.tmp",
+        "~/Library/Application Support/spacelabel/state.json.lock",
         "~/Library/Caches/spacelabel",
         "~/Library/LaunchAgents/dev.mcsim.spacelabel.plist",
         "~/Library/Logs/spacelabel",
       ],
-      rmdir:     "~/Library/Application Support/spacelabel"
+      rmdir:  "~/Library/Application Support/spacelabel"
 
   caveats <<~CAVEATS
     spacelabel ships ad-hoc-signed (no Apple Developer account yet). After install:
