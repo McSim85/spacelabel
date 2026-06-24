@@ -32,7 +32,7 @@ classifiers = [
   "Topic :: Desktop Environment",
   "Typing :: Typed",
 ]
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
   "click>=8.1",
   "pyobjc-core>=10.0",

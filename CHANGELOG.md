@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.1](https://github.com/McSim85/spacelabel/compare/v0.8.0...v0.8.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **cask:** passwordless upgrade + preserve login item across upgrades; zap state.json ([#41](https://github.com/McSim85/spacelabel/issues/41)) ([ad151dd](https://github.com/McSim85/spacelabel/commit/ad151dd5c8ed9f0d18df46103f7dfc2608439c06))
+
+
+### Documentation
+
+* capture stale Accessibility-grant heuristic + Developer-ID durable cure (item E, README) ([#39](https://github.com/McSim85/spacelabel/issues/39)) ([41f7ed2](https://github.com/McSim85/spacelabel/commit/41f7ed2f48bbd95eb5ca6e9900e316c0a3a55b1e))
+
 ## [0.8.0](https://github.com/McSim85/spacelabel/compare/v0.7.0...v0.8.0) (2026-06-24)
 
 
