@@ -243,6 +243,17 @@ The **nine anchors** are `top-left`, `top`, `top-right`, `left`, `center`,
   be re-approved after `brew upgrade --cask spacelabel`, and first launch may need
   right-click → Open (Gatekeeper). Developer-ID signing + notarization (deferred) would
   make both durable. The bundle is **arm64-only** for now.
+- **Stale-grant detection is best-effort (a heuristic).** Because of the above, after an
+  upgrade an already-enabled "spacelabel" Accessibility entry is bound to the *previous*
+  signature and silently stops working. `spacelabel` notices this and tells you to
+  **remove and re-add** the entry (rather than the misleading "just enable it"). It's a
+  heuristic: macOS won't let an app read which signature a grant is tied to (the TCC
+  database is protected), so it infers from its own remembered code-signing hash. Two
+  honest limits — the **first release** that shipped this feature (and a truly first-ever
+  grant) can't yet tell a stale grant from a never-granted one, so it shows the plain
+  "enable" message; and a grant you removed by hand may also read as "stale". In every
+  case the fix is identical: remove any existing "spacelabel" entry, then re-add it.
+  Developer-ID + notarization (above) would remove the need for this entirely.
 - **Wallpaper mode is experimental and best-effort.** macOS exposes no per-Space
   wallpaper API, and a system `WallpaperAgent` may revert or flicker programmatic
   changes. It ships disabled by default.
