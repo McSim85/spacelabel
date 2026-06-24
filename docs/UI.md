@@ -161,6 +161,21 @@ click-to-switch is on the row captures left-clicks, so the dropdown menu
 > "Switch to Desktop N" shortcuts ship **disabled**, so this is the out-of-the-box
 > state until the user enables them.)
 
+> **Stale grant after an upgrade (ad-hoc signing).** Because the cask bundle is
+> ad-hoc-signed, its code signature (cdhash) **rotates on every release**, and macOS
+> keys the Accessibility grant to that cdhash — so after a `brew upgrade --cask` the
+> already-enabled **"spacelabel"** entry is bound to the *old* signature and no longer
+> applies (`AXIsProcessTrusted` stays False; toggling the stale row often just
+> re-grants the old hash). The agent **detects this**: it remembers its own cdhash and
+> whether Accessibility was ever granted (in `state.json`; it reads its own signature
+> via the Security framework — it cannot read the SIP-locked TCC database), and when a
+> click finds Accessibility off it branches the guidance — a **stale** grant says
+> *REMOVE the existing entry, then re-enable to re-add and re-grant it*; a never-granted
+> one says *enable it*. The durable cure is Developer-ID signing + notarization (a
+> stable cdhash across releases — `improvements.md` item E); item L is the best the
+> ad-hoc bundle can do. Detection is heuristic (cannot inspect TCC.db) but the
+> remove-and-re-add cure is correct for both stale and revoked grants.
+
 ---
 
 ## 3. Preferences window

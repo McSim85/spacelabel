@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 __all__ = [
+    "AgentState",
     "Config",
     "Display",
     "HudConfig",
@@ -162,3 +163,20 @@ class Config:
     wallpaper: WallpaperConfig = field(default_factory=WallpaperConfig)
     debounce_ms: int = 200
     log_level: str = "WARNING"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentState:
+    """Persisted agent runtime state for heuristics that span restarts (item L).
+
+    NOT user config — written by the agent itself, never by the CLI/prefs, and not
+    watched by the live-reload poll. Currently the Accessibility-grant staleness
+    checkpoint: ``last_cdhash`` is the process code-signing hash observed the last
+    time Accessibility was confirmed granted, and ``ax_was_trusted`` records that it
+    was ever granted. A later failed ``AXIsProcessTrusted`` check uses these to tell
+    a *stale* grant (cdhash rotated by an app update — DECISIONS.md §6.9) from a
+    never-granted one, so the agent can guide REMOVE-and-re-add vs plain "enable".
+    """
+
+    last_cdhash: str | None = None
+    ax_was_trusted: bool = False

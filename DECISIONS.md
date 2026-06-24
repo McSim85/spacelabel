@@ -209,6 +209,22 @@ decisions, grounded **live on the reference machine** (macOS 26.5.1, build 25F80
   `AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})` drives the one-time
   grant dialog on the first failing click; `kAXTrustedCheckOptionPrompt`'s string value is
   used literally (the symbol is unexported).
+- **Stale-vs-missing grant detection (item L, 2026-06-24).** Because ad-hoc signing rotates
+  the bundle cdhash every release (§6.9) and macOS keys the Accessibility grant to the cdhash,
+  an enabled "spacelabel" entry goes **stale** after a cask upgrade — `AXIsProcessTrusted`
+  stays False and toggling the stale row re-grants the *old* hash; the cure is REMOVE + re-add.
+  The agent can't read TCC.db (SIP) but **can read its own** code identity: `code_signature_hash`
+  binds `SecCodeCopySelf`→`SecCodeCopySigningInformation` (`kSecCodeInfoUnique`) from Security by
+  framework path (the same feature-detected loader as the AX/CGS reads; out-pointers passed as a
+  `None` placeholder and returned in the result tuple — verified live on 26.5.1, the hex matches
+  `codesign`'s CDHash; result memoized, the +1 Copy results are intentionally not `CFRelease`d at
+  one-call-per-process). A checkpoint `{last_cdhash, ax_was_trusted}` is persisted to a new
+  agent-owned `state.json` (sibling of `labels.json`/`displays.json`, **not** user config and not
+  watched by the live-reload poll) on each *successful* AX check. `switching.is_grant_stale`
+  (PURE) then classifies a later False check as **stale** (cdhash changed since trusted, OR ever
+  trusted → guide remove-and-re-add) vs **never granted** (→ guide enable), and `app._accessibility_reason`
+  branches the disabled-row reason accordingly. Heuristic (a manual revoke also reads stale — benign,
+  the cure still works); the durable fix is Developer-ID + notarization (stable cdhash, item E).
 - **Live UUID→ordinal map, never cached** (`labeling.ordinal_for_uuid`): rebuilt from a fresh
   `cgs.enumerate_spaces` on every click, since ordinals shift on reorder.
 - **Hit-testing** uses one shared pure layout walk (`menubar._pill_layout`) for both drawing

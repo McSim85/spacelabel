@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from spacelabel.platform.switching import (
     KeyBinding,
+    is_grant_stale,
     parse_desktop_binding,
     symbolic_hotkey_id,
 )
@@ -79,3 +80,48 @@ def test_parse_malformed_entries_are_none_not_crash():
     assert parse_desktop_binding({"118": _entry([65535], enabled=True)}, 1) is None
     assert parse_desktop_binding({"118": {"enabled": True}}, 1) is None  # no value
     assert parse_desktop_binding({"118": _entry([65535, "x", "y"], enabled=True)}, 1) is None
+
+
+# ---- stale-vs-missing Accessibility grant classification (item L) ----------
+#
+# is_grant_stale is the PURE decision behind the agent's branched guidance: a False
+# AXIsProcessTrusted is a STALE grant (guide REMOVE-and-re-add) when the ad-hoc cdhash
+# rotated since we were last trusted (an app update) OR Accessibility was ever granted;
+# otherwise it was never granted (guide plain "enable"). See DECISIONS.md §6.9.
+
+
+def test_grant_never_granted_is_not_stale():
+    # First-ever run: cdhash readable, no recorded "trusted", nothing to compare -> NOT
+    # stale (show the plain "enable Accessibility" guidance, not remove-and-re-add).
+    assert is_grant_stale(current_cdhash="abc", last_cdhash=None, ax_was_trusted=False) is False
+
+
+def test_grant_stale_when_cdhash_changed_since_trusted():
+    # App updated: the ad-hoc cdhash rotated since the checkpoint -> stale, even before
+    # the ax_was_trusted flag is consulted (the headline upgrade scenario).
+    assert is_grant_stale(current_cdhash="new", last_cdhash="old", ax_was_trusted=False) is True
+
+
+def test_grant_stale_when_was_trusted_even_if_cdhash_unknown():
+    # Signature unreadable (Security bind failed) but we were trusted before -> fall back
+    # to the ax_was_trusted signal alone -> stale.
+    assert is_grant_stale(current_cdhash=None, last_cdhash=None, ax_was_trusted=True) is True
+    assert is_grant_stale(current_cdhash=None, last_cdhash="old", ax_was_trusted=True) is True
+
+
+def test_grant_not_stale_when_cdhash_unchanged_and_never_trusted():
+    # Same cdhash, never confirmed trusted -> the entry was never granted -> not stale.
+    assert is_grant_stale(current_cdhash="same", last_cdhash="same", ax_was_trusted=False) is False
+
+
+def test_grant_cdhash_change_needs_both_hashes():
+    # A change can only be claimed when BOTH hashes are known; a missing current or last
+    # hash (never-trusted) must not be reported stale.
+    assert is_grant_stale(current_cdhash="x", last_cdhash=None, ax_was_trusted=False) is False
+    assert is_grant_stale(current_cdhash=None, last_cdhash="y", ax_was_trusted=False) is False
+
+
+def test_grant_was_trusted_dominates_even_with_equal_cdhash():
+    # ax_was_trusted=True is stale regardless of cdhash equality (a manual revoke is
+    # reported stale too -- a benign false positive; the remove-and-re-add cure still works).
+    assert is_grant_stale(current_cdhash="same", last_cdhash="same", ax_was_trusted=True) is True

@@ -287,3 +287,59 @@ def test_is_interactive_tolerates_closed_stream(monkeypatch):
     # A closed stdio stream must not crash the probe; absence of a TTY -> False.
     monkeypatch.setattr(_sys, "stdin", _Closed())
     assert _is_interactive() is False
+
+
+def test_accessibility_reason_branches_stale_vs_never_granted(tmp_path, monkeypatch):
+    # Acceptance (item L): when AXIsProcessTrusted is False (the only time this runs),
+    # a STALE grant -- cdhash changed since we were last trusted, OR ax_was_trusted was
+    # recorded -- yields REMOVE-and-re-add guidance; a first-ever run yields the plain
+    # "enable" message. Drives the real delegate decision with the persisted cdhash/ax
+    # state seeded in a tmp store and the process cdhash mocked.
+    from spacelabel import store
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import AgentState
+    from spacelabel.platform import switching
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    delegate._paths = paths
+
+    # (1) Never granted: no recorded state + a readable cdhash -> plain "enable".
+    monkeypatch.setattr(switching, "code_signature_hash", lambda: "CDHASH-NEW")
+    never = delegate._accessibility_reason()
+    assert "permission is required" in never
+    assert "REMOVE" not in never and "went stale" not in never
+
+    # (2) Stale via cdhash change alone (ax flag still False): an app update rotated the
+    # ad-hoc signature since the checkpoint -> remove-and-re-add.
+    store.save_agent_state(paths, AgentState(last_cdhash="CDHASH-OLD", ax_was_trusted=False))
+    cdhash_stale = delegate._accessibility_reason()
+    assert "REMOVE" in cdhash_stale and "went stale" in cdhash_stale
+
+    # (3) Stale via ax_was_trusted even when the signature can't be read (None cdhash).
+    store.save_agent_state(paths, AgentState(last_cdhash=None, ax_was_trusted=True))
+    monkeypatch.setattr(switching, "code_signature_hash", lambda: None)
+    assert "REMOVE" in delegate._accessibility_reason()
+
+
+def test_record_ax_trusted_persists_checkpoint(tmp_path, monkeypatch):
+    # A successful AX check checkpoints (cdhash, ax_was_trusted=True) so a LATER failure
+    # is classified stale; the write is best-effort and only-on-change.
+    from spacelabel import store
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import AgentState
+    from spacelabel.platform import switching
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    delegate._paths = paths
+
+    monkeypatch.setattr(switching, "code_signature_hash", lambda: "CDHASH-CURRENT")
+    delegate._record_ax_trusted()
+    assert store.load_agent_state(paths) == AgentState(
+        last_cdhash="CDHASH-CURRENT", ax_was_trusted=True
+    )
+
+    # Idempotent: re-recording the same checkpoint must not raise (write skipped).
+    delegate._record_ax_trusted()
+    assert store.load_agent_state(paths).last_cdhash == "CDHASH-CURRENT"
