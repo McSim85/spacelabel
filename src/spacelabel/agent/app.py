@@ -680,8 +680,7 @@ class AppDelegate(NSObject):
         # Include unlabelable Spaces so the menu/overlays surface every display.
         spaces, from_cgs = self._read_spaces_with_source(include_unlabelable=True)
         ordinals = labeling.assign_ordinals(spaces)
-        active_uuid = self._read_active_space_uuid()
-        active_space = self._find_space(spaces, active_uuid)
+        active_space = self._find_active_space(spaces)
         title = self._title_for_active(active_space, ordinals)
         if self._menubar is not None:
             # Reconcile click-to-switch availability with config BEFORE rebuilding the
@@ -788,35 +787,43 @@ class AppDelegate(NSObject):
         )
 
     @objc.python_method
-    def _on_pill_clicked(self, uuid: str) -> None:
+    def _on_pill_clicked(self, uuid: str, id64: int) -> None:
         """Switch to the clicked pill's Space via the Mission Control shortcut.
 
-        Rebuilds the UUID->ordinal map from a LIVE CGS read at click time (ordinals
-        shift on reorder -- never cached, DECISIONS.md 9.5), resolves the target's
-        enabled "Switch to Desktop N" shortcut, and posts it. Any failure disables
-        capture with a specific, surfaced reason (prompting for Accessibility on the
-        first miss) rather than a silent no-op.
+        Resolves the clicked Space LIVE at click time -- by ``uuid`` (a labelable Space)
+        or by session ``id64`` (the default unlabelable Space, which has no UUID; switched
+        by its ordinal via the stable session id, DECISIONS.md 9.5) -- so an ordinal that
+        shifted on a reorder is never cached. Resolves the target's enabled "Switch to
+        Desktop N" shortcut and posts it. Any failure disables capture with a specific,
+        surfaced reason (prompting for Accessibility on the first miss), never a silent
+        no-op.
         """
         from spacelabel.platform import cgs, switching
 
-        if not uuid:
-            # Defensive: the buttons row already routes empty-UUID (unlabelable) pills
-            # to the menu (ButtonsRowView._handle_click_at_x), so a click never reaches
-            # here with an empty UUID.
-            log.debug("ignoring click-to-switch for a Space with no persistent UUID")
+        if not uuid and not id64:
+            # Defensive: the buttons row routes a pill with no Space identity to the menu
+            # (ButtonsRowView._handle_click_at_x), so a click never reaches here with neither.
+            log.debug("ignoring click-to-switch for a pill with no Space identity")
             return
         try:
             spaces = cgs.enumerate_spaces(include_unlabelable=True)
         except cgs.CGSUnavailableError as exc:
             self._disable_click_to_switch(f"could not read live Spaces: {exc}")
             return
-        ordinal = labeling.ordinal_for_uuid(spaces, uuid)
-        if ordinal is None:
-            # Space disappeared between last refresh and click (reorder race).
+        # Resolve by UUID (labelable) or session id64 (the default unlabelable Space).
+        if uuid:
+            target = next((space for space in spaces if space.uuid == uuid), None)
+        else:
+            target = next((space for space in spaces if space.id64 == id64), None)
+        if target is None:
+            # Space disappeared between last refresh and click (reorder/close race).
             # Rebuild the row immediately so the stale pill is no longer clickable.
-            log.warning("clicked Space %s is no longer present; refreshing row", uuid)
+            log.warning(
+                "clicked Space (uuid=%r id64=%s) is no longer present; refreshing row", uuid, id64
+            )
             self._refresh()
             return
+        ordinal = labeling.assign_ordinals(spaces)[id(target)]
         if not switching.accessibility_trusted(prompt=not self._ax_prompted):
             self._ax_prompted = True
             self._disable_click_to_switch(
@@ -847,22 +854,22 @@ class AppDelegate(NSObject):
         # (DECISIONS.md 9.5), keeping the feature armed so the same pill works once its
         # display is focused. Checked LAST so a denied-AX / disabled-shortcut blocker
         # surfaces first instead of being masked by the focus notice.
-        target = next((space for space in spaces if space.uuid == uuid), None)
         active_uuid = self._active_display_uuid()
-        if target is not None and not switching.is_switchable_target(
-            target.display_uuid, active_uuid
-        ):
+        if not switching.is_switchable_target(target.display_uuid, active_uuid):
             log.warning(
-                "click-to-switch: Space %s is on display %s, not the active display %s; "
-                "macOS only switches the focused display",
+                "click-to-switch: Space (uuid=%r id64=%s) is on display %s, not the active "
+                "display %s; macOS only switches the focused display",
                 uuid,
+                id64,
                 target.display_uuid,
                 active_uuid,
             )
             self._flash_switch_notice("Click-to-switch only works on the focused display.")
             return
         if switching.post_switch(binding):
-            log.info("posted “Switch to Desktop %d” for Space %s", ordinal, uuid)
+            log.info(
+                "posted “Switch to Desktop %d” for Space (uuid=%r id64=%s)", ordinal, uuid, id64
+            )
         else:
             self._disable_click_to_switch(
                 "could not post the switch key event (CGEventPost unavailable)."
@@ -1350,6 +1357,30 @@ class AppDelegate(NSObject):
         if self._config is None:
             self._config = self._load_config()
         return self._config
+
+    @objc.python_method
+    def _find_active_space(self, spaces: list[Space]) -> Space | None:
+        """Resolve the active display's current Space within ``spaces`` (incl. its default).
+
+        ``spaces`` (a full ``include_unlabelable`` enumeration) already marks each
+        display's current Space ``is_current``, so the focused display's current Space --
+        labelable OR its **default** unlabelable Space (``uuid=""``) -- is the
+        ``is_current`` Space on the active display. Matching it here lets the default
+        desktop title as "Desktop N" instead of falling back to another display's current
+        Space or the generic app name (item AA).
+
+        When the active display is **known** but has no current Space in ``spaces`` (its
+        current Space is a fullscreen/tiled one, filtered out), return ``None`` -> a
+        neutral title, never another display's Space (item Z's neutral case). Only when
+        the active display itself can't be resolved do we fall back to the first current
+        Space (best-effort, the prior behavior).
+        """
+        active_display = self._active_display_uuid()
+        if active_display:
+            return next(
+                (s for s in spaces if s.display_uuid == active_display and s.is_current), None
+            )
+        return self._find_space(spaces, None)
 
     @objc.python_method
     def _find_space(self, spaces: list[Space], uuid: str | None) -> Space | None:

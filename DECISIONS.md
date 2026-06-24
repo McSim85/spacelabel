@@ -295,6 +295,23 @@ above was the headline bug O (click-to-switch fails on a secondary display) + V 
   regression (test_agent_imports). **Live-agent retest of the gate notice on the rig is the one
   remaining step** (the macOS behavior + the V numbering are confirmed; the in-agent notice is
   unit-covered but not yet clicked live — see `docs/VERIFICATION.md`).
+- **Follow-ups X + AA, fixed in the same PR (review of O+V).**
+  - **X — the default unlabelable Space is now a switch target, by session `id64`.** This is a
+    **deliberate update to §9.5**, which previously made unlabelable pills non-switch-targets ("no
+    stable key to resolve to a live ordinal"). The default Space has no UUID, but its `id64` is a
+    stable *session* id (unchanged across reorders), and it is used only for a transient switch
+    resolution — never as a persisted label key — so the UUID-keying invariant (§1.4) is untouched.
+    `PillModel` carries `id64`; `menubar._handle_click_at_x` routes a `uuid`-or-`id64` pill to the
+    switch handler `(uuid, id64)`; `app._on_pill_clicked` resolves by `uuid` (labelable) or `id64`
+    (default), computes the live ordinal, and posts — still gated to the active display (item O). A
+    pill with neither a uuid nor an id64 still opens the menu (no identity to resolve).
+  - **AA — the active default desktop now titles as "Desktop N".** `app._find_active_space` resolves
+    the active display's current Space within the full `include_unlabelable` enumeration (the
+    `is_current` Space on the active display), so the focused default desktop is found rather than
+    falling back to another display's current Space / the generic name. When the active display is
+    *known* but its current Space is filtered out (a fullscreen/tiled Space), the title now goes
+    **neutral** instead of another display's Space — a small item-Z-adjacent correction; only an
+    *unresolvable* active display still falls back to the first current Space.
 
 ---
 

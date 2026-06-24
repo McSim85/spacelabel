@@ -19,8 +19,8 @@ from spacelabel.agent.menubar import (
 _ROW_H = 22.0
 
 
-def _pill(text, uuid="", *, current=False):
-    return PillModel(text, is_current=current, color=None, uuid=uuid)
+def _pill(text, uuid="", *, current=False, id64=0):
+    return PillModel(text, is_current=current, color=None, uuid=uuid, id64=id64)
 
 
 # -- pure layout + hit-testing ------------------------------------------------
@@ -108,21 +108,21 @@ def test_click_on_pill_invokes_switch_handler_with_uuid():
     switched: list[str] = []
     opened_menu: list[bool] = []
     view = _row_view([[_pill("E", "U1"), _pill("C", "U2")]])
-    view.set_handlers(switched.append, lambda: opened_menu.append(True))
+    view.set_handlers(lambda u, i: switched.append((u, i)), lambda: opened_menu.append(True))
 
     pills, _, _ = _pill_layout([[_pill("E", "U1"), _pill("C", "U2")]], _ROW_H)
     x2 = pills[1][0] + pills[1][1] / 2
     view._handle_click_at_x(x2)
 
-    assert switched == ["U2"]
+    assert switched == [("U2", 0)]
     assert opened_menu == []
 
 
 def test_click_off_a_pill_opens_the_menu():
-    switched: list[str] = []
+    switched: list[tuple[str, int]] = []
     opened_menu: list[bool] = []
     view = _row_view([[_pill("E", "U1")]])
-    view.set_handlers(switched.append, lambda: opened_menu.append(True))
+    view.set_handlers(lambda u, i: switched.append((u, i)), lambda: opened_menu.append(True))
 
     view._handle_click_at_x(0.0)  # left margin, before any pill
 
@@ -130,25 +130,45 @@ def test_click_off_a_pill_opens_the_menu():
     assert opened_menu == [True]
 
 
-def test_click_on_unlabelable_pill_opens_menu_not_dead_click():
-    # A pill with no Space UUID (an unlabelable default Space, surfaced by
-    # include_unlabelable) is not a switch target: clicking it must open the menu,
-    # never consume the click and do nothing (review P2). Such pills are real on
-    # multi-display setups whose first display's lone Space has no stable UUID.
-    switched: list[str] = []
+def test_click_on_pill_with_no_identity_opens_menu_not_dead_click():
+    # A pill with NEITHER a uuid NOR a session id64 has no Space identity to resolve, so
+    # a click opens the menu rather than a dead click (review P2). (The default
+    # unlabelable Space normally DOES carry an id64 -> see the switch test below.)
+    switched: list[tuple[str, int]] = []
     opened_menu: list[bool] = []
-    groups = [[_pill("1", "")], [_pill("E", "U1")]]  # uuid="" -> unlabelable
+    groups = [[_pill("1", "")], [_pill("E", "U1")]]  # uuid="" and id64=0 -> no identity
     view = _row_view(groups)
-    view.set_handlers(switched.append, lambda: opened_menu.append(True))
+    view.set_handlers(lambda u, i: switched.append((u, i)), lambda: opened_menu.append(True))
 
     pills, _, _ = _pill_layout(groups, _ROW_H)
-    unlabelable_x = pills[0][0] + pills[0][1] / 2
-    view._handle_click_at_x(unlabelable_x)
+    no_identity_x = pills[0][0] + pills[0][1] / 2
+    view._handle_click_at_x(no_identity_x)
 
-    assert switched == []  # never attempts a switch for an empty UUID
+    assert switched == []  # no identity -> no switch attempt
     assert opened_menu == [True]  # opens the menu instead of a dead click
 
     # The labelable pill in the same row still switches normally.
     labelable_x = pills[1][0] + pills[1][1] / 2
     view._handle_click_at_x(labelable_x)
-    assert switched == ["U1"]
+    assert switched == [("U1", 0)]
+
+
+def test_click_on_default_space_pill_switches_by_id64():
+    # The default unlabelable Space (uuid="") carries a session id64 and IS a switch
+    # target (DECISIONS 9.5 update): clicking its pill invokes the switch handler with
+    # (uuid="", id64), not the menu. A labelable pill still switches by uuid.
+    switched: list[tuple[str, int]] = []
+    opened_menu: list[bool] = []
+    groups = [[_pill("1", "", id64=1)], [_pill("E", "U1", id64=99)]]
+    view = _row_view(groups)
+    view.set_handlers(lambda u, i: switched.append((u, i)), lambda: opened_menu.append(True))
+
+    pills, _, _ = _pill_layout(groups, _ROW_H)
+    default_x = pills[0][0] + pills[0][1] / 2
+    view._handle_click_at_x(default_x)
+    assert switched == [("", 1)]  # the default Space switches by its id64
+    assert opened_menu == []
+
+    labelable_x = pills[1][0] + pills[1][1] / 2
+    view._handle_click_at_x(labelable_x)
+    assert switched == [("", 1), ("U1", 99)]

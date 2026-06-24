@@ -58,23 +58,28 @@ _ALPHA_INACTIVE = 0.4
 
 
 class PillModel:
-    """One pill in the buttons row: its text, current-ness, color, and Space UUID.
+    """One pill in the buttons row: its text, current-ness, color, and Space identity.
 
     A plain value object (no PyObjC) so the row's per-display layout is easy to
-    assemble in :meth:`MenuBarItem.set_buttons_row` and unit-test in isolation.
-    ``uuid`` is the clicked-pill -> Space identity used by click-to-switch hit-
-    testing (DECISIONS.md 9.5); it is ``""`` for an unlabelable Space (which cannot
-    be a switch target -- no stable ordinal key).
+    assemble in :meth:`MenuBarItem.set_buttons_row` and unit-test in isolation. The
+    clicked-pill -> Space identity used by click-to-switch hit-testing (DECISIONS.md 9.5)
+    is the ``uuid`` for a labelable Space, or the session ``id64`` for the default
+    unlabelable Space (``uuid=""``), which is switched by ordinal via its stable
+    session id (9.5 update). A pill with neither (``uuid=""`` and ``id64=0``) is not a
+    switch target and a click on it opens the menu.
     """
 
-    __slots__ = ("color", "is_current", "text", "uuid")
+    __slots__ = ("color", "id64", "is_current", "text", "uuid")
 
-    def __init__(self, text: str, *, is_current: bool, color: str | None, uuid: str = "") -> None:
-        """Store the pill text, its current marker, an optional hex color, and UUID."""
+    def __init__(
+        self, text: str, *, is_current: bool, color: str | None, uuid: str = "", id64: int = 0
+    ) -> None:
+        """Store the pill text, its current marker, an optional hex color, and identity."""
         self.text = text
         self.is_current = is_current
         self.color = color
         self.uuid = uuid
+        self.id64 = id64
 
 
 def _pill_width(pill: PillModel) -> float:
@@ -158,7 +163,7 @@ class ButtonsRowView(NSView):
         # list of display groups; each group is a list[PillModel]
         self._groups: list[list[PillModel]] = []
         self._click_enabled: bool = False
-        self._switch_handler: Callable[[str], None] | None = None
+        self._switch_handler: Callable[[str, int], None] | None = None
         self._menu_handler: Callable[[], None] | None = None
         return self
 
@@ -171,10 +176,10 @@ class ButtonsRowView(NSView):
     @objc.python_method
     def set_handlers(
         self,
-        switch_handler: Callable[[str], None] | None,
+        switch_handler: Callable[[str, int], None] | None,
         menu_handler: Callable[[], None] | None,
     ) -> None:
-        """Wire the pill-click (UUID) and menu-open callbacks (DECISIONS.md 9.5)."""
+        """Wire the pill-click (uuid, id64) and menu-open callbacks (DECISIONS.md 9.5)."""
         self._switch_handler = switch_handler
         self._menu_handler = menu_handler
 
@@ -239,19 +244,19 @@ class ButtonsRowView(NSView):
 
     @objc.python_method
     def _handle_click_at_x(self, x: float) -> None:
-        """Route a click at view-x ``x``: a labelable pill switches; otherwise open the menu.
+        """Route a click at view-x ``x``: a switchable pill switches; otherwise open the menu.
 
         Split out of :meth:`mouseDown_` (which only converts the event point) so the
         pill-resolution dispatch is unit-testable without synthesizing an NSEvent. A
-        pill with no Space UUID (an unlabelable default Space, surfaced by
-        ``include_unlabelable``) is NOT a switch target -- it has no stable key to
-        resolve to a live ordinal -- so a click on it opens the menu like a click off
-        any pill, never a dead click that consumes the event and does nothing.
+        pill is a switch target when it carries a Space identity -- a ``uuid`` (labelable
+        Space) or a session ``id64`` (the default unlabelable Space, switched by ordinal
+        via its stable session id, DECISIONS.md 9.5). A pill with neither (``uuid=""`` and
+        ``id64=0``) opens the menu like a click off any pill, never a dead click.
         """
         pills, _, _ = _pill_layout(self._groups, float(self.bounds().size.height))
         pill = _pill_at_x(pills, x)
-        if pill is not None and pill.uuid and self._switch_handler is not None:
-            self._switch_handler(pill.uuid)
+        if pill is not None and (pill.uuid or pill.id64) and self._switch_handler is not None:
+            self._switch_handler(pill.uuid, pill.id64)
             return
         self._invoke_menu()
 
@@ -498,6 +503,7 @@ class MenuBarItem:
                         is_current=space.is_current,
                         color=label.color if label is not None else None,
                         uuid=space.uuid,
+                        id64=space.id64,
                     )
                 )
             groups.append(group)

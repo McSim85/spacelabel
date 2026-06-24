@@ -93,6 +93,37 @@ def test_click_to_switch_reopt_in_clears_stale_disable_before_menu():
     assert delegate._click_to_switch_reason is None
 
 
+def test_find_active_space_resolves_default_unlabelable_desktop(monkeypatch):
+    # Item AA: when the focused display sits on its default unlabelable Space (uuid=""),
+    # _find_active_space returns THAT Space (the is_current Space on the active display),
+    # so the title shows its "Desktop N" -- not the first current Space on another
+    # display (which the old first-current fallback would wrongly pick).
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Space
+    from spacelabel.platform import cgs
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    active = "899EDEF9-1840-4DE5-A049-D7FFA8ECEB7A"
+    other = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    current_on_other = Space(
+        uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA", display_uuid=other, is_current=True, id64=9
+    )
+    default_on_active = Space(uuid="", display_uuid=active, is_current=True, id64=1)
+    # 'other' is first in the list, so the old first-current fallback would mispick it.
+    spaces = [current_on_other, default_on_active]
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: active)
+
+    assert delegate._find_active_space(spaces) is default_on_active
+    # Active display KNOWN but its current Space is filtered out (a fullscreen/tiled
+    # Space is not in `spaces`): no is_current Space on it -> neutral (None), never
+    # another display's Space (item Z's neutral case).
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: "CCCCFFFF-no-current-here")
+    assert delegate._find_active_space(spaces) is None
+    # Only an UNRESOLVABLE active display falls back to the first current Space.
+    monkeypatch.setattr(cgs, "active_display_uuid", lambda: "")
+    assert delegate._find_active_space(spaces) is current_on_other
+
+
 def test_prefs_color_well_persists_to_store(tmp_path):
     # Picking a color in the prefs color well must write it onto the Space's label.
     from AppKit import NSColor
