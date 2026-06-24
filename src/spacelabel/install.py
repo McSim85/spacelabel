@@ -507,10 +507,10 @@ def _default_store_owned_files() -> list[Path]:
     """Return the files spacelabel owns *by construction* inside the default data dir.
 
     These names are ours in the default store (``config.json``/``labels.json``/
-    ``displays.json`` + their ``.lock`` siblings + ``agent.lock``), so deleting them by
-    name there is safe -- unlike a custom ``--config`` directory, where a sibling
-    ``labels.json`` could belong to another app. Listing the files (rather than removing
-    the whole dir) means a foreign file a user kept in our dir -- e.g. an alternate
+    ``displays.json``/``state.json`` + their ``.lock`` siblings + ``agent.lock``), so
+    deleting them by name there is safe -- unlike a custom ``--config`` directory, where a
+    sibling ``labels.json`` could belong to another app. Listing the files (rather than
+    removing the whole dir) means a foreign file a user kept in our dir -- e.g. an alternate
     ``--config`` ``alt.json`` -- survives; :func:`remove_default_store_dir_if_empty`
     removes the dir afterwards only if nothing foreign remains.
     """
@@ -522,6 +522,8 @@ def _default_store_owned_files() -> list[Path]:
         default.labels_lock,
         default.displays_file,
         default.displays_lock,
+        default.state_file,
+        default.state_lock,
         default.directory / "agent.lock",
     ]
     # Our own derived files from interrupted writes / corruption recovery, all in the same
@@ -529,7 +531,12 @@ def _default_store_owned_files() -> list[Path]:
     # non-empty and leaves it behind (an incomplete purge). "<json>.<rand>.tmp" = a leaked
     # atomic-write temp (store._atomic_write_json); "<json>.corrupt" = a malformed file backed
     # up by store._guard_before_rewrite. glob on a missing dir yields nothing.
-    for json_file in (default.config_file, default.labels_file, default.displays_file):
+    for json_file in (
+        default.config_file,
+        default.labels_file,
+        default.displays_file,
+        default.state_file,
+    ):
         owned.extend(sorted(default.directory.glob(json_file.name + ".*.tmp")))
         owned.extend(sorted(default.directory.glob(json_file.name + ".corrupt")))
     return owned

@@ -9,7 +9,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | Prompt file | Items | Effort / model | Source files it touches |
 |---|---|---|---|
 | [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | **O + V** | **high** · Opus 4.8 | `labeling.py` `switching.py` `app.py` `prefs.py` `menubar.py` |
-| [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | **L** | **high** · Opus 4.8 | `switching.py` `app.py` `store.py` |
+| ✅ [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | **L** *(done 2026-06-24)* | **high** · Opus 4.8 | `switching.py` `app.py` `store.py` |
 | [fix-overlay-behavior.md](fix-overlay-behavior.md) | **Z + P + Q** | medium · Sonnet 4.6 | `overlay.py` `app.py` `store.py` `prefs.py` |
 | [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W** | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
 | [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |

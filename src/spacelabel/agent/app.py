@@ -819,21 +819,14 @@ class AppDelegate(NSObject):
             return
         if not switching.accessibility_trusted(prompt=not self._ax_prompted):
             self._ax_prompted = True
-            # Name the right Accessibility row: the signed cask bundle (frozen) appears as
-            # "spacelabel"; a legacy pipx/dev run appears under the Python interpreter.
-            if getattr(sys, "frozen", False):
-                entry_hint = "enable “spacelabel”"
-            else:
-                entry_hint = (
-                    "enable this agent's entry (a legacy pipx/dev install appears under your "
-                    "Python interpreter, e.g. “python3.x”, not “spacelabel”)"
-                )
             self._disable_click_to_switch(
-                f"Accessibility permission is required — {entry_hint} in System Settings → "
-                "Privacy & Security → Accessibility, then re-enable click-to-switch.",
+                self._accessibility_reason(),
                 settings_url=_SETTINGS_URL_ACCESSIBILITY,
             )
             return
+        # Trusted: checkpoint our code identity so a LATER failed check can tell a
+        # stale grant (cdhash rotated by an app update — item L) from a missing one.
+        self._record_ax_trusted()
         try:
             hotkeys = switching.load_symbolic_hotkeys()
         except switching.HotkeyReadError as exc:
@@ -869,6 +862,62 @@ class AppDelegate(NSObject):
             # Stop capturing clicks so the menu (Preferences/Quit) is reachable again.
             self._menubar.set_pills_clickable(False)
             self._rebuild_menu_safely()
+
+    @objc.python_method
+    def _accessibility_reason(self) -> str:
+        """Build the Accessibility 'off' reason, branching STALE-grant vs never-granted.
+
+        A *stale* grant — an enabled entry bound to an OLD ad-hoc cdhash that no longer
+        matches this process after an app update — needs REMOVE-and-re-add, not "enable":
+        toggling the stale row often re-grants the old cdhash (DECISIONS.md §6.9, item L).
+        Staleness is inferred from the persisted cdhash / ax-trusted checkpoint (we can't
+        read TCC.db — SIP — but we can read our own code identity). The entry name is also
+        branched: the signed cask bundle (frozen) lists as "spacelabel"; a legacy pipx/dev
+        run lists under the Python interpreter.
+        """
+        from spacelabel.platform import switching
+
+        name = (
+            "“spacelabel”"
+            if getattr(sys, "frozen", False)
+            else "the Python-interpreter entry (a legacy pipx/dev install lists it as, "
+            "e.g., “python3.x”, not “spacelabel”)"
+        )
+        state = store.load_agent_state(self._paths)
+        stale = switching.is_grant_stale(
+            current_cdhash=switching.code_signature_hash(),
+            last_cdhash=state.last_cdhash,
+            ax_was_trusted=state.ax_was_trusted,
+        )
+        if stale:
+            return (
+                f"Accessibility for {name} went stale after an app update (its code "
+                "signature changed) — in System Settings → Privacy & Security → "
+                "Accessibility REMOVE the existing entry (the “-” button), then "
+                "re-enable click-to-switch to re-add and re-grant it."
+            )
+        return (
+            f"Accessibility permission is required — enable {name} in System Settings → "
+            "Privacy & Security → Accessibility, then re-enable click-to-switch."
+        )
+
+    @objc.python_method
+    def _record_ax_trusted(self) -> None:
+        """Checkpoint that Accessibility is granted at this process's current cdhash.
+
+        Lets a later failed check distinguish a STALE grant (cdhash changed since we were
+        last trusted — an app update, item L) from a never-granted one. Best-effort and
+        write-only-on-change: a persist failure is logged, never fatal to the (successful)
+        switch this was called from.
+        """
+        from spacelabel.platform import switching
+
+        desired = store.AgentState(last_cdhash=switching.code_signature_hash(), ax_was_trusted=True)
+        try:
+            if store.load_agent_state(self._paths) != desired:
+                store.save_agent_state(self._paths, desired)
+        except store.StoreError as exc:
+            log.debug("could not persist Accessibility checkpoint: %s", exc)
 
     @objc.python_method
     def _rebuild_menu_safely(self) -> None:

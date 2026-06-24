@@ -34,6 +34,8 @@ __all__ = [
     "HotkeyReadError",
     "KeyBinding",
     "accessibility_trusted",
+    "code_signature_hash",
+    "is_grant_stale",
     "load_symbolic_hotkeys",
     "parse_desktop_binding",
     "post_switch",
@@ -265,3 +267,132 @@ def _load_ax_functions() -> dict[str, Any]:
     if "AXIsProcessTrusted" not in _AX_FUNCS:
         log.warning("AXIsProcessTrusted could not be bound from HIServices")
     return _AX_FUNCS
+
+
+# --------------------------------------------------------------------------- #
+# Code-signature identity + stale-Accessibility-grant detection (item L)
+# --------------------------------------------------------------------------- #
+#
+# macOS keys an Accessibility (TCC) grant to the code-signing **cdhash** of the
+# running binary. The shipping bundle is ad-hoc-signed, so the cdhash **rotates on
+# every release** (DECISIONS.md §6.9): after an upgrade an already-enabled
+# "spacelabel" entry is bound to the OLD cdhash and no longer applies, so
+# ``AXIsProcessTrusted`` stays False and toggling the stale row often re-grants the
+# OLD hash — the user must REMOVE it and let a fresh prompt re-add it. We can't read
+# TCC.db (SIP), but we CAN read our **own** signature and remember it, then tell a
+# stale grant from a never-granted one and branch the guidance accordingly.
+
+#: Security.framework holds ``SecCodeCopySelf``/``SecCodeCopySigningInformation``.
+#: Loaded by PATH (like HIServices): on Tahoe the framework has no on-disk Mach-O,
+#: but ``objc.loadBundle`` by path resolves the symbols (verified live, 26.5.1).
+_SECURITY_FRAMEWORK_PATH = "/System/Library/Frameworks/Security.framework"
+
+#: ``kSecCodeInfoUnique`` — the signing-information dict key whose value is the
+#: canonical cdhash (CFData). The constant symbol is not exported to PyObjC, so the
+#: literal string is used directly (same approach as ``_AX_PROMPT_OPTION``).
+_SEC_CODE_INFO_UNIQUE = "unique"
+
+#: Memoized Security function map + a "tried to load" flag (cache a miss too).
+_SECURITY_FUNCS: dict[str, Any] = {}
+_SECURITY_LOADED = False
+
+#: Memoized cdhash (a process's code signature is constant for its lifetime, so the
+#: Security calls run at most once). ``None`` means "computed, undeterminable".
+_CDHASH: str | None = None
+_CDHASH_COMPUTED = False
+
+
+def is_grant_stale(
+    *, current_cdhash: str | None, last_cdhash: str | None, ax_was_trusted: bool
+) -> bool:
+    """Heuristically classify a False ``AXIsProcessTrusted`` as STALE vs never-granted.
+
+    PURE (the unit-test target). Returns ``True`` (stale — guide REMOVE-and-re-add)
+    when Accessibility was ever confirmed granted (``ax_was_trusted``) OR the process
+    cdhash differs from the one recorded when it was last trusted (an app update
+    rotated the ad-hoc signature — item L). Returns ``False`` (never granted — guide
+    plain "enable") otherwise, including a first-ever run with no recorded state.
+
+    The cdhash comparison only fires when **both** hashes are known; when the
+    signature can't be read it degrades to the ``ax_was_trusted`` signal alone. A
+    user who manually revoked an unchanged-cdhash grant is reported stale too — a
+    benign false positive, since the REMOVE-and-re-add cure still re-grants it.
+    """
+    if ax_was_trusted:
+        return True
+    return current_cdhash is not None and last_cdhash is not None and current_cdhash != last_cdhash
+
+
+def code_signature_hash() -> str | None:
+    """Return this process's code-signing cdhash as a hex string, or ``None``.
+
+    Reads ``kSecCodeInfoUnique`` via ``SecCodeCopySelf`` →
+    ``SecCodeCopySigningInformation`` — the **running image's** TCC identity (the
+    value macOS keys an Accessibility grant on, and the value an ad-hoc rebuild /
+    app update rotates). Reading one's OWN signature needs no entitlement (unlike
+    TCC.db, which is SIP-locked). The Security functions are bound feature-detected
+    by framework PATH like the AX funcs; the result is memoized (constant per
+    process). Returns ``None`` (logged) on any binding/read failure — callers then
+    fall back to the ``ax_was_trusted`` signal alone (:func:`is_grant_stale`).
+    """
+    global _CDHASH, _CDHASH_COMPUTED
+    if _CDHASH_COMPUTED:
+        return _CDHASH
+    _CDHASH_COMPUTED = True
+    funcs = _load_security_functions()
+    copy_self = funcs.get("SecCodeCopySelf")
+    copy_info = funcs.get("SecCodeCopySigningInformation")
+    if copy_self is None or copy_info is None:
+        return None
+    try:
+        # Out-pointers are passed as a None placeholder and returned in the result
+        # tuple (verified on 26.5.1; the hex matches `codesign`'s CDHash). Do NOT
+        # CFRelease the +1 Copy results: at one call per process the imbalance is a
+        # few hundred bytes once, while an over-release would crash (cf. §1.2).
+        status, code = copy_self(0, None)
+        if status != 0 or code is None:
+            log.debug("SecCodeCopySelf failed (status %d)", status)
+            return None
+        status, info = copy_info(code, 0, None)
+        if status != 0 or info is None:
+            log.debug("SecCodeCopySigningInformation failed (status %d)", status)
+            return None
+        unique = info[_SEC_CODE_INFO_UNIQUE]
+        _CDHASH = bytes(unique).hex()
+    except Exception as exc:
+        log.warning("could not read this process's code signature: %s", exc)
+        return None
+    log.debug("process cdhash: %s", _CDHASH)
+    return _CDHASH
+
+
+def _load_security_functions() -> dict[str, Any]:
+    """Bind ``SecCodeCopySelf``/``SecCodeCopySigningInformation`` from Security once.
+
+    Feature-detected by framework PATH (like :func:`_load_ax_functions`). The
+    signatures encode an OSStatus return (``i``) and a trailing OUTPUT pointer
+    (``o^@``) for the copied ``SecCodeRef`` / ``CFDictionaryRef``. Cached either way,
+    including a miss, so a host lacking the symbols isn't reprobed.
+    """
+    global _SECURITY_LOADED
+    if _SECURITY_LOADED:
+        return _SECURITY_FUNCS
+    _SECURITY_LOADED = True
+    try:
+        import objc
+    except ImportError as exc:
+        log.warning("objc unavailable; cannot bind Security functions: %s", exc)
+        return _SECURITY_FUNCS
+    specs = [
+        ("SecCodeCopySelf", b"iIo^@"),  # OSStatus(SecCSFlags, out SecCodeRef)
+        ("SecCodeCopySigningInformation", b"i@Io^@"),  # OSStatus(code, SecCSFlags, out CFDict)
+    ]
+    try:
+        bundle = objc.loadBundle("Security", {}, bundle_path=_SECURITY_FRAMEWORK_PATH)
+        objc.loadBundleFunctions(bundle, _SECURITY_FUNCS, specs)
+    except Exception as exc:
+        log.warning("could not load Security functions: %s", exc)
+        return _SECURITY_FUNCS
+    if "SecCodeCopySelf" not in _SECURITY_FUNCS:
+        log.warning("SecCodeCopySelf could not be bound from Security")
+    return _SECURITY_FUNCS

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from spacelabel import store
-from spacelabel.model import Config
+from spacelabel.model import AgentState, Config
 from spacelabel.store import (
     ConfigKeyError,
     ConfigValueError,
@@ -224,6 +224,62 @@ def test_display_labels_independent_of_space_labels(paths):
     assert store.load_labels(paths)["space-1"].text == "Email"
     # ...and a display-name write must not wipe space labels.
     store.set_display_label(paths, "disp-2", "Side")
+    assert store.load_labels(paths)["space-1"].text == "Email"
+
+
+# ---- agent runtime state (state.json) --------------------------------------
+
+
+def test_agent_state_missing_is_default(paths):
+    state = store.load_agent_state(paths)
+    assert state.last_cdhash is None
+    assert state.ax_was_trusted is False
+
+
+def test_agent_state_roundtrip(paths):
+    store.save_agent_state(paths, AgentState(last_cdhash="b4955ea0", ax_was_trusted=True))
+    state = store.load_agent_state(paths)
+    assert state == AgentState(last_cdhash="b4955ea0", ax_was_trusted=True)
+    # Stored beside the config in its own file, separate from labels/displays/config.
+    assert paths.state_file == paths.directory / "state.json"
+    assert paths.state_file.exists()
+
+
+def test_agent_state_overwrite_replaces(paths):
+    store.save_agent_state(paths, AgentState(last_cdhash="old", ax_was_trusted=True))
+    store.save_agent_state(paths, AgentState(last_cdhash="new", ax_was_trusted=True))
+    assert store.load_agent_state(paths).last_cdhash == "new"
+
+
+def test_agent_state_null_cdhash_persists(paths):
+    # The signature can be unreadable yet we still record that AX was granted: the
+    # ax_was_trusted signal must survive a None cdhash (drives is_grant_stale alone).
+    store.save_agent_state(paths, AgentState(last_cdhash=None, ax_was_trusted=True))
+    assert store.load_agent_state(paths) == AgentState(last_cdhash=None, ax_was_trusted=True)
+
+
+def test_agent_state_corrupt_recovers_to_default(paths):
+    paths.state_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.state_file.write_text("{ not json")
+    # A malformed state file is only a regenerable checkpoint -> recover, never raise.
+    assert store.load_agent_state(paths) == AgentState()
+
+
+def test_agent_state_wrong_field_types_drop_to_defaults(paths):
+    paths.state_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.state_file.write_text(
+        json.dumps({"schema_version": 1, "last_cdhash": 123, "ax_was_trusted": "yes"})
+    )
+    state = store.load_agent_state(paths)
+    assert state.last_cdhash is None  # non-str cdhash dropped
+    assert state.ax_was_trusted is False  # non-bool flag dropped
+
+
+def test_agent_state_independent_of_labels(paths):
+    # state.json is its own file: a label write must not touch it, and vice versa.
+    store.save_agent_state(paths, AgentState(last_cdhash="X", ax_was_trusted=True))
+    store.set_label(paths, "space-1", "Email")
+    assert store.load_agent_state(paths) == AgentState(last_cdhash="X", ax_was_trusted=True)
     assert store.load_labels(paths)["space-1"].text == "Email"
 
 

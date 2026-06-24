@@ -28,6 +28,7 @@ from pathlib import Path
 from spacelabel.agent.geometry import ANCHORS
 from spacelabel.labeling import canonical_uuid, find_orphans
 from spacelabel.model import (
+    AgentState,
     Config,
     HudConfig,
     Label,
@@ -41,6 +42,7 @@ from spacelabel.model import (
 __all__ = [
     "CONFIG_SCHEMA",
     "SCHEMA_VERSION",
+    "AgentState",
     "ConfigKeyError",
     "ConfigValueError",
     "NoteIndexError",
@@ -56,10 +58,12 @@ __all__ = [
     "format_scalar",
     "get_config_value",
     "labels_path",
+    "load_agent_state",
     "load_config",
     "load_display_labels",
     "load_labels",
     "prune_labels",
+    "save_agent_state",
     "save_config",
     "set_config_value",
     "set_display_label",
@@ -97,16 +101,19 @@ class StorePaths:
 
     ``config_lock``/``labels_lock`` are the advisory-lock files (``<file>.lock``)
     that serialize read-modify-write cycles; ``directory`` is created lazily on
-    first write.
+    first write. ``state_file`` holds agent-written runtime state (``AgentState``),
+    not user config — it is not exposed to the CLI/prefs nor the live-reload poll.
     """
 
     directory: Path
     config_file: Path
     labels_file: Path
     displays_file: Path
+    state_file: Path
     config_lock: Path
     labels_lock: Path
     displays_lock: Path
+    state_lock: Path
 
     @classmethod
     def default(cls) -> StorePaths:
@@ -115,14 +122,17 @@ class StorePaths:
         config_file = directory / "config.json"
         labels_file = directory / "labels.json"
         displays_file = directory / "displays.json"
+        state_file = directory / "state.json"
         return cls(
             directory=directory,
             config_file=config_file,
             labels_file=labels_file,
             displays_file=displays_file,
+            state_file=state_file,
             config_lock=_lock_for(config_file),
             labels_lock=_lock_for(labels_file),
             displays_lock=_lock_for(displays_file),
+            state_lock=_lock_for(state_file),
         )
 
     @classmethod
@@ -140,14 +150,17 @@ class StorePaths:
         directory = config_file.parent
         labels_file = directory / "labels.json"
         displays_file = directory / "displays.json"
+        state_file = directory / "state.json"
         return cls(
             directory=directory,
             config_file=config_file,
             labels_file=labels_file,
             displays_file=displays_file,
+            state_file=state_file,
             config_lock=_lock_for(config_file),
             labels_lock=_lock_for(labels_file),
             displays_lock=_lock_for(displays_file),
+            state_lock=_lock_for(state_file),
         )
 
 
@@ -714,6 +727,49 @@ def set_display_label(paths: StorePaths, display_uuid: str, name: str) -> None:
             names.pop(display_uuid, None)
         _atomic_write_json(
             paths.displays_file, {"schema_version": SCHEMA_VERSION, "displays": names}
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Agent runtime state (state.json — agent-written, not user config)
+# --------------------------------------------------------------------------- #
+
+
+def load_agent_state(paths: StorePaths) -> AgentState:
+    """Load persisted agent runtime state; defaults if absent/corrupt (never raises).
+
+    Mirrors :func:`load_display_labels`: a missing or malformed ``state.json``
+    recovers to a default :class:`~spacelabel.model.AgentState`, and any field with
+    the wrong type is dropped to its default — the state is only a regenerable
+    heuristic checkpoint (item L), so a bad file must never crash the agent.
+    """
+    data = _read_json(paths.state_file)
+    if not isinstance(data, Mapping):
+        return AgentState()
+    last = data.get("last_cdhash")
+    trusted = data.get("ax_was_trusted")
+    return AgentState(
+        last_cdhash=last if isinstance(last, str) else None,
+        ax_was_trusted=trusted if isinstance(trusted, bool) else False,
+    )
+
+
+def save_agent_state(paths: StorePaths, state: AgentState) -> None:
+    """Persist agent runtime state atomically under a flock.
+
+    A full overwrite of the two regenerable fields (not a read-modify-write), so —
+    unlike the label/display stores — there are no sibling keys to preserve and no
+    ``_guard_before_rewrite`` is needed: a corrupt ``state.json`` simply recovers to
+    defaults on the next :func:`load_agent_state` and is replaced cleanly here.
+    """
+    with _file_lock(paths.state_lock):
+        _atomic_write_json(
+            paths.state_file,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "last_cdhash": state.last_cdhash,
+                "ax_was_trusted": state.ax_was_trusted,
+            },
         )
 
 

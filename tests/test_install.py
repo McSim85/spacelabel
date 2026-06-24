@@ -601,7 +601,15 @@ def test_purge_targets_default_config_removes_owned_files_not_whole_dir(monkeypa
     paths = install.store.StorePaths.resolve(None)
     targets = install.purge_targets(paths, remove_completion=True)
     assert default_dir not in targets  # NOT the whole dir
-    for owned in ("config.json", "config.json.lock", "labels.json", "displays.json", "agent.lock"):
+    for owned in (
+        "config.json",
+        "config.json.lock",
+        "labels.json",
+        "displays.json",
+        "state.json",
+        "state.json.lock",
+        "agent.lock",
+    ):
         assert (default_dir / owned) in targets  # owned files listed individually
     assert (tmp_path / "Caches/spacelabel") in targets
     assert (tmp_path / "Logs/spacelabel") in targets

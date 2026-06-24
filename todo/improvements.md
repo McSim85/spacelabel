@@ -422,6 +422,17 @@ Severity: **low** (cosmetic / contract consistency).
 
 ### L. Detect a STALE Accessibility grant before telling the user to "enable" it  *(Max, 2026-06-23 — live finding)*
 
+> **✅ DONE (2026-06-24, branch `fix/stale-accessibility-grant`).** `switching.code_signature_hash`
+> reads the process cdhash (`SecCodeCopySelf`→`SecCodeCopySigningInformation`/`kSecCodeInfoUnique`,
+> feature-detected from Security; verified live — matches `codesign`'s CDHash). A `{last_cdhash,
+> ax_was_trusted}` checkpoint is persisted to a new agent-owned `state.json` on each successful AX
+> check; the PURE `switching.is_grant_stale` classifies a later False check as **stale** (cdhash
+> rotated since trusted, or ever-trusted) vs **never granted**, and `app._accessibility_reason`
+> branches the ⚠️ reason row + the prompt path accordingly (REMOVE-and-re-add vs enable). Tests:
+> `is_grant_stale` matrix (`test_switching`), `state.json` round-trip (`test_store`), purge ownership
+> (`test_install`), and the delegate reason both-branches (`test_agent_imports`). Durable cure stays
+> the item-E Developer-ID/notarization follow-on. DECISIONS §9.5 note + docs/UI.md §2.4 updated.
+
 **Context (verified live):** with the signed cask 0.7.0 bundle (cdhash `4ac198d5…`), an **already-enabled "spacelabel" entry** existed in System Settings → Accessibility, yet `AXIsProcessTrusted()` stayed **False** and click-to-switch never armed; **re-triggering / toggling did not help.** Root cause: **ad-hoc signing rotates the cdhash every build/release**, and macOS TCC keys the grant to the cdhash — so the visible "spacelabel" entry is bound to an **old** cdhash and does not apply to the new process. Toggling the stale entry off/on often re-grants the *old* cdhash; the user must **remove it (−) and let a fresh prompt re-add it** (re-keying to the current cdhash). Today the guidance just says "enable Accessibility for spacelabel" — actively misleading when an enabled-but-stale entry is already present.
 
 **Max's question — can the app detect this before suggesting enablement? YES (heuristically):** the app cannot read TCC.db (SIP), but it can read **its own** code identity and remember it:
