@@ -118,8 +118,6 @@ def parse_spaces_plist(
                 continue
             raw_uuid = space.get("uuid")
             labelable = _is_real_uuid(raw_uuid)
-            if not labelable and not include_unlabelable:
-                continue
             # A malformed/changed entry (non-numeric type or id) must be SKIPPED, not
             # crash the best-effort fallback (read_spaces only guards plistlib.load).
             try:
@@ -132,6 +130,11 @@ def parse_spaces_plist(
                     display_uuid,
                     exc,
                 )
+                continue
+            # Surface an unlabelable Space only with include_unlabelable AND a real id64:
+            # a uuid="" id64=0 row is a header/placeholder, not a desktop (mirrors
+            # cgs.parse_spaces) -- counting it would fabricate an extra Desktop N.
+            if not labelable and (not include_unlabelable or id64 == 0):
                 continue
             # Special Spaces (fullscreen/tiled/system) are never labelable; skip always,
             # mirroring cgs.parse_spaces so the fallback yields the identical Space set.

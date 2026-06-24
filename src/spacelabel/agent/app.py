@@ -787,16 +787,17 @@ class AppDelegate(NSObject):
         )
 
     @objc.python_method
-    def _on_pill_clicked(self, uuid: str, id64: int) -> None:
+    def _on_pill_clicked(self, uuid: str, display_uuid: str, id64: int) -> None:
         """Switch to the clicked pill's Space via the Mission Control shortcut.
 
         Resolves the clicked Space LIVE at click time -- by ``uuid`` (a labelable Space)
-        or by session ``id64`` (the default unlabelable Space, which has no UUID; switched
-        by its ordinal via the stable session id, DECISIONS.md 9.5) -- so an ordinal that
-        shifted on a reorder is never cached. Resolves the target's enabled "Switch to
-        Desktop N" shortcut and posts it. Any failure disables capture with a specific,
-        surfaced reason (prompting for Accessibility on the first miss), never a silent
-        no-op.
+        or by ``(display_uuid, id64)`` (the default unlabelable Space, which has no UUID;
+        switched by its ordinal via the stable session id, DECISIONS.md 9.5) -- so an
+        ordinal that shifted on a reorder is never cached. ``display_uuid`` disambiguates
+        default Spaces across displays, whose ``id64`` can collide. Resolves the target's
+        enabled "Switch to Desktop N" shortcut and posts it. Any failure disables capture
+        with a specific, surfaced reason (prompting for Accessibility on the first miss),
+        never a silent no-op.
         """
         from spacelabel.platform import cgs, switching
 
@@ -810,16 +811,23 @@ class AppDelegate(NSObject):
         except cgs.CGSUnavailableError as exc:
             self._disable_click_to_switch(f"could not read live Spaces: {exc}")
             return
-        # Resolve by UUID (labelable) or session id64 (the default unlabelable Space).
+        # Resolve by UUID (labelable, globally unique) or by (display_uuid, id64) for the
+        # default unlabelable Space -- keyed by display because a default's id64 can be
+        # reused across displays (DECISIONS.md 1.5/9.5).
         if uuid:
             target = next((space for space in spaces if space.uuid == uuid), None)
         else:
-            target = next((space for space in spaces if space.id64 == id64), None)
+            target = next(
+                (s for s in spaces if s.display_uuid == display_uuid and s.id64 == id64), None
+            )
         if target is None:
             # Space disappeared between last refresh and click (reorder/close race).
             # Rebuild the row immediately so the stale pill is no longer clickable.
             log.warning(
-                "clicked Space (uuid=%r id64=%s) is no longer present; refreshing row", uuid, id64
+                "clicked Space (uuid=%r display=%r id64=%s) is no longer present; refreshing row",
+                uuid,
+                display_uuid,
+                id64,
             )
             self._refresh()
             return

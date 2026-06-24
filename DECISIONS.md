@@ -296,15 +296,23 @@ above was the headline bug O (click-to-switch fails on a secondary display) + V 
   remaining step** (the macOS behavior + the V numbering are confirmed; the in-agent notice is
   unit-covered but not yet clicked live — see `docs/VERIFICATION.md`).
 - **Follow-ups X + AA, fixed in the same PR (review of O+V).**
-  - **X — the default unlabelable Space is now a switch target, by session `id64`.** This is a
+  - **X — the default unlabelable Space is now a switch target, by `(display, id64)`.** This is a
     **deliberate update to §9.5**, which previously made unlabelable pills non-switch-targets ("no
     stable key to resolve to a live ordinal"). The default Space has no UUID, but its `id64` is a
-    stable *session* id (unchanged across reorders), and it is used only for a transient switch
-    resolution — never as a persisted label key — so the UUID-keying invariant (§1.4) is untouched.
-    `PillModel` carries `id64`; `menubar._handle_click_at_x` routes a `uuid`-or-`id64` pill to the
-    switch handler `(uuid, id64)`; `app._on_pill_clicked` resolves by `uuid` (labelable) or `id64`
-    (default), computes the live ordinal, and posts — still gated to the active display (item O). A
-    pill with neither a uuid nor an id64 still opens the menu (no identity to resolve).
+    stable *session* id (unchanged across reorders), used only for a transient switch resolution —
+    never as a persisted label key — so the UUID-keying invariant (§1.4) is untouched. Keyed by
+    **`(display_uuid, id64)`**, not bare `id64`: a default's `id64` can be low/reused across displays
+    (`1`), so display disambiguates. `PillModel` carries `display_uuid` + `id64`;
+    `menubar._handle_click_at_x` routes a pill with a `uuid` OR an `id64` to the switch handler
+    `(uuid, display_uuid, id64)`; `app._on_pill_clicked` resolves by `uuid` (labelable) or
+    `(display_uuid, id64)` (default), computes the live ordinal, posts — still gated to the active
+    display (item O). A pill with no identity (`uuid=""` and `id64==0`) still opens the menu.
+  - **Read-path hardening (same root, found reviewing X+AA).** `parse_spaces` now (a) **skips
+    `uuid="" id64==0` placeholder rows** even with `include_unlabelable` — they are headers, not
+    desktops, and counting them fabricates an extra `Desktop N`; and (b) keys **`is_current` by
+    `(display, id64)`** via a `current_by_display` map instead of a flat `set[int]`, so a default's
+    reused `id64` can't mark the wrong display's Space current (which would mis-pick the active
+    title and double-mark pills). The plist fallback applies the same placeholder skip.
   - **AA — the active default desktop now titles as "Desktop N".** `app._find_active_space` resolves
     the active display's current Space within the full `include_unlabelable` enumeration (the
     `is_current` Space on the active display), so the focused default desktop is found rather than
