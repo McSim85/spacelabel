@@ -408,6 +408,145 @@ Severity: **low** (UX). Cross-refs `critical-click-to-switch.md` (shipped).
 
 ---
 
+### K. CLI shows `launcher.py` as prog_name when run from the .app bundle  *(Phase-6 finding, 2026-06-23)*
+
+**Context:** through the cask CLI shim (`spacelabel.app/Contents/Resources/spacelabel` → `launcher.py`), `spacelabel --help` prints `Usage: launcher.py [OPTIONS] …` instead of `Usage: spacelabel …`. The py2app launcher invokes the click group without `prog_name`, so click derives it from `sys.argv[0]` (`launcher.py`). Cosmetic, but it contradicts the CLI contract (plan row **A4** expects `prog_name="spacelabel"`) and leaks into any usage/error text.
+
+**Read first:** `packaging/py2app/launcher.py`; `src/spacelabel/cli.py` (`main()` / the click group, which sets `prog_name="spacelabel"` on the normal entry point).
+
+**Fix:** have the launcher call the group with `prog_name="spacelabel"` (e.g. `cli.main(prog_name="spacelabel")`) — matching the pyproject entry-point behavior — so the bundle CLI and the pipx/dev CLI present identically. Add/extend a launcher test (`tests/test_launcher.py`) asserting the usage line says `spacelabel`.
+
+Severity: **low** (cosmetic / contract consistency).
+
+---
+
+### L. Detect a STALE Accessibility grant before telling the user to "enable" it  *(Max, 2026-06-23 — live finding)*
+
+**Context (verified live):** with the signed cask 0.7.0 bundle (cdhash `4ac198d5…`), an **already-enabled "spacelabel" entry** existed in System Settings → Accessibility, yet `AXIsProcessTrusted()` stayed **False** and click-to-switch never armed; **re-triggering / toggling did not help.** Root cause: **ad-hoc signing rotates the cdhash every build/release**, and macOS TCC keys the grant to the cdhash — so the visible "spacelabel" entry is bound to an **old** cdhash and does not apply to the new process. Toggling the stale entry off/on often re-grants the *old* cdhash; the user must **remove it (−) and let a fresh prompt re-add it** (re-keying to the current cdhash). Today the guidance just says "enable Accessibility for spacelabel" — actively misleading when an enabled-but-stale entry is already present.
+
+**Max's question — can the app detect this before suggesting enablement? YES (heuristically):** the app cannot read TCC.db (SIP), but it can read **its own** code identity and remember it:
+1. Read the running bundle's **cdhash** via the Security framework (`SecCodeCopySelf` → `SecCodeCopySigningInformation`, `kSecCodeInfoUnique`) — reading your own signature is allowed; bind it feature-detected like the AX funcs in `switching.py`.
+2. Persist `last_cdhash` + an `ax_was_trusted` flag in the store (small state file or config).
+3. **Infer staleness:** when `AXIsProcessTrusted()` is False AND (`current_cdhash != last_cdhash` → app was updated, OR `ax_was_trusted` was set) → almost certainly a **stale** grant, not a missing one.
+
+**Then branch the guidance** (in `app.py` click-to-switch availability / the ⚠️ reason row + the first-click prompt; `_sync_click_to_switch_state`):
+- **stale** → *"Accessibility for ‘spacelabel’ went stale after an app update (its signature changed). In System Settings → Privacy & Security → Accessibility, REMOVE the existing ‘spacelabel’ entry (–), then click a pill again to re-add it."* + open the Accessibility pane.
+- **never granted** → the existing "grant Accessibility" message.
+
+**Read first:** `src/spacelabel/platform/switching.py` (`accessibility_trusted`, the HIServices bind pattern), `src/spacelabel/agent/app.py` (`_sync_click_to_switch_state`, the AX reason rows B22), item **E** (the signed-app/TCC story), `docs/UI.md` Accessibility section.
+
+**Durable fix (the real cure):** **Developer-ID signing + notarization** gives a *stable* cdhash across releases, so the grant survives upgrades and this whole staleness class disappears — tracked as the item-E follow-on. Item L is the best we can do while ad-hoc. Tests: stale-vs-missing branch (mock `AXIsProcessTrusted` + persisted cdhash). Severity: **medium** (UX/correctness of the headline feature).
+
+> **Interim workaround for Max right now:** Settings → Privacy & Security → Accessibility → select the existing **"spacelabel"** row → **−** to remove it → click a menu-bar pill → on the fresh prompt enable the newly-added "spacelabel" → click a pill again. (Re-keys the grant to cdhash `4ac198d5`.)
+
+---
+
+### M. `status --help` (and audit all) leaks raw RST/markdown markup + internal refs  *(Max, 2026-06-23)*
+
+**Context:** `spacelabel status --help` prints the docstring verbatim, including `**selected store**`, `` ``--config`` ``, `*different*`, `` ``agent.lock`` ``, and internal references `(DECISIONS.md §9)`, `(per review F3)` — click renders none of this in plain-text help, so the raw markup/refs show (`src/spacelabel/cli.py` `status` docstring, ~line 382).
+
+**Fix:** rewrite the `status` docstring as clean, concise plain text — no `**bold**`, no `` ``literals`` ``, no `*emphasis*` — and move the `DECISIONS §9` / `review F3` notes into a **code comment**, not user-facing help. **Audit every command docstring** for the same leak.
+
+**Acceptance test (Max asked):** in `tests/test_cli.py`, parametrize over the CLI command tree and assert no command's `--help` contains `**`, `` `` `` (double backtick), or internal-ref substrings (`DECISIONS.md`, `review F`, `§`). Doubles as a regression guard. (The usage line also shows `launcher.py` not `spacelabel` under the cask — that's item **K**; the test should assert `spacelabel` once K lands.)
+
+Severity: **low** (cosmetic / CLI contract A4).
+
+---
+
+### N. Colorize `status` output (dep-free); do NOT colorize help (needs a rejected dep)  *(Max, 2026-06-23)*
+
+**`status` output — yes:** color `running (managed) …` green and `not running …` yellow via `click.style`, TTY-gated + `NO_COLOR`-aware — the existing pattern for `spaces`/`display list` (the bold/green helper near `cli.py:80`). No new dep; fits the CLI contract (DECISIONS §9 / A11–A18: color only on an interactive TTY, stripped when piped/`NO_COLOR`). Test: ANSI present on a faked TTY, absent when piped / `NO_COLOR=1`.
+
+**`--help` colorization — no:** click has no native colored help; the only easy route is `rich-click`/`rich`, a **new dependency** contradicting the locked **stdlib-first / only-`click`** policy (DECISIONS §2; `rumps`/`Pillow` already rejected). Keep help plain unless that decision is deliberately relaxed.
+
+Pairs with **K** + **M** (one `fix(cli): help/output polish` PR). Severity: **low**.
+
+---
+
+### O. Click-to-switch fails on a SECONDARY display (multi-display ordinal ↔ "Desktop N" mismatch)  *(Max, 2026-06-23 — live finding)*
+
+**Context (verified live):** with two displays + "Displays have separate Spaces" ON, click-to-switch **works on the portrait/right display but does nothing on the 4K/left display** (after adding a 2nd Space there).
+
+**Diagnosis (Phase-6 investigation):**
+- All "Switch to Desktop 1–15" symbolic hotkeys (ids 118–132) are **bound + enabled** — so this is **not** the missing-hotkey / contiguity risk (H6 is fine here).
+- `labeling.assign_ordinals` (`labeling.py:72`) numbers Spaces by spacelabel's **CGS `CGSCopyManagedDisplaySpaces` enumeration order**: 4K/left → ordinals **1–2**, portrait/right → **3–14**. Click-to-switch posts `Ctrl+ordinal` (hotkey id `117+ordinal`, `switching.py`).
+- **Root cause:** macOS's "Switch to Desktop N" numbering does **not** match spacelabel's CGS enumeration order once Spaces are split across displays. Posting `Ctrl+N` for a left-display Space lands on the wrong desktop / the other display, so the left display's Spaces aren't reachable by their spacelabel ordinal. (It happens to align for the right display, which is why that one works.)
+- **It currently fails near-silently** (click does nothing visible) — which also brushes against the "never silently no-op" rule (DECISIONS §9.5).
+
+**Read first:** `labeling.assign_ordinals`/`ordinal_for_uuid`, `switching.parse_desktop_binding` + the post path, `agent/app.py::_on_pill_clicked`, DECISIONS §9.5, plan F2/F3 (multi-display), H6.
+
+**Fix options (resolve the mapping or fail loudly):**
+1. Derive the ordinal from macOS's **authoritative** "Desktop N" ordering (e.g., the global `com.apple.spaces.plist` order, or whatever the Ctrl+N hotkeys actually follow) instead of CGS enumeration order — needs an empirical (display,Space)→Desktop-N mapping confirmed on hardware (a manual `Ctrl+N` probe per display).
+2. If `Ctrl+N` cannot reliably target a **secondary** display's Space (a real macOS limitation under separate-Spaces), **disable click-to-switch for those Spaces with a visible reason** ("click-to-switch is only reliable on the main display") rather than a silent no-op.
+3. (Stretch) a private per-display set-current-space path — SIP/risky, likely out of scope.
+
+**Acceptance:** clicking a pill on **each** display switches to the correct Space; where it can't, it disables with a clear reason (no silent failure). Severity: **medium–high** (headline feature broken on a secondary display + near-silent).
+
+---
+
+### P. Per-display overlay on/off  *(Max, 2026-06-23)*
+Let the corner overlay be enabled/disabled **per display** (not just the global `modes.overlay`). Store a per-display flag (extend `displays.json` like the custom-name pattern) + expose in `display` CLI and the Preferences per-display rows; `_update_overlays` (`app.py`) skips displays toggled off. Read first: `agent/overlay.py`, `_update_overlays`, `store.py` displays.json pattern, `agent/prefs.py`. Severity: **low** (UX).
+
+### Q. Hide overlay on displays with only a single / unlabeled Space  *(Max, 2026-06-23)*
+When a display's current Space is unlabeled (or it's the single default no-UUID Space), the overlay shows a `Desktop N` placeholder that adds noise. Option to **suppress the overlay** on such displays (config flag, default on/off TBD) — only show where there's a real label. Pairs with P. Read first: `_update_overlays`/`overlay.py` (`title_for` fallback), DECISIONS §6.3. Severity: **low** (UX).
+
+---
+
+### R. Wallpaper mode must not clobber Dynamic / Shuffle wallpapers (static-only, detect + skip/confirm)  *(Max, 2026-06-23 — important safety gap)*
+
+**Context (Max):** macOS supports **Dynamic** wallpapers (time-of-day `.heic`) and **Shuffle** (rotating folder/album). spacelabel's experimental wallpaper mode grabs `NSWorkspace.desktopImageURL` (one image) and sets a **static composite** — so on a Dynamic wallpaper it captures **a single frame**, replaces the dynamic `.heic` (kills the time-of-day behavior), and persists only that frame as the "original" → **the dynamic wallpaper can never be restored**. Shuffle breaks the same way (rotation lost, only one image captured). This is worse than the static-image case and effectively clobbers the user's real wallpaper config irreversibly — counter to the "best-effort, never corrupt the source of truth" stance (DECISIONS §7).
+
+**Required behavior:** wallpaper mode should operate on **static images only**. Detect Dynamic/Shuffle and **skip those displays with a clear notice** (preferred for the non-interactive agent) and/or require explicit per-display confirmation/opt-in. Never silently overwrite a Dynamic/Shuffle desktop.
+
+**Detection (read-only — never edit the WallpaperAgent store, DECISIONS §7):**
+- **Dynamic:** the `desktopImageURL` is a `.heic` carrying dynamic-desktop metadata (solar / `h24` keys / multiple embedded representations) — inspect via `CGImageSource` properties.
+- **Shuffle:** configured in the WallpaperAgent store (`~/Library/Application Support/com.apple.wallpaper/…` on Tahoe) — read-only detection is fragile/private; a conservative fallback is to only composite when `desktopImageURL` resolves to a single static file and the source isn't a rotating/folder config.
+- Conservative rule: **composite only** a plain static image; otherwise skip + log/notify.
+
+**Read first:** `agent/wallpaper.py` (`render_and_set`, `_base_image_path`, `_record_original`), DECISIONS §7, DESIGN §6.4. **Acceptance:** on a Dynamic or Shuffle desktop, wallpaper mode does **not** alter it (skips with a logged/visible reason); on a static image it composites + persists the original as today. Add tests for the type-detection branch.
+
+Severity: **medium** (data-safety in an experimental, off-by-default mode — but it irreversibly degrades a user's Dynamic/Shuffle wallpaper if enabled). **Phase-6: the live wallpaper-composite test (C19–C26 / Part 2 §6) was SKIPPED** on the reference machine precisely because the active wallpaper is Dynamic and the current build would clobber it.
+
+---
+
+### S. Wallpaper mode can't capture the real **per-Space** wallpaper base (`desktopImageURL` is per-screen, stale)  *(Max, 2026-06-23 — foundational finding)*
+
+**Context (verified live):** macOS supports **per-Space wallpapers**. The active portrait display's current Space (3A9B361D) shows a "Dubai Skyline" static photo, but `NSWorkspace.desktopImageURLForScreen_(screen)` returned `/System/Library/CoreServices/DefaultDesktop.heic` (the system default applied to newly-connected displays) — **not** the actual per-Space image. So `wallpaper.py`'s base capture composites onto the **wrong / default** base, and the persisted "original" is wrong too. Together with item **R** (Dynamic/Shuffle), the wallpaper mode's entire premise — *capture the current wallpaper → composite a label → set it* — is **unreliable on real multi-Space / multi-display setups** (the public `desktopImageURL` API predates per-Space wallpapers and doesn't reflect them).
+
+**Detection options (read first `agent/wallpaper.py`, DECISIONS §7 — never *edit* the WallpaperAgent store):**
+1. **Read the WallpaperAgent store read-only** to resolve the real per-Space/per-display image + type — Tahoe: `~/Library/Application Support/com.apple.wallpaper/Store/Index.plist`; older: `~/Library/Application Support/Dock/desktoppicture.db`. Private/fragile, and **never write** it.
+2. **Capture the rendered desktop pixels** (`CGWindowListCreateImage` of the desktop window layer / `screencapture`) as the base — sidesteps "which file is it" but grabs the rendered frame (loses dynamic; must exclude icons/widgets).
+3. **Accept the limitation** — only support the simple single-wallpaper case and skip per-Space setups with a notice.
+
+This is a **foundational redesign of wallpaper mode**, not a quick fix → its own design session (pairs with **R**). Severity: **medium** (experimental/off-by-default, but the feature is largely non-functional on per-Space setups). **Phase-6 outcome: wallpaper mode (C19–C26, Part 2 §6) left UNVERIFIED — deferred to a wallpaper-redesign session covering R + S.**
+
+---
+
+### T. Preferences / color-picker window placement + can't re-surface when hidden  *(Max, 2026-06-23 — §D)*
+Two window-management UX gaps in the accessory app:
+- **Placement:** the Preferences window (and the NSColorPanel from the Color column) open at the **bottom-left of the left display**. Should open **centered on the active (menu-bar-owning) display** by default (`center()` relative to the active `NSScreen`).
+- **Re-surface:** because the agent is an `NSApplicationActivationPolicyAccessory` app (no Dock icon, no Cmd+Tab entry), a Preferences window **hidden behind other windows can't be found again**. Make re-selecting **Preferences…** (and the menu open) **bring the existing window to front** (`makeKeyAndOrderFront:` + `NSApp.activate(ignoringOtherApps:true)`), and consider a transient activation policy while a window is open so it appears in the app switcher.
+Read first: `agent/prefs.py` (`show()`/window setup), `agent/app.py` (`openPreferences_`, accessory policy `:178`). Severity: **low–medium** (UX; the "can't find the window" one is genuinely confusing).
+
+### U. Preferences inline-edit bugs — paste shortcut + no live revert on clear  *(Max, 2026-06-23 — §D / D1)*
+- **Cmd+V/Cut/Copy don't work** in the Label edit field (right-click → Paste works). The accessory app has **no Edit menu**, so the standard Cmd-C/V/X key equivalents aren't wired to the field editor. Fix: add a minimal **Edit menu** (Undo/Cut/Copy/Paste/Select All with standard selectors+key equivalents) to the app, or install the standard responder-chain edit items so the field editor receives them.
+- **Clearing a label doesn't live-revert the outline** to `Desktop N` — the row stays stale until Preferences is reopened (`refresh()` not triggered after an empty commit → `clear_label`). Fix: refresh the outline row after a commit/clear (the `controlTextDidEndEditing_`/`_commit` path, `prefs.py:376`).
+Read first: `agent/prefs.py` (`_commit`, the outline editing), `agent/app.py` (menu construction). Severity: **low** (UX).
+
+### V. "Desktop N" numbering mismatch: Preferences vs menu-bar pills  *(Max, 2026-06-23 — §D / D1)*
+A Space shown as **"Desktop 3"** in the Preferences outline appears as **"4"** in the menu-bar pill. The two surfaces derive the fallback ordinal from different enumerations (one likely per-display / store-ordered, the other the global live `assign_ordinals`). They must agree. **Same root family as item O** (cross-display ordinal). Read first: `labeling.assign_ordinals`/`title_for`/`pill_text`, `agent/prefs.py` (how it numbers), `agent/menubar.py` (pill number), DECISIONS §6.1. Severity: **low–medium** (confusing inconsistency; also a clue for O).
+
+### W. Menu-bar mode OFF shows an empty status item instead of the `square.dashed` icon  *(Max, 2026-06-23 — §D / B6)*
+Turning **Menu-bar title OFF** leaves an **empty quadrant** in the menu bar rather than the documented neutral **`square.dashed` SF Symbol** + "menu-bar label off" accessibility label (plan B6 / `menubar.py:449` `set_inactive`). Investigate why `set_inactive` isn't rendering the symbol (possibly the buttons-row view still occupies the item, or the SF Symbol image isn't applied). Read first: `agent/menubar.py` `set_inactive`, `agent/app.py` menubar-mode toggle + buttons-row interaction. Severity: **low** (cosmetic, but looks broken).
+
+### Y. CLI table coloring ignores `NO_COLOR` on a TTY  *(Max, 2026-06-23 — H18/A18)*
+`NO_COLOR=1 spacelabel spaces` still shows the **bold header + green current-row** color on an interactive TTY — `NO_COLOR` is not honored. Plan A18/A12 + the CLI contract (DECISIONS §9) require color suppressed when `NO_COLOR` is set. The table color helper (`cli.py` ~`:80–89`, the bold/green `click.style` path) gates on `isatty` but **not** on `NO_COLOR`. Fix: suppress styling when `os.environ.get("NO_COLOR")` is set (or pass `color=False` to `click.echo`) — the logging sink already does this (`logging_setup.py:36`). Test: `NO_COLOR=1` → no ANSI even on a faked TTY; `*` marker still present. Severity: **low** (cosmetic / contract).
+
+### Z. Overlay + HUD show a STALE Space when the active Space is fullscreen/tiled  *(Max, 2026-06-23 — H2/H3)*
+Entering a fullscreen app (its own `type != 0` Space) correctly drops it from `spaces`/pills (H1 ✅), but the **corner overlay and HUD on that display keep showing the previous Space's label** instead of clearing/going neutral. Plan H2/H3 expect: no labelable current Space on that display → menu-bar title falls back to `spacelabel`, that display gets **no** overlay, HUD neutral/none. Either the fullscreen transition doesn't trigger a refresh or the refresh doesn't clear the panel when the active Space has no labelable match. Fix: in `_update_overlays`/`_update_hud` (`agent/app.py`), when the active display's current Space resolves to no labelable Space (fullscreen/tiled), **order-out that display's overlay** and suppress the HUD. Read first: `agent/app.py` `_update_overlays`/`_update_hud`/`read_active_space_uuid`, `platform/notifications.py` (does a fullscreen transition fire `activeSpaceDidChange`?). No crash. Severity: **low–medium** (stale display).
+
+---
+
 ## After completing each item
 
 1. Run all gates:

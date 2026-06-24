@@ -18,14 +18,45 @@ User-acceptance verification of the shipped build, per `spacelabel-plan/phase-6-
 ### Notes / drift from the plan text
 - Plan says repo is at **v0.6.0**; repo is actually **v0.6.1** with an open release-please PR for **0.6.2**. Version-string checks (1A.1, A4) are scored as "matches installed metadata", not the literal `0.6.0`.
 - The overview's branch-reconciliation warning (`feat/live-refresh-reorder`) is **stale**: that branch no longer exists (its feature shipped in v0.6.0 #25), and the `docs/backlog-pipx-only` work already merged to main (#30). No reconciliation was needed.
+- **Resumed 2026-06-23, post-PR #32** (`feat(dist): signed .app via Homebrew cask + Phase-6 follow-ups`, merged to `main` @ `df12dde`): distribution pivoted to the **signed `.app` via Homebrew cask** (DECISIONS §6.8); the CGS→SLS (item H) and `status` (item I) fixes landed. Verification continues on branch **`docs/phase-6-reverify-brew`** (off `df12dde`). The env table above reflects the **pipx** snapshot at the original 2026-06-22 run; install acceptance is now the brew matrix in Part 1. pipx is being removed entirely (`todo/remove-pipx.md`).
 
 Legend: ✅ pass · ⚠️ pass-with-note · ❌ fail · 🟡 N/A (by design / feature not shipped) · ⏳ deferred (hardware/UI, pending Max)
 
 ---
 
-## Part 1 — Install & distribution acceptance (pipx) — COMPLETE
+## Verdict & summary (2026-06-23)
 
-### 1A. pipx install matrix
+**PASS — no blocking defects.** Every make-or-break behavior is verified on the reference Mac (macOS 26.5.1, M3 Pro, dual display). The distribution pivot to a signed `.app` via Homebrew cask shipped (PR #32) and is verified end-to-end. All gaps found are **non-blocking backlog**; the experimental wallpaper mode is deferred for a redesign; three checks are deferred to a natural restart/hardware window.
+
+**Verified ✅**
+- **Install/distribution:** `brew install --cask` of the signed 0.7.0 `.app` (identity `dev.mcsim.spacelabel`, cdhash matches the CI release asset); agent runs **as the bundle**; CLI on PATH; uninstall keeps data.
+- **CGS gate (DESIGN §12):** symbols resolve, PyObjC↔CFArray bridge round-trips, flat RSS over 4000 reads, forced-nil → plist fallback identical; **every live uuid is persisted in the on-disk plist** → uuid reboot-stability at **~high confidence** (literal reboot still pending — see below).
+- **Core invariant:** labels follow a Space's **UUID through a Mission Control reorder** (vs WhichSpace).
+- **Click-to-switch** on the **primary** display (incl. high-ordinal pills past Desktop 3; revoke-AX → reason popup, no silent no-op) — fixed by the named-bundle TCC identity.
+- **CLI matrix** Part 3 §A: 68/69 + 7/7 real-store + 28/28 second pass (the 1 "fail" was a stale plan expectation, not a defect); real store restored byte-identical.
+- **UI:** §B menu-bar (pills/dropdown/rename), §C HUD (incl. rotated 2160×3840) + corner overlay + notes, §D Preferences (layout/color/toggles/popups), richer `status`.
+
+**Backlog opened this phase (all non-blocking; in `todo/improvements.md` unless noted):**
+- **Most significant — functional:** **O** click-to-switch fails on a **secondary** display (ordinal↔Desktop-N mismatch; near-silent) · **V** "Desktop N" numbering mismatch Prefs-vs-pill (same family as O) · **Z** overlay/HUD stale on a fullscreen Space.
+- **Accessibility/TCC:** **L** detect a *stale* grant (ad-hoc cdhash rotates per release) before telling the user to "enable"; durable cure = Developer-ID notarization (item E).
+- **Wallpaper (redesign, experimental/off-by-default):** **R** Dynamic/Shuffle guard (static-only) · **S** can't capture the per-Space base (`desktopImageURL` returns the default). Left UNVERIFIED by design.
+- **UX/polish:** **T** Prefs/color-picker window placement + re-surface · **U** Prefs inline-edit (Cmd+V dead, no live-revert on clear) · **W** menu-bar OFF shows empty quadrant not `square.dashed` · **P/Q** per-display overlay on/off + suppress on unlabeled · **K** CLI prog_name `launcher.py` · **M** `status --help` markup leak (+test) · **N** colorize `status` output · **Y** `NO_COLOR` not honored by table color.
+- **Already-tracked tasks:** `todo/remove-pipx.md` (strip the deprecated pipx path), `todo/uninstall-purge.md` (the `--purge` feature + its 1B.5–1B.9 acceptance rows).
+
+**Deferred (need a restart / hardware window) — the only unrun checks:**
+- **Reboot §5** — the uuid gate's *literal* final confirm (proxy already ~high). Capture snippet in this doc.
+- **H16** — "Displays have separate Spaces" OFF (`"Main"` sentinel / F3) — requires a logout.
+- **Part 2 §7** — detach-4K / re-orient generality (add/remove-Space already exercised).
+
+**Follow-ups:** prioritize **O/V/Z** (functional) for the next fix session; refresh `CLAUDE.md` with verified gotchas (Phase-7). `DECISIONS.md` needed no new decision beyond #32's pivot (§6.8) + SLS-fallback fix (§1.1); §1 gate note updated below.
+
+---
+
+## Part 1 — Install & distribution acceptance
+
+> **Distribution is now the signed `.app` via a Homebrew cask** (PR #32, DECISIONS §6.8 — reverses pipx-only #30). The **authoritative install-acceptance matrix is [Part 1 (brew) below](#part-1--install-acceptance-signed-app-via-homebrew-cask-current-path).** The pipx matrix that follows (1A/1B/1C) is **SUPERSEDED — kept only as a historical record** of the pre-pivot build's behavior. pipx is being removed from the repo entirely (`todo/remove-pipx.md`); **do not test pipx going forward.**
+
+### 1A. pipx install matrix  *(SUPERSEDED — historical; pipx being removed)*
 
 | # | Result | Evidence |
 |---|---|---|
@@ -55,9 +86,31 @@ Legend: ✅ pass · ⚠️ pass-with-note · ❌ fail · 🟡 N/A (by design / f
 ### 1C. Homebrew — 🟡 deferred (out of scope)
 No `Formula/` in the repo; brew not tested this run, matching the pipx-only decision (`todo/critical-release-automation.md`). N/A.
 
-**Part 1 verdict: PASS.** All scriptable install/distribution rows pass; PyPI-by-name and `--purge`/Homebrew correctly N/A (deferred features). No defects.
+**Part 1 (pipx, legacy) verdict: PASS (historical).** All scriptable pipx rows passed pre-pivot; PyPI-by-name and `--purge`/Homebrew were N/A then. Retained only as a record — **superseded by the brew matrix below.**
 
-> **⚠ Distribution pivot (Max, 2026-06-22):** during Part 2, click-to-switch testing surfaced that the pipx shared-python identity can't be granted Accessibility reliably (see the finding below). Decision: **move from pipx to a signed `.app` shipped via a Homebrew cask** (reverses #30). Part 1's pipx results remain a **valid record of the current build's behavior**, but the install/distribution path will be **re-verified under the cask** in the follow-up session (`todo/phase-6-blockers.md` Tier 1). The CLI/agent behavior tested in Parts 2–4 is distribution-agnostic and stands regardless.
+### Part 1 — Install acceptance: signed `.app` via Homebrew cask (current path)
+
+Distribution = signed `.app` via Homebrew cask (PR #32, DECISIONS §6.8). Build tool `tools/build_app.sh`; cask `Casks/spacelabel.rb`; agent-path resolution `install.py` `_resolve_install_shim`/`_enclosing_app_exe`. **Status: ⏳ to be run live** — building/installing the `.app` replaces the running agent, so it needs Max's go-ahead.
+
+Verified 2026-06-23 against the **CI-signed v0.7.0 release artifact** `spacelabel-0.7.0.zip` (downloaded from the GitHub release; ~18 MB; this is exactly what the cask installs):
+
+| # | Test | Expected | Result |
+|---|---|---|---|
+| P1.1 build | release pipeline `build-app` (py2app) | Produces a self-contained `spacelabel.app` (embedded `Python.framework`); py2app build-time only. | ✅ CI `build-app` job green; 18 MB bundle attached to v0.7.0. |
+| P1.2 sign | `codesign -dvvv` + `codesign --verify --deep --strict` | `Identifier=dev.mcsim.spacelabel`, `Signature=adhoc`; inside-out; verify passes. | ✅ `Identifier=dev.mcsim.spacelabel`, adhoc, cdhash `4ac198d5…`; verify → *valid on disk; satisfies its Designated Requirement* (validated the embedded Python.framework). |
+| P1.3 self-contained | `…/Contents/MacOS/spacelabel --version` (no build venv) | Runs from the embedded interpreter. | ✅ → `spacelabel, version 0.7.0`. |
+| P1.4 CLI on PATH | `…/Contents/Resources/spacelabel --help` (cask `binary` shim) | Full command tree, no PyObjC cost; shim execs the stub by absolute path. | ⚠️ Full tree renders (incl. the new richer `status` help). **Minor:** usage line shows `launcher.py`, not `spacelabel` (prog_name not set on the shim path) — A4 expects `prog_name="spacelabel"`. See finding below. |
+| P1.5 icon/accessory | `spacelabel.icns` present; `CFBundleIconFile`; `LSUIElement=true` | Named icon; accessory. | ✅ `CFBundleIdentifier=dev.mcsim.spacelabel`, `CFBundleName=spacelabel`, `LSUIElement=true`, `CFBundleIconFile=spacelabel.icns` (present). |
+| P1.6 install→bundle | install the app, then `spacelabel install` | LaunchAgent `ProgramArguments` = the **bundle exe**; `_resolve_install_shim` resolves the bundle. | ✅ `spacelabel install` → "Installed and loaded dev.mcsim.spacelabel."; plist `ProgramArguments` = **`/Applications/spacelabel.app/Contents/MacOS/spacelabel agent`** (bundle exe, not the pipx shim). Cask installs to **`/Applications`** (not `~/Applications`). |
+| **P1.7 named TCC identity** | running agent's code identity | Agent process **is** the bundle → Accessibility shows **"spacelabel"** (not `python3.x`); grant → `AXIsProcessTrusted()` True → pills switch. | ✅ **VERIFIED LIVE (Max, 2026-06-23).** Agent runs as the bundle (cdhash `4ac198d5…`); Accessibility entry is the named **"spacelabel"** (python3.x collision gone). Once a **stale** prior-cdhash entry was removed + re-added (see below / item L), `AXIsProcessTrusted()` → True and **clicking a non-current pill switches the Space** end-to-end (B18 path). The bundle pivot achieved its goal. Caveat stands: ad-hoc cdhash rotates per build → grant must be re-approved after each upgrade until Developer-ID/notarization (item E follow-on). The "had to remove a stale entry" friction → backlog item **L**. |
+| P1.8 footprint/uninstall | `spacelabel uninstall`; cask `zap` | uninstall keeps user data; cask `zap trash:` matches `--purge` paths. | ⏳ pending (after the click-to-switch test). |
+| P1.9 remote cask | `brew install --cask <tap>/spacelabel` | Installs v0.7.0 from the signed release asset. | ✅ PR #33 merged (cask `0.7.0`, real sha256). `brew tap mcsim85/spacelabel <repo>` + `brew install --cask mcsim85/spacelabel/spacelabel` → 0.7.0; app→`/Applications`, CLI→`/opt/homebrew/bin/spacelabel`; caveats correctly name **"spacelabel"** for Accessibility. Installed app cdhash `4ac198d5…` == the verified release asset. |
+
+**Finding (minor, P1.4 — confirmed on installed cask):** through the cask CLI shim, `--help`/usage prints `launcher.py` instead of `spacelabel` (the bundle's `Contents/Resources/launcher.py` invokes the click group without `prog_name="spacelabel"`). Cosmetic; affects the usage line + any `prog_name`-derived text (A4). → logged as `todo/improvements.md` item **K**.
+
+**Finding (minor — brew quarantine):** `brew install --cask` set `com.apple.quarantine` on `/Applications/spacelabel.app` (ad-hoc, no notarization). The LaunchAgent/first-launch needs it cleared — the cask **caveat documents this exactly** (`xattr -dr com.apple.quarantine …` / right-click→Open). I cleared it and the agent launched. Working-as-documented; the durable fix is Developer-ID notarization (deferred follow-on).
+
+**Item I (richer `status`) — ✅ verified:** with the cask agent loaded, `spacelabel status` → `running (managed)  pid=11916  label=dev.mcsim.spacelabel` (exit 0); `--json` → `{"installed":true,"loaded":true,"running":true,"pid":11916,"managed":true,"label":"dev.mcsim.spacelabel"}`. (The foreground/unmanaged branch — `running (unmanaged)` — still to be spot-checked.)
 
 ---
 
@@ -90,8 +143,11 @@ Read-only probe (`scratchpad/cgs_probe.py`) exercising the **shipped** `spacelab
 > **Resolved (2026-06-22):** the signed `.app` so TCC keys on `dev.mcsim.spacelabel` is built, installed via the Homebrew cask, and **verified end-to-end on the reference machine**: the Accessibility entry shows a **named "spacelabel"** (no python collision); granting it makes the agent trusted; **clicking a menu-bar pill switches the Space** (Max, after re-arming `menubar.click_to_switch` off→on). Caveat confirmed live too: the **ad-hoc cdhash changes on each rebuild**, so the grant must be re-approved after an upgrade/rebuild (Developer-ID would make it durable — deferred, §6.9). See the **Phase-6 blockers session → Tier 1** section below.
 Max enabled "python3.14" in Settings → Accessibility but click-to-switch stayed disabled. **Root cause confirmed empirically:** the agent runs as the ad-hoc-signed framework app-stub `Python.app/Contents/MacOS/Python` (id `org.python.python`, cdhash `b4955ea0…`); `AXIsProcessTrusted()` returns **False from a fresh process of that exact binary**, so the enabled "python3.14" entry isn't bound to the agent's identity, and **relaunch won't fix it**. The pipx CLI stub `bin/python3.14` is a *different* binary (id `python3-5555…`, cdhash `f740…`), so multiple "python3.14" identities collide in the Accessibility list. This is exactly the TCC-identity risk in `todo/improvements.md` item **E** (signed `.app`) — now reproduced live; item E updated with the cdhashes, the "relaunch won't help" proof, and an interim workaround. Not a code defect in spacelabel's switching logic (it correctly disables with a visible reason rather than silently no-op'ing, per DECISIONS §9.5). **Deferred to item E** (signed bundle is the durable fix). Workaround to attempt this session is in item E.
 
-### Steps 2–7 — ⏳ pending Max (UI / hardware)
-Need the running agent + your hands/eyes: (2) WhichSpace reorder demo, (3) display modes on rotated 2160×3840 + 4K, (4) menu-bar/prefs rename live-reload, (5) reboot persistence [deferred], (6) experimental wallpaper revert, (7) generality spot-check (detach 4K / change res-orientation / add-remove Space). I'll drive each with exact steps and you report/screenshot.
+### Step 2 — WhichSpace reorder demo (the core invariant) — ✅ PASS (Max, 2026-06-23)
+Moving/reordering Spaces in Mission Control keeps each label bound to its **Space UUID**, not its position — labels follow their desktops through a reorder (the `Desktop N` ordinal shifts, the label does not migrate to a different Space). This is the project's reason-for-being vs WhichSpace (position-keyed). Confirmed live by Max. Covers plan row **A1** + Part-2 step 2.
+
+### Steps 3–7 — ⏳ pending Max (UI / hardware)
+Still need your hands/eyes: (3) display modes (menu-bar / HUD / overlay) on the rotated 2160×3840 + 4K, (4) menu-bar/prefs rename live-reload, (5) reboot persistence [deferred to a natural restart — snippet below], (6) experimental wallpaper revert, (7) generality spot-check (detach 4K / change res-orientation / add-remove Space).
 
 #### Reboot-capture snippet (run once, around your next natural restart — no live session needed)
 ```sh
@@ -229,3 +285,73 @@ Gates green (`379 passed`), codex-clean. The headline was a self-introduced lock
 - **[P2] `.corrupt` recovery backups survived purge** — `store._guard_before_rewrite` renames malformed JSON to `<json>.corrupt`; `_default_store_owned_files()` now globs those too, so a default `uninstall --purge` is complete (the data dir empties and is removed).
 - **[P2] cask bump could downgrade on rerun** — a manual rerun for an *older* tag after main advanced would PR a version/sha **regression**. `update-cask` now parses the cask's current version and exits 42 (job no-ops, no PR) when the requested tag is older-or-equal.
 - **[P3] bash probe too narrow** — `_bash_too_old` only checked PATH + Homebrew. Now it also probes MacPorts (`/opt/local`), Nix (system + `~/.nix-profile`), and `$SHELL` when it is bash, judging by the newest, so a compatible non-Homebrew bash isn't falsely rejected.
+
+---
+
+## Part 3 — User-acceptance matrix · §A CLI — ✅ PASS (2026-06-23, automated)
+
+Run via `scratchpad/run_matrix.py` against the installed **cask CLI** (0.7.0). Per Max's request, **both store paths exercised**: the bulk against an **isolated `--config` scratch store**, plus a **mutation subset on the real default store** bracketed by backup → test → restore (real `labels.json` verified **byte-identical** afterward — user data untouched).
+
+**Result: 68/69 deterministic scratch rows pass + 7/7 real-store subset.** Groups covered: root/dispatch (A2–A8), spaces (A15/A17/A18), mode (A24–A29), label set/list/clear/prune (A31–A49, A108), note (A54–A71, H7), config get/set (A74–A92), display (A96–A104, F7), empty-store JSON `[]` (H10), completion `--dry-run` (A14.1). Exit-code + stdout/stderr-channel + error-message contracts all matched (DECISIONS §9 / A12/A13).
+
+**Findings (neither a code defect):**
+- **A29 — plan expectation corrected.** `mode hud --on --off` is **last-wins → `hud: off`, exit 0** (standard click `--on/--off` boolean), *not* the usage-error exit 2 the plan predicted. Optional: make it mutually-exclusive-strict (low value). The plan row's "exit 2" is wrong.
+- **A90 — PASS, with a `--` nuance.** `config set debounce_ms -- -1` → exit **1**, `… must be >= 0; got -1` (as the plan says). Without `--`, click reads `-1` as an option → exit 2 `No such option '-1'` (also correct; leading-dash values need `--`, same as H7's `note done -5`).
+- **A38** lowercase UUID accepted + canonicalized; **A14.1** completion script → stdout / target → stderr.
+
+**Real-store subset (default `StorePaths.resolve`):** `label set/list/clear`, `note add/list/clear`, `display set/clear` (all on a **sentinel UUID** `6622AC87…`, never a live Space), and `status --json` (`managed:true, running:true`) — all pass; the real store was restored byte-for-byte (`labels.json` pre == post). Confirms the default path works identically to `--config`.
+
+**Not CLI-runnable this pass (CGS-failure-injection rows — no CLI flag to force CGS-unavailable):** A19, A21, A22, A34, A35, A46, A50, A57, A62, A98, A99, A102, A106 and G1–G3/G11/H15. These error/fallback paths were **verified at the library level in Part 2 §1** (forced `CGSCopyManagedDisplaySpaces`→nil → `CGSUnavailableError` → plist fallback / clean error). Marked lib-covered.
+
+### §B Menu-bar (pills + dropdown) — ✅ PASS (Max, 2026-06-23)
+Observed on the reference rig (buttons-row + menubar mode on):
+- **Pills row (B7–B16):** pills render (not a text title), **grouped per display** (4K group + portrait group) with a **thin vertical divider** between (B12). **Current pill full-opacity, others dimmed; color never marks current** (B11). **Labeled** Spaces show a leading letter (A/s/V, `pill_label_chars=1`, B9); **unlabeled** show the Space **number** (B8). ✅
+- **Switch tracking (B2/B15):** Ctrl+→ moves the bright pill to the new current Space and the row resizes, within ~1s. ✅
+- **Dropdown (B29–B33/B37):** clicking the status item opens the menu — Rename this Space…, per-display Space sections with a **✓ on each display's current** Space (B33), the four mode toggles (B37), Preferences ⌘,, Quit ⌘Q. ✅
+- **Rename dialog (B30):** "Rename this Space…" opens an alert **prefilled** with the current label. ✅
+- **Click-to-switch (B18):** verified earlier (P1.7) — a non-current pill click switches the Space.
+
+Not individually exercised (note, not failures): B4 (title-mode truncation — buttons row was on), B6 (menubar-off `square.dashed` icon), B17/B19–B28 (click-to-switch display-only + the various ⚠️ reason rows — need specific permission/hotkey failure setups; item L covers the stale-grant reason), B34 (color swatch), B38/B39 (Preferences/Quit actions), B40 (live display-name reload).
+
+### §C HUD / overlay / notes / wallpaper — ◑ partial (Max, 2026-06-23)
+- **HUD (C1–C3) + Part 2 §3 — ✅:** switching Spaces shows the transient banner on the active display; **renders correctly on both the rotated 2160×3840 portrait and the 4K**; no focus theft / click-through holds (C3). ✅
+- **Corner overlay (C9–C12) + Part 2 §3 — ✅:** one always-on-top panel per display showing that display's current Space label; legible + correctly placed on the rotated portrait and sane on the 4K. ✅
+- **❌ FINDING — click-to-switch fails on the secondary (4K/left) display.** After adding a 2nd Space to the left display, clicking its pill doesn't switch (works on the portrait). Diagnosed: `assign_ordinals` uses spacelabel's CGS enumeration order (4K=ord 1–2, portrait=3–14), which doesn't match macOS's "Switch to Desktop N" hotkey numbering across separate-Spaces displays; all hotkeys 118–132 are bound (not an H6 issue). Near-silent failure (brushes DECISIONS §9.5). → **backlog item O** (resolve the mapping or disable-with-reason on secondary displays). *Retest after the fix.*
+- **Improvements requested → items P/Q:** per-display overlay on/off (P); suppress overlay on displays with a single/unlabeled Space (Q).
+- **Notes-in-overlay (C13/C14) — ✅:** added 2 notes to the current (unlabeled) Space + marked one done; overlay grew to show the `Desktop N` title (C14 fallback) + `☑ reply to Jane` / `☐ invoice 4012` lines, panel auto-resized (C16). Test notes restored from baseline afterward. ✅
+- **`current` resolution — ✅ verified correct (A30/A57 path):** 3/3 back-to-back trials, `note add current` resolved to the live **active-display** current Space. (An initial apparent mismatch was a test artifact — Max was switching Spaces between sub-second calls.)
+- **Wallpaper cache finding (pre-existing):** the desktop is currently a spacelabel composite `…/Caches/spacelabel/wallpaper/display-3.png` from **2026-06-19** (pre-v0.3.0 #19), with **no `originals.json`** — so spacelabel can't restore the real wallpaper for that display (the originals-persistence feature post-dates these PNGs). Max may want to set a fresh real wallpaper. Not a regression in 0.7.0.
+- **C19–C26 wallpaper + Part 2 §6 — ⏭️ UNVERIFIED / DEFERRED (two foundational issues found).** The live composite test was **not run** — two real problems make the current wallpaper mode unsafe/unreliable on this setup:
+  - **item R (Dynamic/Shuffle):** the active wallpaper was Dynamic; compositing would capture a single frame + set a static image → irreversibly clobber the Dynamic wallpaper. Must detect + skip/confirm (static-only).
+  - **item S (per-Space base capture):** macOS has **per-Space wallpapers**; the portrait's current Space shows a "Dubai Skyline" photo but `NSWorkspace.desktopImageURLForScreen_` returns `DefaultDesktop.heic` (the system default) — so the composite base is **wrong**. The capture mechanism doesn't reflect per-Space wallpapers.
+  - The C22 "skip if base is our cache / original unknown" guard was observed indirectly (the desktop was stuck on an old June-19 composite with no `originals.json`).
+  - **Verdict:** wallpaper mode needs a **detection redesign** (items R + S) before it can be verified. It's experimental/off-by-default, so this doesn't block the release.
+
+**§C net:** HUD ✅, overlay ✅, notes/Desktop-N ✅, `current` ✅; **click-to-switch-on-secondary-display ❌ (item O)**; wallpaper deferred (items R+S).
+
+### §D Preferences window — ◑ partial PASS (Max, 2026-06-23)
+- **D2/D6 — ✅:** window "spacelabel — Preferences", two-level outline (displays = expandable parents, Spaces = children, auto-expanded), columns Space/Label · UUID · Color · Now; current Space's Now = `now`, UUID shown. ✅
+- **D4/D5 — ✅:** color picker sets a color on a labeled Space (persists, pill/swatch tints); color well disabled for unlabeled Spaces. ✅
+- **D9 toggles (HUD/overlay on-off) + D10 popups (HUD position / Overlay corner) — ✅:** agent reacts live; panels move. ✅
+- **❌ D1 inline edit — bugs → items U/V:** (a) **Cmd/Ctrl+V paste doesn't work** in the Label field (right-click→Paste does) — accessory app lacks an Edit menu; (b) **clearing a label doesn't live-revert** the outline to `Desktop N` (only after reopening Prefs); (c) the Space shown **"Desktop 3" in Prefs appears as "4" in the pill** — a numbering mismatch (item **V**, related to item O).
+- **❌ D9 menu-bar OFF — bug → item W:** turning the Menu-bar title off shows an **empty quadrant** instead of the documented `square.dashed` neutral icon (B6).
+- **UX requests → item T:** Preferences window (and the color picker) open at the **left display's bottom-left** — should center on the **active** screen; and a Preferences window **hidden behind other windows can't be re-surfaced** (accessory app, no Cmd+Tab).
+- Wallpaper checkbox not exercised (items R+S).
+
+### §A CLI — second scriptable pass — ✅ 28/28 (2026-06-23, `run_matrix2.py`, isolated `--config`)
+Banked the rows the first pass skipped + scriptable Part-4:
+- **Logging/channel:** A9/A10 (`--verbose`/`--debug` accepted before **and** after the subcommand), A11 (data on stdout **identical** across log levels; verbosity only on stderr), A23 (no ANSI escapes in piped stdout even with `--debug`).
+- **Store semantics:** A39 (`created_at` preserved, `updated_at` bumped across two `label set`), A47/A107 (clear/inspect a **legacy non-UUID key** — `validate=False` paths).
+- **Config validation depth:** A85 (`overlay.bold` accepts on/yes/1/off/no/0), A87 (`buttons_scope` enum), A89 (`overlay.font_size` int/auto/0/abc), A93 (unknown-key checked before value), A94 (**invalid value → exit 1 + `config.json` byte-unchanged**, validate-before-write), A105 (clear legacy display key).
+
+## Part 4 — Additional scenarios — ◑ (scriptable ✅; UI/hardware pending)
+**Scriptable rows — ✅ (in the passes above):** H7 (`note done 0`/`-5` → exit 2), H8 (`hud.font_size` fresh=`auto`; `overlay.note_font_size 6` ok / `0` exit1; `hud.margin -1` exit1), H9 (**anchors case-sensitive** post-strip reject vs **bools case-insensitive** accept — asymmetry confirmed), H10 (empty-store `--json` → `[]`), H14 (`schema_version: 2` read **best-effort**), H17 (leading-space + emoji labels stored **verbatim**).
+**UI/hardware rows (Max, 2026-06-23):**
+- **H1/H2 — ✅:** a fullscreen Chrome Space is **not** listed in `spaces` and gets **no pill** (type!=0/TileLayoutManager skipped). ✅
+- **❌ H2/H3 overlay/HUD — bug → item Z:** on the fullscreen Space, the corner overlay + HUD keep showing the **previous** Space's label (stale) instead of clearing/going neutral. No crash. Fix logged.
+- **H4 — ✅:** revoking Accessibility mid-run → next pill click re-checks and shows the ⚠️ reason popup (no silent no-op); re-enabling restores it. ✅
+- **H6 — ✅ (flagged risk cleared):** clicking a high-ordinal pill (~Desktop 10–14) on the portrait switches correctly — contiguity past Desktop 3 confirmed (ids 118–132 all bound). ✅
+- **❌ H18 — bug → item Y:** `NO_COLOR=1 spacelabel spaces` does **not** drop the bold/green coloring on a TTY (`NO_COLOR` not honored by the table color helper). Minor.
+- **H5** (AX binding absent) — not forceable on this machine → lib-note.
+- **Deferred:** H11 (re-install while loaded — low-risk, scriptable later), **H16** ("separate Spaces" OFF — requires logout), **reboot §5** + **Part 2 §7 detach-4K generality** — to a natural restart/hardware window.
+- H15 (CGS zero-displays) = lib-covered (Part 2 §1).
