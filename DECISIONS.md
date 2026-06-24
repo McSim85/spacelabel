@@ -252,7 +252,49 @@ decisions, grounded **live on the reference machine** (macOS 26.5.1, build 25F80
   is a backlog item (`todo/improvements.md`).
 - **Residual Phase-6 nicety:** confirm the ordinal mapping on a multi-display layout where the
   first display's lone Space is unlabelable (`uuid=""`, ordinal 1) — it worked here, but the
-  general multi-display numbering vs Mission Control is worth a deliberate check.
+  general multi-display numbering vs Mission Control is worth a deliberate check. **→ RESOLVED
+  below (items O+V, 2026-06-24).**
+
+**§9.5 multi-display finding + fix (items O+V, verified dual-display 2026-06-24):** the residual
+above was the headline bug O (click-to-switch fails on a secondary display) + V (Prefs vs pill
+"Desktop N" mismatch). Pinned **empirically on the reference rig** (4K/left `899EDEF9` = the macOS
+*main* display at origin (0,0), 2 desktops; portrait/right `874A623F` = the active/menu-bar display,
+13 desktops; separate Spaces ON):
+- **The ordinal source was never wrong.** Both `CGSCopyManagedDisplaySpaces` enumeration order
+  **and** `com.apple.spaces.plist` global order put the 4K first (Desktop 1–2) and the portrait
+  second (3–15); a manual `Ctrl+1..N` probe **with the 4K focused** confirmed macOS's "Switch to
+  Desktop N" numbering == our enumeration position exactly (Ctrl+1→4K-1, Ctrl+2→4K-2, Ctrl+3→portrait-1).
+  So option (a) "compute a corrected ordinal" was unnecessary. (Also note: Desktops 11–15 use
+  distinct `Ctrl+Option+1..5` chords — no chord collision; `parse_desktop_binding` already posts the
+  full modifier flags.)
+- **The real limitation is FOCUS, not numbering.** macOS reliably switches only the **focused
+  (active menu-bar) display's** Space. Same-display chords always worked; **cross-display chords are
+  unreliable** (portrait-focused `Ctrl+2`, targeting the 4K, glitched/no-op'd). The agent posts the
+  chord while the portrait holds the active menu bar, so clicking a **4K** pill is a cross-display
+  request → near-silent failure = item O.
+- **Fix — gate on the active display (chosen over focus-warping/post-then-verify; smallest, no side
+  effects).** `_on_pill_clicked` resolves the target Space's display and, when it is **not** the
+  active display (`switching.is_switchable_target`, a new pure helper), refuses with a **visible HUD
+  notice** ("Click-to-switch only works on the focused display") + a WARNING log, **without** disabling
+  the feature — the active display's pills still switch and the same pill works once its display is
+  focused. Switchable iff the active display is **known** AND the target is on it; if the active display
+  can't be resolved we **refuse** (never silently post a possibly cross-display chord). The active
+  display almost always resolves (`CGSCopyActiveMenuBarDisplayIdentifier` + an `NSScreen.mainScreen`
+  fallback), so a single-display setup is unaffected; an unresolved active is a degraded/transient state
+  where refusing (per-click, visible) is the safe choice — no fragile display-count heuristic. Honors
+  the no-silent-no-op rule (9.5). The HUD notice shows regardless of the `hud` mode toggle (direct click
+  feedback, not the ambient on-switch label).
+- **Item V — one ordinal source of truth.** Pills + the switch path already numbered over
+  `enumerate_spaces(include_unlabelable=True)` (counting a display's default `uuid=""` desktop, which
+  macOS numbers too); **Preferences numbered labelable-only**, drifting **−1** (a Space shown "Desktop
+  3" in Prefs read "4" in the pill). Fixed by having `prefs._load_tree` build ordinals over the **same**
+  full enumeration, then filter the displayed rows/orphans to labelable Spaces (the default Space is
+  *counted* but not shown as a row). `labeling.assign_ordinals` is documented as the single source;
+  per Max's call the count **includes every desktop**. New/updated tests: `is_switchable_target`
+  (test_switching), the count-every-desktop ordinal contract (test_labeling), and a `_load_tree`
+  regression (test_agent_imports). **Live-agent retest of the gate notice on the rig is the one
+  remaining step** (the macOS behavior + the V numbering are confirmed; the in-agent notice is
+  unit-covered but not yet clicked live — see `docs/VERIFICATION.md`).
 
 ---
 

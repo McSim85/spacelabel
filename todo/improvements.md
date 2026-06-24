@@ -506,6 +506,8 @@ Pairs with **K** + **M** (one `fix(cli): help/output polish` PR). Severity: **lo
 
 ### O. Click-to-switch fails on a SECONDARY display (multi-display ordinal ↔ "Desktop N" mismatch)  *(Max, 2026-06-23 — live finding)*
 
+**✅ DONE (2026-06-24, branch `fix/multidisplay-ordinal`).** Pinned empirically on the dual-display rig: the root cause was **not** an ordinal mismatch (a `Ctrl+1..N` probe confirmed macOS's Desktop-N numbering **matches** our CGS enumeration) but a **focus limitation** — macOS only reliably switches the **active/focused display's** Space; cross-display chords are near-silent no-ops. Fixed (option b, refined to *focused* display not "main"): click-to-switch is **gated to the active display** (`switching.is_switchable_target`), and an off-display pill shows a visible "only works on the focused display" HUD notice instead of failing silently — feature stays armed so the same pill works once its display is focused. See DECISIONS §9.5 (items O+V) + `docs/VERIFICATION.md`. *Live-agent retest of the notice on the rig pending.*
+
 **Context (verified live):** with two displays + "Displays have separate Spaces" ON, click-to-switch **works on the portrait/right display but does nothing on the 4K/left display** (after adding a 2nd Space there).
 
 **Diagnosis (Phase-6 investigation):**
@@ -575,6 +577,9 @@ Read first: `agent/prefs.py` (`show()`/window setup), `agent/app.py` (`openPrefe
 Read first: `agent/prefs.py` (`_commit`, the outline editing), `agent/app.py` (menu construction). Severity: **low** (UX).
 
 ### V. "Desktop N" numbering mismatch: Preferences vs menu-bar pills  *(Max, 2026-06-23 — §D / D1)*
+
+**✅ DONE (2026-06-24, branch `fix/multidisplay-ordinal`).** Root cause: Preferences numbered **labelable-only** while the pills/switch path numbered over `include_unlabelable=True` (counting each display's default `uuid=""` desktop, which macOS numbers too) → Prefs drifted **−1**. Unified on the single source (`labeling.assign_ordinals` over the full enumeration, per Max's "count every desktop" call): `prefs._load_tree` now builds ordinals over the same full list and filters only the *displayed rows* to labelable Spaces, so "Desktop N" is identical in Preferences, the pill, and the switch path. Tests added. See DECISIONS §9.5 (items O+V).
+
 A Space shown as **"Desktop 3"** in the Preferences outline appears as **"4"** in the menu-bar pill. The two surfaces derive the fallback ordinal from different enumerations (one likely per-display / store-ordered, the other the global live `assign_ordinals`). They must agree. **Same root family as item O** (cross-display ordinal). Read first: `labeling.assign_ordinals`/`title_for`/`pill_text`, `agent/prefs.py` (how it numbers), `agent/menubar.py` (pill number), DECISIONS §6.1. Severity: **low–medium** (confusing inconsistency; also a clue for O).
 
 ### W. Menu-bar mode OFF shows an empty status item instead of the `square.dashed` icon  *(Max, 2026-06-23 — §D / B6)*

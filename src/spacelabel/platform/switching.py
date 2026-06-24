@@ -36,6 +36,7 @@ __all__ = [
     "accessibility_trusted",
     "code_signature_hash",
     "is_grant_stale",
+    "is_switchable_target",
     "load_symbolic_hotkeys",
     "parse_desktop_binding",
     "post_switch",
@@ -148,6 +149,31 @@ def parse_desktop_binding(hotkeys: Mapping[str, object], ordinal: int) -> KeyBin
         log.warning("malformed parameters for Switch to Desktop %d: %s", ordinal, exc)
         return None
     return KeyBinding(key_code=key_code, modifier_flags=modifier_flags)
+
+
+def is_switchable_target(target_display_uuid: str, active_display_uuid: str | None) -> bool:
+    """Return whether a Space on ``target_display_uuid`` can be reliably switched to now.
+
+    macOS's "Switch to Desktop N" shortcut only reliably switches a Space on the
+    **focused (active menu-bar) display**: the chord for a Space on another display is
+    a near-silent no-op (verified on a dual-display rig, 2026-06-24 -- the global
+    Desktop-N numbering matched our enumeration, but cross-display chords did not
+    land). So click-to-switch is offered only when the target Space is on the active
+    display; otherwise the caller refuses with a visible reason rather than a silent
+    no-op (DECISIONS.md 9.5, todo item O).
+
+    Switchable iff the active display is **known** AND the target is on it. If the
+    active display can't be resolved we refuse -- never silently post a possibly
+    cross-display chord. In practice the active display almost always resolves
+    (``CGSCopyActiveMenuBarDisplayIdentifier`` with an ``NSScreen.mainScreen``
+    fallback), so a single-display setup is unaffected; an unresolved active display
+    is a degraded, transient state where refusing (per-click, with a visible notice)
+    is the conservative, correct choice.
+
+    Pure (no I/O / no PyObjC): takes the two display-UUID strings already resolved by
+    the read path, so it stays decoupled from the Space model and is unit-testable.
+    """
+    return bool(active_display_uuid) and target_display_uuid == active_display_uuid
 
 
 def load_symbolic_hotkeys() -> dict[str, object]:

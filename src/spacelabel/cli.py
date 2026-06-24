@@ -1036,7 +1036,10 @@ def _read_spaces_with_fallback(*, include_unlabelable: bool = False) -> list[mod
     # read_spaces() recovers its own file errors to [], so reaching here with an
     # empty result means the CGS path is gone AND the plist yielded nothing -- both
     # read paths failed, which the contract maps to exit 1 (not an empty success).
-    fallback = spaces_plist.read_spaces()
+    # Forward include_unlabelable so the fallback also surfaces each display's default
+    # Space -- otherwise `spaces` drops them and the count goes off-by-one vs the live
+    # read on this exact recovery path (item V).
+    fallback = spaces_plist.read_spaces(include_unlabelable=include_unlabelable)
     if not fallback:
         raise click.ClickException(
             "could not read Spaces: the CGS path is unavailable and the plist "

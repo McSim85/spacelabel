@@ -64,10 +64,20 @@ def assign_ordinals(spaces: Iterable[Space]) -> dict[int, int]:
     (DESIGN.md §6.1, DECISIONS.md 9.5). Ordinals shift on reorder, so callers resolve
     them live and never persist them.
 
+    **This is the single ordinal source of truth shared by the pills, Preferences and
+    the switch path -- they MUST agree (item V).** To match macOS's actual Desktop-N
+    numbering, callers enumerate with ``include_unlabelable=True`` so that a display's
+    default unlabelable Space (``uuid==""``) is *counted*: macOS numbers it a Desktop
+    too (verified on a dual-display rig, 2026-06-24 -- Mission Control's Desktop N
+    matched this enumeration position). Numbering only labelable Spaces (the old
+    Preferences path) skipped that default desktop and drifted +1 from the pill/menu.
+
     Keyed by ``id(space)`` (not ``uuid``): with ``include_unlabelable=True`` several
     Spaces share ``uuid=""`` (and some may share a default ``id64``), so a UUID-keyed
     map would collapse them onto one ordinal. Callers look up ``ordinals[id(space)]``
-    on the SAME Space objects they enumerated.
+    on the SAME Space objects they enumerated; a surface that hides the unlabelable
+    Spaces (e.g. Preferences) still builds ordinals over the full enumeration, then
+    looks up each shown Space by identity so the number counts the hidden desktops.
     """
     return {id(space): index for index, space in enumerate(spaces, start=1)}
 

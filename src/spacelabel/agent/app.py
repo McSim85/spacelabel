@@ -22,7 +22,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import objc
 from AppKit import (
@@ -840,6 +840,27 @@ class AppDelegate(NSObject):
                 settings_url=_SETTINGS_URL_KEYBOARD,
             )
             return
+        # Global prerequisites (Accessibility + the Desktop-N shortcut) are satisfied; the
+        # LAST gate is per-target. macOS only reliably switches the FOCUSED display's Space,
+        # so a chord for a Space on another display is a near-silent no-op (item O, verified
+        # dual-display 2026-06-24). Refuse with a visible reason rather than a silent no-op
+        # (DECISIONS.md 9.5), keeping the feature armed so the same pill works once its
+        # display is focused. Checked LAST so a denied-AX / disabled-shortcut blocker
+        # surfaces first instead of being masked by the focus notice.
+        target = next((space for space in spaces if space.uuid == uuid), None)
+        active_uuid = self._active_display_uuid()
+        if target is not None and not switching.is_switchable_target(
+            target.display_uuid, active_uuid
+        ):
+            log.warning(
+                "click-to-switch: Space %s is on display %s, not the active display %s; "
+                "macOS only switches the focused display",
+                uuid,
+                target.display_uuid,
+                active_uuid,
+            )
+            self._flash_switch_notice("Click-to-switch only works on the focused display.")
+            return
         if switching.post_switch(binding):
             log.info("posted “Switch to Desktop %d” for Space %s", ordinal, uuid)
         else:
@@ -953,6 +974,28 @@ class AppDelegate(NSObject):
         return item
 
     @objc.python_method
+    def _hud_font_size(self, config: Config, screen: Any) -> int | None:
+        """Resolve the HUD banner point size for ``screen``.
+
+        An explicit int ``config.hud.font_size`` overrides; otherwise the auto
+        per-display formula sized to the screen's short side (DESIGN.md §9.9). Shared
+        by the on-switch HUD and the click-to-switch refusal banner so both honor the
+        configured size.
+
+        Returns ``None`` when an auto size is wanted but ``screen`` is ``None`` (no
+        active screen and no main screen): ``Hud.show`` treats a ``None`` font as
+        "keep current" and a ``None`` screen as "show nothing", so the caller never
+        dereferences a missing screen.
+        """
+        configured = config.hud.font_size
+        if isinstance(configured, int):
+            return configured
+        if screen is None:
+            return None
+        frame = screen.frame()
+        return geometry.hud_font_size((float(frame.size.width), float(frame.size.height)))
+
+    @objc.python_method
     def _update_hud(self, title: str) -> None:
         """Show the on-switch HUD on the active (switched-to) screen, if enabled."""
         config = self._require_config()
@@ -970,21 +1013,41 @@ class AppDelegate(NSObject):
             screen = self._screens_by_uuid().get(active_uuid)
         if screen is None:
             screen = NSScreen.mainScreen()
-        # Size the banner to the active display's short side (DESIGN.md §9.9); an
-        # explicit int config.hud.font_size overrides the formula.
-        configured = config.hud.font_size
-        if isinstance(configured, int):
-            font_size = configured
-        else:
-            frame = screen.frame()
-            font_size = geometry.hud_font_size((float(frame.size.width), float(frame.size.height)))
         self._hud.show(
             title,
             duration_ms=config.hud.duration_ms,
             screen=screen,
             position=config.hud.position,
             margin=config.hud.margin,
-            font_size=font_size,
+            font_size=self._hud_font_size(config, screen),
+        )
+
+    @objc.python_method
+    def _flash_switch_notice(self, message: str) -> None:
+        """Briefly show ``message`` on the active display (e.g. a cross-display refusal).
+
+        Direct feedback to a user click, so it shows regardless of the ``hud`` mode
+        toggle (which only governs the ambient on-switch label) -- this is what keeps a
+        refused switch from being a silent no-op (DECISIONS.md 9.5). Reuses the HUD
+        banner at the configured size; held a touch longer than the default so the
+        sentence is readable.
+        """
+        config = self._require_config()
+        if self._hud is None:
+            from spacelabel.agent.hud import Hud
+
+            self._hud = Hud()
+        active_uuid = self._active_display_uuid()
+        screen = self._screens_by_uuid().get(active_uuid) if active_uuid else None
+        if screen is None:
+            screen = NSScreen.mainScreen()
+        self._hud.show(
+            message,
+            duration_ms=max(config.hud.duration_ms, 1600),
+            screen=screen,
+            position=config.hud.position,
+            margin=config.hud.margin,
+            font_size=self._hud_font_size(config, screen),
         )
 
     @objc.python_method
@@ -1185,7 +1248,10 @@ class AppDelegate(NSObject):
             # rather than silently switching to the stale plist (codex P2).
             log.warning("CGS unavailable; falling back to plist: %s", exc)
         try:
-            return spaces_plist.read_spaces(), False
+            # Forward include_unlabelable so the fallback counts each display's default
+            # Space too -- otherwise "Desktop N" reverts to the old off-by-one on the
+            # recovery path this consistency fix is meant to hold (item V).
+            return spaces_plist.read_spaces(include_unlabelable=include_unlabelable), False
         except (OSError, ValueError) as exc:
             log.warning("plist fallback failed: %s", exc)
             return [], False

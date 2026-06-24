@@ -595,22 +595,33 @@ class PreferencesWindow:
         paths = store.StorePaths.resolve(self._config_path)
         labels = store.load_labels(paths)
         display_labels = store.load_display_labels(paths)
-        spaces = self._read_spaces()
+        # Number over the FULL enumeration (incl. each display's default unlabelable
+        # Space) so the "Desktop N" shown here counts every desktop and matches the
+        # menu-bar pill + the switch path -- the one ordinal source of truth (item V,
+        # labeling.assign_ordinals). Rows/orphans still use labelable Spaces only: the
+        # default Space can't be labeled, so it is counted but not shown as a row.
+        spaces = self._read_spaces(include_unlabelable=True)
         ordinals = labeling.assign_ordinals(spaces)
+        labelable = [space for space in spaces if space.uuid]
         topology = self._read_topology()
-        nodes = self._group_by_display(spaces, topology, display_labels)
-        orphan_uuids = labeling.find_orphans(labels, [s.uuid for s in spaces])
+        nodes = self._group_by_display(labelable, topology, display_labels)
+        orphan_uuids = labeling.find_orphans(labels, [s.uuid for s in labelable])
         if orphan_uuids:
             log.debug("%d orphaned labels present", len(orphan_uuids))
         return nodes, labels, ordinals, paths
 
     @objc.python_method
-    def _read_spaces(self) -> list[Space]:
-        """Read labelable Spaces, recovering with an empty list on failure."""
+    def _read_spaces(self, *, include_unlabelable: bool = False) -> list[Space]:
+        """Read Spaces, recovering with an empty list on failure.
+
+        ``include_unlabelable=True`` also returns each display's default ``uuid==""``
+        Space so the ordinal count matches macOS / the pills (item V); the default
+        (labelable-only) is what prune uses for the live set.
+        """
         from spacelabel.platform import cgs
 
         try:
-            return cgs.enumerate_spaces()
+            return cgs.enumerate_spaces(include_unlabelable=include_unlabelable)
         except cgs.CGSUnavailableError as exc:
             log.warning("CGS unavailable in prefs: %s", exc)
             return []
