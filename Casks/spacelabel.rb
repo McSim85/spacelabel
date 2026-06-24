@@ -1,11 +1,11 @@
 cask "spacelabel" do
-  version "0.7.0"
+  version "0.8.0"
   # PLACEHOLDER sha256 -> this cask is NOT installable until the first signed-.app
   # release. The release pipeline (publish.yml `update-cask`) PR-bumps `version` + this
   # `sha256` (of the zipped, ad-hoc-signed spacelabel.app asset) when that release is cut;
   # `brew install --cask` only works once THAT bump PR is merged to the default branch.
   # Until then, build + install the bundle locally with `tools/build_app.sh`.
-  sha256 "af51c3f22ffacc54529a02f9c3f20c0110c924da902070ade4e9f152bf60c19d"
+  sha256 "22eb4492ff4569445000a9d9ced1c65a16c1027168b6a257708c86c8b6874902"
 
   url "https://github.com/McSim85/spacelabel/releases/download/v#{version}/spacelabel-#{version}.zip",
       verified: "github.com/McSim85/spacelabel/"
