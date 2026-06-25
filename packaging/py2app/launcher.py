@@ -51,4 +51,4 @@ if __name__ == "__main__":
     else:
         # Drop any legacy -psn_ token so click never sees it as a bad argument.
         sys.argv = [sys.argv[0], *(a for a in sys.argv[1:] if not a.startswith("-psn_"))]
-    main()
+    main(prog_name="spacelabel")

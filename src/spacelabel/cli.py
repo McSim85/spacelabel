@@ -55,6 +55,11 @@ def _diag(message: str) -> None:
     click.echo(message, err=True)
 
 
+def _color_arg() -> bool | None:
+    """click.echo color= for NO_COLOR support: False strips ANSI, None auto-detects TTY."""
+    return False if "NO_COLOR" in os.environ else None
+
+
 def _align_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     """Return aligned, space-padded table lines (header line first, then rows).
 
@@ -77,16 +82,17 @@ def _align_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 def _echo_table(headers: list[str], rows: list[list[str]], *, color_current: bool = False) -> None:
     """Print an aligned table to stdout: bold header, optional green current rows.
 
-    Colors use ``click.style``; ``click.echo`` strips ANSI automatically when
-    stdout is not a terminal (piped/redirected), keeping the data channel clean.
+    Colors use click.style; click.echo strips ANSI when stdout is not a terminal
+    (piped/redirected). NO_COLOR is also honored via _color_arg().
     """
     lines = _align_table(headers, rows)
     if not lines:
         return
-    click.echo(click.style(lines[0], bold=True))
+    color = _color_arg()
+    click.echo(click.style(lines[0], bold=True), color=color)
     for line in lines[1:]:
         if color_current and line.startswith("*"):
-            click.echo(click.style(line, fg="green", bold=True))
+            click.echo(click.style(line, fg="green", bold=True), color=color)
         else:
             click.echo(line)
 
@@ -173,9 +179,9 @@ def cli(ctx: click.Context, config_path: Path | None, verbose: bool, debug: bool
 def agent(ctx: AppContext) -> None:
     """Run the menu-bar agent in the foreground (what the LaunchAgent runs).
 
-    ``--verbose``/``--debug`` work both before (``spacelabel --debug agent``) and
-    after (``spacelabel agent --debug``) the subcommand; either raises the
-    foreground log level for a dev run (merged into the context by ``_Command``).
+    --verbose/--debug work in either position: before (spacelabel --debug agent)
+    or after (spacelabel agent --debug) the subcommand; either raises the
+    foreground log level for a dev run.
     """
     from spacelabel.agent.app import run_agent
 
@@ -236,11 +242,11 @@ def uninstall(
 ) -> None:
     """Unload and remove the login LaunchAgent.
 
-    By default user data (labels, config) is KEPT, like ``apt remove``. Pass ``--purge``
+    By default user data (labels, config) is KEPT, like apt remove. Pass --purge
     to also delete spacelabel's data, caches, logs, and completion scripts, like
-    ``apt purge`` (``--dry-run`` previews the paths; ``--yes`` skips the prompt and is
-    required when not running on a TTY). Never touches the WallpaperAgent store, the
-    pipx venv, or the ``~/.local/bin/spacelabel`` shim.
+    apt purge (--dry-run previews the paths; --yes skips the prompt and is
+    required when not running on a TTY). Never touches the WallpaperAgent store
+    or the spacelabel shim on PATH.
     """
     from spacelabel import install as install_mod
 
@@ -381,15 +387,16 @@ def _uninstall_agent_or_die() -> None:
 def status(ctx: click.Context, as_json: bool) -> None:
     """Report agent install + run state (managed LaunchAgent or a foreground agent).
 
-    Reports the agent for the **selected store** -- the default store, or the ``--config``
+    Reports the agent for the selected store -- the default store, or the --config
     store when one is given -- whether it is the managed LaunchAgent or a foreground
-    ``spacelabel agent`` (both hold that store's ``agent.lock``). Exit 0 when that agent is
-    running, else 3; the install/loaded fields are informational (DECISIONS.md §9).
+    spacelabel agent (both hold that store's agent.lock). Exit 0 when that agent is
+    running, else 3; the install/loaded fields are informational.
 
-    A foreground agent started against a *different* ``--config`` is a separate store with
-    its own lock (and, per review F3, its own logs); check it with ``status --config <that
-    file>`` -- bare ``status`` cannot enumerate agents for arbitrary config paths.
+    A foreground agent started against a different --config is a separate store with
+    its own lock and logs; check it with 'status --config <file>' -- bare status
+    cannot enumerate agents for arbitrary config paths.
     """
+    # Exit-code contract: DECISIONS.md §9. Cross-config foreground agent: review F3.
     from spacelabel import install as install_mod
 
     app_ctx: AppContext = ctx.obj
@@ -412,10 +419,16 @@ def status(ctx: click.Context, as_json: bool) -> None:
     elif st.running:
         mode = "managed" if st.managed else "foreground"
         pid_part = f"pid={st.pid}" if st.pid is not None else "pid=?"
-        click.echo(f"running ({mode})  {pid_part}  label={_AGENT_LABEL}")
+        click.echo(
+            click.style(f"running ({mode})  {pid_part}  label={_AGENT_LABEL}", fg="green"),
+            color=_color_arg(),
+        )
     else:
         detail = "installed, not running" if st.installed else "not installed"
-        click.echo(f"not running ({detail})  label={_AGENT_LABEL}")
+        click.echo(
+            click.style(f"not running ({detail})  label={_AGENT_LABEL}", fg="yellow"),
+            color=_color_arg(),
+        )
 
     if not st.running:
         ctx.exit(3)
@@ -434,7 +447,7 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
     """List current Spaces and their UUIDs, marking the active one.
 
     Includes Spaces macOS has not yet assigned a persistent UUID (a display's
-    single default Space): these show a blank UUID and ``(no UUID)`` and cannot be
+    single default Space): these show a blank UUID and "(no UUID)" and cannot be
     labeled until macOS assigns one (e.g. after adding a Space on that display).
     """
     live = _read_spaces_with_fallback(include_unlabelable=True)
@@ -565,9 +578,10 @@ def label_set(ctx: AppContext, target: str, text: str) -> None:
 def label_list(ctx: AppContext, as_json: bool) -> None:
     """List all stored labels (machine-readable, to stdout).
 
-    Notes-only entries (a task queue on an unlabeled Space, DECISIONS.md 9.10) are
-    omitted here — they carry no label; surface them via ``note list``.
+    Notes-only entries (a task queue on an unlabeled Space) are omitted here --
+    they carry no label; surface them via 'note list'.
     """
+    # Notes-only Space design: DECISIONS.md §9.10.
     paths = _paths(ctx)
     labels = {uuid: entry for uuid, entry in store.load_labels(paths).items() if entry.text}
     if as_json:
@@ -689,9 +703,10 @@ def note_list(ctx: AppContext, target: str | None, as_json: bool) -> None:
     """List a Space's task queue, or with no TARGET every Space that has notes.
 
     With no TARGET this enumerates all note-bearing entries (UUID + task count) so a
-    notes-only queue stays discoverable and recoverable even when its Space is not
-    live (``spaces`` shows only live Spaces; DECISIONS.md 9.10). stdout = data.
+    notes-only queue stays discoverable even when its Space is not live (spaces
+    shows only live Spaces). stdout = data.
     """
+    # Notes-only Space design: DECISIONS.md §9.10.
     paths = _paths(ctx)
     if target is None:
         entries = {u: e for u, e in store.load_labels(paths).items() if e.notes}
@@ -824,7 +839,7 @@ def config_set(ctx: AppContext, key: str, value: str) -> None:
 
 @cli.group()
 def display() -> None:
-    """Rename displays (custom names shown in the menu, prefs, and ``spaces``)."""
+    """Rename displays (custom names shown in the menu, prefs, and spaces)."""
 
 
 @display.command("set")
@@ -1145,8 +1160,8 @@ def completion_install(shell: str, dry_run: bool) -> None:
     """Install tab-completion by writing the generated script to your shell's dir.
 
     Writes click's generated completion script into the shell's auto-load directory
-    (fish/bash need no rc edit; zsh drops ``_spacelabel`` onto ``$fpath``). The
-    script is printed on stdout (the data channel) for ``--dry-run`` so it can be
+    (fish/bash need no rc edit; zsh drops _spacelabel onto $fpath). The script is
+    printed on stdout (the data channel) for --dry-run so it can be
     piped/redirected; all human guidance goes to stderr. Writing is idempotent.
     """
     if shell == "auto":
@@ -1183,9 +1198,9 @@ def completion_install(shell: str, dry_run: bool) -> None:
     _diag(f"{verb} {result.shell} completion at {result.path}. {result.hint}")
 
 
-def main() -> None:
-    """Console entry point - dispatch the ``spacelabel`` command group."""
-    cli()
+def main(prog_name: str | None = None) -> None:
+    """Console entry point - dispatch the spacelabel command group."""
+    cli(prog_name=prog_name)
 
 
 if __name__ == "__main__":
