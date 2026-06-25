@@ -19,9 +19,15 @@ from spacelabel.agent.menubar import (
 _ROW_H = 22.0
 
 
-def _pill(text, uuid="", *, current=False, display_uuid="", id64=0):
+def _pill(text, uuid="", *, current=False, display_uuid="", id64=0, title=""):
     return PillModel(
-        text, is_current=current, color=None, uuid=uuid, display_uuid=display_uuid, id64=id64
+        text,
+        is_current=current,
+        color=None,
+        uuid=uuid,
+        display_uuid=display_uuid,
+        id64=id64,
+        title=title,
     )
 
 
@@ -178,3 +184,63 @@ def test_click_on_default_space_pill_switches_by_display_and_id64():
     labelable_x = pills[1][0] + pills[1][1] / 2
     view._handle_click_at_x(labelable_x)
     assert switched == [("", "D1", 1), ("U1", "D2", 99)]
+
+
+# -- tooltip (AC) -------------------------------------------------------------
+
+
+def test_tooltip_callback_returns_label_title():
+    from AppKit import NSMakePoint
+
+    groups = [
+        [_pill("E", "U1", title="Email"), _pill("C", "U2", title="Code Review")],
+    ]
+    view = _row_view(groups)
+    pills, cy, _ = _pill_layout(groups, _ROW_H)
+    x1 = NSMakePoint(pills[0][0] + pills[0][1] / 2, cy)
+    x2 = NSMakePoint(pills[1][0] + pills[1][1] / 2, cy)
+
+    assert view.view_stringForToolTip_point_userData_(view, 0, x1, None) == "Email"
+    assert view.view_stringForToolTip_point_userData_(view, 0, x2, None) == "Code Review"
+
+
+def test_tooltip_callback_returns_desktop_n_for_unlabeled():
+    from AppKit import NSMakePoint
+
+    groups = [[_pill("3", "", title="Desktop 3")]]
+    view = _row_view(groups)
+    pills, cy, _ = _pill_layout(groups, _ROW_H)
+    pt = NSMakePoint(pills[0][0] + pills[0][1] / 2, cy)
+
+    assert view.view_stringForToolTip_point_userData_(view, 0, pt, None) == "Desktop 3"
+
+
+def test_tooltip_callback_returns_empty_off_pills():
+    from AppKit import NSMakePoint
+
+    groups = [[_pill("E", "U1", title="Email")]]
+    view = _row_view(groups)
+    # Click in the left margin — not over any pill.
+    pt = NSMakePoint(0.0, 0.0)
+
+    assert view.view_stringForToolTip_point_userData_(view, 0, pt, None) == ""
+
+
+def test_tooltip_stores_untruncated_title():
+    # PillModel.title must carry the full label text: the caller is responsible
+    # for passing max_length=0 so the tooltip shows the whole name, not the 24-char clip.
+    long_title = "A" * 40
+    groups = [[_pill("A", "U1", title=long_title)]]
+    view = _row_view(groups)
+    assert view._groups[0][0].title == long_title
+
+
+def test_set_groups_registers_tooltip_rects_without_crashing():
+    # Smoke test: set_groups calls _register_tooltips internally; must not raise.
+    groups = [
+        [_pill("E", "U1", title="Email"), _pill("C", "U2", title="Code")],
+        [_pill("T", "U3", title="Terminal")],
+    ]
+    view = _row_view(groups)
+    # Replace groups again — removeAllToolTips + re-add must not raise.
+    view.set_groups([[_pill("X", "U4", title="Xcode")]])

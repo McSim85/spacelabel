@@ -59,7 +59,7 @@ _ALPHA_INACTIVE = 0.4
 
 
 class PillModel:
-    """One pill in the buttons row: its text, current-ness, color, and Space identity.
+    """One pill in the buttons row: its text, current-ness, color, Space identity, and title.
 
     A plain value object (no PyObjC) so the row's per-display layout is easy to
     assemble in :meth:`MenuBarItem.set_buttons_row` and unit-test in isolation. The
@@ -68,10 +68,11 @@ class PillModel:
     unlabelable Space (``uuid=""``), switched by ordinal via its stable session id (9.5
     update). ``display_uuid`` disambiguates default Spaces across displays, whose ``id64``
     can collide (a low/reused default id). A pill with no identity (``uuid=""`` and
-    ``id64=0``) is not a switch target and a click on it opens the menu.
+    ``id64=0``) is not a switch target and a click on it opens the menu. ``title`` is the
+    full Space name shown in the hover tooltip (label text, or ``Desktop N`` fallback).
     """
 
-    __slots__ = ("color", "display_uuid", "id64", "is_current", "text", "uuid")
+    __slots__ = ("color", "display_uuid", "id64", "is_current", "text", "title", "uuid")
 
     def __init__(
         self,
@@ -82,14 +83,16 @@ class PillModel:
         uuid: str = "",
         display_uuid: str = "",
         id64: int = 0,
+        title: str = "",
     ) -> None:
-        """Store the pill text, its current marker, an optional hex color, and identity."""
+        """Store the pill text, its current marker, an optional hex color, identity, and title."""
         self.text = text
         self.is_current = is_current
         self.color = color
         self.uuid = uuid
         self.display_uuid = display_uuid
         self.id64 = id64
+        self.title = title
 
 
 def _pill_width(pill: PillModel) -> float:
@@ -179,9 +182,40 @@ class ButtonsRowView(NSView):
 
     @objc.python_method
     def set_groups(self, groups: Sequence[Sequence[PillModel]]) -> None:
-        """Replace the pill groups (one inner sequence per physical display)."""
+        """Replace the pill groups and refresh tooltip rects."""
         self._groups = [list(group) for group in groups]
+        self._register_tooltips()
         self.setNeedsDisplay_(True)
+
+    @objc.python_method
+    def _register_tooltips(self) -> None:
+        """Re-register one tooltip rect per pill (removeAll then re-add).
+
+        Per-pill rects ensure the tooltip refreshes as the cursor moves between
+        pills. Called from :meth:`set_groups` so rects are current after every
+        rebuild. Must run on the main thread (AppKit tooltip API).
+        """
+        self.removeAllToolTips()
+        height = float(self.bounds().size.height)
+        pills, cy, _ = _pill_layout(self._groups, height)
+        for x, width, _ in pills:
+            self.addToolTipRect_owner_userData_(NSMakeRect(x, cy, width, _PILL_HEIGHT), self, None)
+
+    def view_stringForToolTip_point_userData_(  # noqa: N802
+        self,
+        view: object,
+        tag: int,
+        point: object,
+        userData: object,  # noqa: N803
+    ) -> str:
+        """Return the full Space name for the tooltip under ``point`` (NSToolTipOwner).
+
+        Resolves the pill by x-coordinate at show time so the title is always
+        current, regardless of what was stored in ``userData``.
+        """
+        pills, _, _ = _pill_layout(self._groups, float(self.bounds().size.height))
+        pill = _pill_at_x(pills, float(point.x))
+        return pill.title if pill is not None else ""
 
     @objc.python_method
     def set_handlers(
@@ -511,6 +545,7 @@ class MenuBarItem:
             for space in spaces:
                 ordinal = ordinals.get(id(space), 0)
                 text = labeling.pill_text(space, labels, ordinal, chars=pill_chars)
+                title = labeling.title_for(space, labels, ordinal, max_length=0)
                 label = labels.get(space.uuid)
                 group.append(
                     PillModel(
@@ -520,6 +555,7 @@ class MenuBarItem:
                         uuid=space.uuid,
                         display_uuid=space.display_uuid,
                         id64=space.id64,
+                        title=title,
                     )
                 )
             groups.append(group)

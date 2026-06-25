@@ -313,40 +313,6 @@ display-freshness gap, not a correctness bug.
 
 ---
 
-### G. `spacelabel install --no-run-at-load` (opt-out of auto-start)  *(v0.2)*
-
-**Context:**
-`spacelabel install` always writes `RunAtLoad: true` and
-`KeepAlive: {SuccessfulExit: false}` into the LaunchAgent plist. There is no way
-to install the LaunchAgent without auto-starting at login — the only option is
-`spacelabel uninstall`, which removes the plist entirely. A user who wants the
-LaunchAgent present but prefers to start the agent manually has no option.
-
-**Read first:**
-- `src/spacelabel/install.py` — `build_launch_agent`, `install_agent`, `render_plist`
-- `DESIGN.md` §9.2 (LaunchAgent plist spec)
-- `src/spacelabel/cli.py` — the `install` command and its existing `--no-load` flag
-
-**Implementation:**
-1. Add `run_at_load: bool = True` parameter to `build_launch_agent`. When `False`,
-   omit `RunAtLoad` from the plist dict (launchd defaults to `false` when the key
-   is absent) and also omit `KeepAlive` (no point auto-restarting a service that
-   wasn't meant to start automatically).
-2. Thread through `render_plist(home, shim, *, run_at_load=True)` and
-   `install_agent(*, load=True, run_at_load=True)`.
-3. In `cli.py`, add `--no-run-at-load` flag to the `install` command:
-   ```
-   spacelabel install [--no-load] [--no-run-at-load]
-   ```
-   `--no-load` = don't start now (existing); `--no-run-at-load` = don't start at
-   future logins. The two are orthogonal and can be combined.
-4. Update `docs/CLI.md` — add `--no-run-at-load` to the `install` synopsis.
-5. **Tests:** unit test that `build_launch_agent(..., run_at_load=False)` omits both
-   `RunAtLoad` and `KeepAlive`; the existing test that the default plist matches the
-   packaging template must still pass (default `run_at_load=True`).
-
----
-
 ### H. CGS→SLS fallback loads the wrong framework bundle  *(Phase-6 finding, 2026-06-22)*
 
 **Context (surfaced by the Phase-6 CGS probe):**
@@ -674,6 +640,8 @@ The `zap` stanza already handles full teardown; `uninstall` only runs on `brew u
 ---
 
 ### AC. Hover tooltip on menu-bar pills showing the full Space name  *(Max, 2026-06-25)*
+
+> **✅ DONE (2026-06-25, PR `feat/pill-tooltip`)** — hardware-pending. `PillModel` gains a `title` field (full label, or `Desktop N`; `max_length=0` so no truncation). `ButtonsRowView._register_tooltips()` registers one `addToolTipRect:owner:userData:` per pill on every `set_groups` call; `view_stringForToolTip_point_userData_` resolves the title at show time from `point.x` via `_pill_at_x`. Clicking behaviour unchanged (`hitTest_` not touched). 5 new tests in `test_menubar_buttons.py`. Hardware-pending: verify tooltip fires when `hitTest_` returns `nil` (click-to-switch off, the default state).
 
 **Context:** a pill shows only a compact glyph — a leading letter (`menubar.pill_label_chars`) for a labeled Space, or the Space number for an unlabeled one. Hovering a pill should pop a **tooltip with the full Space name** (the full label, or `Desktop N` for an unlabeled Space) so a Space is identifiable on hover, without clicking.
 
