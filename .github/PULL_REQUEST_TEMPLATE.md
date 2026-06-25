@@ -18,7 +18,7 @@
 - [ ] `uv run pytest` passes
 - [ ] No silent exception handling introduced (see CONTRIBUTING.md)
 - [ ] Commit messages follow Conventional Commits
-- [ ] If a locked decision changed, `DECISIONS.md` is updated in this PR
+- [ ] Architecture changes are noted in the PR description
 
 ## Notes for reviewers
 
