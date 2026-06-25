@@ -1,9 +1,8 @@
 """CLI integration tests via CliRunner with mocked CGS (no WindowServer needed).
 
 Verifies the locked command surface, exit-code contract (0/1/2/3), and the
-stdout=data / stderr=diagnostics parsing contract (DESIGN.md §8.1, DECISIONS.md
-9.1/9.2, docs/CLI.md). The live CGS reads are monkeypatched, so these run on a
-hosted CI runner with no displays or Spaces session.
+stdout=data / stderr=diagnostics parsing contract (docs/CLI.md). The live CGS reads are
+monkeypatched, so these run on a hosted CI runner with no displays or Spaces session.
 """
 
 from __future__ import annotations

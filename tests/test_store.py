@@ -1,4 +1,4 @@
-"""Persistent store: labels + config, atomic locked writes (DESIGN.md §7, DECISIONS.md §5)."""
+"""Persistent store: labels + config, atomic locked writes."""
 
 from __future__ import annotations
 
@@ -394,7 +394,7 @@ def test_write_oserror_surfaces_as_storeerror(paths, monkeypatch):
         store.set_label(paths, "u", "x")
 
 
-# ---- notes (per-Space task queue, keyed by Space UUID — DECISIONS.md 9.10) -
+# ---- notes (per-Space task queue, keyed by Space UUID) ---------------------
 
 
 def test_add_note_creates_notes_only_entry(paths):

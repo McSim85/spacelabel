@@ -3,7 +3,7 @@
 On Tahoe CoreGraphics exports only the ``CGS*`` re-exports and SkyLight only the
 ``SLS*`` implementations, so the per-symbol fallback must try the ``SLS`` name against
 a *separately-loaded SkyLight bundle* — trying it against CoreGraphics (the old code)
-was a no-op (DECISIONS.md §1.1, improvements.md item H). ``loadBundleFunctions`` also
+was a no-op. ``loadBundleFunctions`` also
 returns ``None`` even when it skips a missing symbol, so the loader decides success by
 whether the symbol was actually bound, not by the return value.
 """
