@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/McSim85/spacelabel/compare/v1.1.1...v1.1.2) (2026-06-25)
+
+
+### Documentation
+
+* phase 8 — doc cleanup, screenshots, README polish (v1.1.1) ([#73](https://github.com/McSim85/spacelabel/issues/73)) ([ace0cbc](https://github.com/McSim85/spacelabel/commit/ace0cbcd31214767d891448b87066a62061b396c))
+
 ## [1.1.1](https://github.com/McSim85/spacelabel/compare/v1.1.0...v1.1.1) (2026-06-25)
 
 
