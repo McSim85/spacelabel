@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/McSim85/spacelabel/compare/v1.0.0...v1.1.0) (2026-06-25)
+
+
+### Features
+
+* **menubar:** hover tooltip on pills with full Space name (item AC) ([#67](https://github.com/McSim85/spacelabel/issues/67)) ([82f1c6e](https://github.com/McSim85/spacelabel/commit/82f1c6e33842a21a6f868a0023a3cd0cada1ee2d))
+
 ## [1.0.0](https://github.com/McSim85/spacelabel/compare/v0.9.1...v1.0.0) (2026-06-25)
 
 
