@@ -1,16 +1,16 @@
 # spacelabel
 
+[![Release](https://img.shields.io/github/v/release/McSim85/spacelabel?label=release)](https://github.com/McSim85/spacelabel/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/McSim85/spacelabel/ci.yml?label=CI&logo=github)](https://github.com/McSim85/spacelabel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Label your macOS Spaces (virtual desktops) so you always know which desktop is which — and have the label _follow_ the desktop when you reorder.**
 
 `spacelabel` is an open-source (MIT) macOS menu-bar + CLI tool that names your
 Spaces. Crucially, it keys each label by the Space's **UUID**, not its position.
 
-> [!NOTE]
-> **Status: in active development.** The core is implemented and tested — UUID-keyed
-> labels, the menu-bar item + pill row, on-switch HUD, corner overlay, the CLI,
-> the login LaunchAgent, and opt-in click-to-switch (verified on the reference
-> machine). Broader hardware verification (Phase 6) and `.app` packaging precede a
-> tagged release. See [`DESIGN.md`](DESIGN.md) and [`DECISIONS.md`](DECISIONS.md).
+> Weekend pet project — built for personal use on one specific Mac. Tested on Apple
+> Silicon + Tahoe. Contributions and bug reports are welcome; rough edges exist.
 
 ## Why — the reorder-proof difference
 
@@ -73,6 +73,18 @@ spacelabel config set menubar.click_to_switch true
 - While click-to-switch is on, the pills capture left-clicks, so open the dropdown
   menu (Preferences / Quit) with a **right-click** or a click off a pill.
 
+## Screenshots
+
+| Menu bar pills | Dropdown |
+|---|---|
+| ![Menu bar pills showing per-Space labels grouped by display](docs/img/menubar-pills.png) | ![Dropdown with Space list and mode toggles](docs/img/menubar-dropdown.png) |
+
+| On-switch HUD + corner overlay with notes | Preferences |
+|---|---|
+| ![On-switch HUD banner and persistent corner overlay with task notes](docs/img/hud-overlay-notes.png) | ![Preferences window with two-level outline and color wells](docs/img/prefs.png) |
+
+![Space switching demo — label follows the desktop as you switch](docs/img/spacelabel-demo.gif)
+
 ## Requirements
 
 - macOS 26 "Tahoe" or newer. The signed cask bundle is **Apple Silicon (arm64)** for
@@ -84,19 +96,13 @@ spacelabel config set menubar.click_to_switch true
 ## Install
 
 **Homebrew cask (recommended)** — ships a signed `spacelabel.app` bundle so the agent
-has its own stable, named Accessibility identity (this is what makes click-to-switch's
-grant work — see [`DECISIONS.md`](DECISIONS.md) §6.8):
+has its own stable, named Accessibility identity (the signed bundle is what makes
+click-to-switch's Accessibility grant bind correctly):
 
 ```sh
 brew tap McSim85/spacelabel https://github.com/McSim85/spacelabel
 brew install --cask spacelabel
 ```
-
-> Available **once the first signed `.app` release is published** and the release
-> pipeline's **cask-bump PR is merged** — that PR fills the cask's `sha256`; until it
-> lands, the default branch carries an all-zero placeholder and the cask won't install.
-> Until then, build + install locally: `tools/build_app.sh` then copy
-> `dist/spacelabel.app` to `/Applications`.
 
 This installs `spacelabel.app` and puts the `spacelabel` CLI on your PATH (the cask
 symlinks the bundle's executable). Start the menu-bar agent at login:
@@ -108,14 +114,14 @@ spacelabel status      # check it's running
 
 > **Ad-hoc signing caveat.** The bundle is ad-hoc-signed (no Apple Developer account
 > yet), so on first launch Gatekeeper may block it — right-click → **Open** once, or
-> `xattr -dr com.apple.quarantine /Applications/spacelabel.app`. An ad-hoc cdhash
-> changes each release, so the Accessibility grant (below) must be **re-approved after
+> `xattr -dr com.apple.quarantine /Applications/spacelabel.app`. The cdhash changes
+> each release, so the Accessibility grant (below) must be **re-approved after
 > `brew upgrade --cask spacelabel`**. Developer-ID + notarization would make both
-> durable (deferred — [`DECISIONS.md`](DECISIONS.md) §6.9).
+> durable (a future follow-on).
 
 **From source (dev)** — a pure-Python wheel for hacking on it
 (`uv pip install -e '.[dev]'`). The cask is the only supported distribution path;
-a source install is dev-only and won't get a reliable Accessibility grant (§6.8).
+a source install is dev-only and won't get a reliable Accessibility grant.
 
 ## System Settings to grant / enable
 
@@ -126,8 +132,7 @@ Most features need nothing. Two macOS settings matter:
 1. **Accessibility** — *System Settings → Privacy & Security → Accessibility* →
    enable the **"spacelabel"** entry. The first pill click prompts for this.
    > With the **cask** (signed `.app`) the entry reads **"spacelabel"** and one grant
-   > sticks — that's the whole point of the bundle (§6.8). It must be **re-granted after
-   > a cask upgrade** (ad-hoc cdhash rotates, §6.9).
+   > sticks. It must be **re-granted after a cask upgrade** (ad-hoc cdhash rotates).
 
 2. **Mission Control shortcuts** — *System Settings → Keyboard → Keyboard Shortcuts →
    Mission Control* → enable **"Switch to Desktop 1", "Switch to Desktop 2", …**.
@@ -161,11 +166,15 @@ spacelabel [--config PATH] [--verbose] [--debug] [--version]
   completion install [--shell auto|zsh|bash|fish] [--dry-run]   # shell tab-completion
 ```
 
-Example — label the current Space and list them all:
+Quick start:
 
 ```sh
-spacelabel label set current "Email"
-spacelabel label list
+spacelabel install                          # start at login
+spacelabel completion install               # shell tab-completion (zsh/bash/fish)
+spacelabel spaces                           # list all Spaces + UUIDs
+spacelabel label set current "Email"        # label the active Space
+spacelabel note add current "reply to Jane" # add a task note (shows in corner overlay)
+spacelabel label list                       # show all labeled Spaces
 ```
 
 Machine-readable output (`spaces`, `label list`) goes to **stdout** (add `--json`
