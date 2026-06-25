@@ -1,4 +1,4 @@
-"""LaunchAgent plist generation + packaging-template sync (DESIGN.md §9.2, DECISIONS.md 6.4)."""
+"""LaunchAgent plist generation + packaging-template sync."""
 
 from __future__ import annotations
 
@@ -147,7 +147,7 @@ def test_refresh_plist_handles_truncated_xml_plist(tmp_path, monkeypatch):
 
 def test_resolve_install_shim_prefers_app_bundle(monkeypatch):
     # Running from the cask bundle -> point the LaunchAgent at the bundle exe so the
-    # agent process IS the bundle (named Accessibility identity, DECISIONS.md §6).
+    # agent process IS the bundle (named Accessibility identity).
     monkeypatch.setattr(install, "_enclosing_app_exe", lambda: APP_EXE)
     assert install._resolve_install_shim() == APP_EXE
 

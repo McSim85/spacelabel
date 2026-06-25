@@ -1,4 +1,4 @@
-"""Pure switch-mechanics helpers (DECISIONS.md 9.5, docs/UI.md §2.4).
+"""Pure switch-mechanics helpers.
 
 These cover the WindowServer-free core of :mod:`spacelabel.platform.switching`: the
 ``com.apple.symbolichotkeys`` parsing that decides whether a "Switch to Desktop N"
@@ -107,7 +107,7 @@ def test_parse_malformed_entries_are_none_not_crash():
 # is_grant_stale is the PURE decision behind the agent's branched guidance: a False
 # AXIsProcessTrusted is a STALE grant (guide REMOVE-and-re-add) when the ad-hoc cdhash
 # rotated since we were last trusted (an app update) OR Accessibility was ever granted;
-# otherwise it was never granted (guide plain "enable"). See DECISIONS.md §6.9.
+# otherwise it was never granted (guide plain "enable").
 
 
 def test_grant_never_granted_is_not_stale():

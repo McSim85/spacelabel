@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 r"""Generate ``spacelabel.icns`` from a 1024x1024 master PNG (macOS built-ins only).
 
-Build-time only (not a runtime dependency). The flow mirrors ``todo/phase-6-blockers.md``
-step 2: emit the standard iconset sizes from the master with ``sips`` and pack them
-with ``iconutil``. When the master is absent a simple on-brand placeholder is drawn
+Build-time only (not a runtime dependency). Emits the standard iconset sizes from the
+master with ``sips`` and packs them with ``iconutil``. When the master is absent a
+simple on-brand placeholder is drawn
 (the menu-bar "pills" motif -- three rounded pills, the middle one at full alpha to
 echo how the agent marks the current Space) and written to the master path so real
 artwork can replace it later with no code change.
