@@ -14,7 +14,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | ✅ [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** *(done 2026-06-25)* | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
 | ✅ [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** *(done 2026-06-25)* | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |
 | ✅ [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** *(resolved by removal 2026-06-25)* | **high (design)** · Opus 4.8 | removed `wallpaper.py` + `model`/`store`/`cli`/`app`/`prefs`/`geometry`, docs |
-| [remove-pipx.md](remove-pipx.md) | — | medium · Sonnet 4.6 | `install.py` tests docs |
+| ✅ [remove-pipx.md](remove-pipx.md) | — *(done 2026-06-25)* | medium · Sonnet 4.6 | `install.py` tests docs |
 | **[fix-brew-upgrade-race.md](fix-brew-upgrade-race.md)** | **AB** *(critical)* | low · Sonnet 4.6 | `app.py` `Casks/spacelabel.rb` |
 
 ## ⚠ Parallelization plan — `app.py` is the bottleneck

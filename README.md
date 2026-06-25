@@ -106,12 +106,6 @@ spacelabel install     # installs + loads the LaunchAgent (pointed at the app bu
 spacelabel status      # check it's running
 ```
 
-> **Upgrading from a pipx install?** After `brew install --cask`, **re-run
-> `spacelabel install`** so the login agent is repointed from the old
-> `~/.local/bin/spacelabel` shim to the app bundle (then `pipx uninstall spacelabel`).
-> Until you do, the previous pipx LaunchAgent keeps running the shim — and would stop
-> launching if you remove pipx first.
-
 > **Ad-hoc signing caveat.** The bundle is ad-hoc-signed (no Apple Developer account
 > yet), so on first launch Gatekeeper may block it — right-click → **Open** once, or
 > `xattr -dr com.apple.quarantine /Applications/spacelabel.app`. An ad-hoc cdhash
@@ -119,10 +113,9 @@ spacelabel status      # check it's running
 > `brew upgrade --cask spacelabel`**. Developer-ID + notarization would make both
 > durable (deferred — [`DECISIONS.md`](DECISIONS.md) §6.9).
 
-**From source (dev / pip)** — a pure-Python wheel for hacking on it
-(`uv pip install -e '.[dev]'`, or `pipx install .`). Distribution via pipx is
-**deprecated** in favour of the cask, because under pipx the agent runs as the shared
-Homebrew Python and can't get a reliable Accessibility grant (§6.8).
+**From source (dev)** — a pure-Python wheel for hacking on it
+(`uv pip install -e '.[dev]'`). The cask is the only supported distribution path;
+a source install is dev-only and won't get a reliable Accessibility grant (§6.8).
 
 ## System Settings to grant / enable
 
@@ -134,9 +127,7 @@ Most features need nothing. Two macOS settings matter:
    enable the **"spacelabel"** entry. The first pill click prompts for this.
    > With the **cask** (signed `.app`) the entry reads **"spacelabel"** and one grant
    > sticks — that's the whole point of the bundle (§6.8). It must be **re-granted after
-   > a cask upgrade** (ad-hoc cdhash rotates, §6.9). On a legacy **pipx** install the
-   > agent instead appears under **"python3.x"** and the grant is unreliable — prefer
-   > the cask.
+   > a cask upgrade** (ad-hoc cdhash rotates, §6.9).
 
 2. **Mission Control shortcuts** — *System Settings → Keyboard → Keyboard Shortcuts →
    Mission Control* → enable **"Switch to Desktop 1", "Switch to Desktop 2", …**.

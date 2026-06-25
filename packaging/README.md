@@ -53,7 +53,7 @@ To apply edits to the plist, `bootout` then `bootstrap` again.
 
 The cask ships a self-contained `spacelabel.app` (it embeds its own
 `Python.framework` + PyObjC + click), so a `brew upgrade python` no longer affects
-the agent — there is no shared interpreter to re-pin (unlike the legacy pipx path).
+the agent — there is no shared interpreter to re-pin.
 
 The app is **ad-hoc code-signed** (`Identifier=dev.mcsim.spacelabel`, no Apple
 Developer account). An ad-hoc cdhash changes on every rebuild, so the Accessibility
@@ -63,6 +63,6 @@ notarization (a deferred follow-on) would make the grant durable. First-launch
 downloads may also hit Gatekeeper quarantine — right-click → Open once, or
 `xattr -dr com.apple.quarantine /Applications/spacelabel.app`.
 
-> **Legacy pipx (deprecated):** the pipx/uv environments are pinned to the Homebrew
-> interpreter; after a `brew upgrade python` minor bump, `pipx reinstall spacelabel`
-> (and recreate the uv `.venv`). Prefer the cask.
+> **Dev (uv):** the `uv` venv is pinned to the Homebrew interpreter; after a
+> `brew upgrade python` minor bump, recreate it with `uv venv && uv pip install -e '.[dev]'`.
+> This only affects dev builds — the cask bundles its own interpreter.

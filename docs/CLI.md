@@ -106,9 +106,9 @@ real `$HOME` substituted into the absolute paths, creates
 - **Points the agent at the app bundle.** `install` resolves the cask-installed
   `spacelabel.app` executable (the running process is inside the bundle) and writes
   *that* absolute path into the plist, so the agent process **is** the bundle and
-  Accessibility keys on `dev.mcsim.spacelabel` (DECISIONS §6.8). A legacy pipx install
-  falls back to the `~/.local/bin/spacelabel` shim (deprecated); with neither, `install`
-  **refuses** (exit 1) rather than write a transient venv/dev-shell path.
+  Accessibility keys on `dev.mcsim.spacelabel` (DECISIONS §6.8). Falls back to the
+  source/dev console script beside the interpreter (for `uv pip install -e .` dev
+  installs); **refuses** (exit 1) when neither resolves (a transient runner venv).
 - **`--no-load`:** write/refresh the plist but don't load it now (load happens at next
   login). Useful in dotfiles bootstrap.
 - **`uninstall` (default = `apt remove`):** removes the LaunchAgent, **keeps** all user
@@ -121,8 +121,8 @@ real `$HOME` substituted into the absolute paths, creates
   but **never deletes files in the `--config`'s own directory** (spacelabel doesn't own
   that directory — a sibling `labels.json` could be another app's); its config/labels
   there are left for manual removal (the command says so). Refuses if a **foreground
-  agent** still holds `agent.lock`. **Never** the pipx venv or the
-  `~/.local/bin/spacelabel` shim. Mirrors the cask's `zap` stanza.
+  agent** still holds `agent.lock`. **Never** touches files outside the
+  spacelabel-owned paths listed above. Mirrors the cask's `zap` stanza.
   - `--dry-run` prints the resolved paths to **stdout** and deletes nothing (exit 0).
   - `--yes`/`-y` skips the confirmation; **non-TTY without `--yes` refuses (exit 2)**.
   - Each delete is independent/best-effort; a partial failure lists what remained and

@@ -10,7 +10,7 @@ session; it is fine to ship a subset and leave the rest for a follow-up.
 ## Shared Baseline
 
 - **Project:** `spacelabel` — open-source (MIT) macOS menu-bar + CLI tool that labels
-  Spaces, keyed by Space UUID (reorder-proof vs WhichSpace). pipx install.
+  Spaces, keyed by Space UUID (reorder-proof vs WhichSpace). Homebrew cask install.
 - **Locked stack:** Python; PyObjC (AppKit); `objc.loadBundleFunctions` of CoreGraphics
   for CGS reads. No SIP disable. CLI + UI. Four display modes (menu-bar, HUD,
   overlay, experimental wallpaper = cosmetic/best-effort).
@@ -250,14 +250,11 @@ Verified empirically (`AXIsProcessTrusted()` called from the exact binaries, fre
 - `AXIsProcessTrusted()` returns **False from a *fresh* process of BOTH** despite "python3.14" showing enabled in Settings. ⇒ the enabled entry's identity matches **neither** binary, and **relaunching the agent will not help** (a fresh process is already untrusted — the grant isn't bound to the agent's identity). The Accessibility list collides multiple "python3.14" entries (every pipx PyObjC tool + stale grants from the old 0.1.0 cdhash), so the user almost certainly toggled a different "python3.14" than the agent's app-stub.
 - TCC.db is SIP-locked (`authorization denied` even read-only), so the enabled identity can't be enumerated from the CLI — the `False` result is the proof.
 
-**Interim workaround (fragile, document until the signed bundle lands):** remove ALL "python3.14"/"Python" rows from Settings → Accessibility → quit the agent → click a pill to trigger a **fresh** prompt → enable the newly-added entry → **quit and relaunch the agent** so it starts trusted. Verify with:
-`PYTHONPATH=~/.local/pipx/venvs/spacelabel/lib/python3.14/site-packages "$(ps -o comm= -p "$(pgrep -f 'spacelabel agent')")" -c "from spacelabel.platform import switching;print(switching.accessibility_trusted())"` → expect `True`.
-This still breaks on `brew upgrade python` (cdhash rotates). The durable fix is the signed `.app` below.
+**✅ Cask shipped (DECISIONS §6.8, 2026-06-22):** the signed `.app` bundle resolved the TCC identity problem. The workaround above (removing python3.x rows) was the interim step; the cask gives a stable "spacelabel" entry. The remaining residual is that the **ad-hoc cdhash rotates each release** — so re-grant after `brew upgrade --cask spacelabel` (item L detects this). Developer-ID + notarization (deferred, §6.9) would make the grant durable.
 
 **Read first:**
-- `DECISIONS.md` §2.7 (accessory policy, no LSUIElement/bundle today), §6.3 (no
-  codesigning/LV today), §6 residual risks (the TCC note), §9.5 (click-to-switch)
-- `src/spacelabel/install.py` — current LaunchAgent program path (the pipx shim)
+- `DECISIONS.md` §2.7, §6.3/§6.8/§6.9, §9.5 (click-to-switch)
+- `src/spacelabel/install.py` — LaunchAgent program path (`_resolve_install_shim`)
 - `DESIGN.md` §6 (display modes), §9 (install/runtime)
 
 **Implementation (sketch — confirm approach in the DECISIONS update first):**

@@ -29,7 +29,7 @@ assignees: ""
 - macOS version (e.g. 26.5.1 "Tahoe"):
 - Mac model / chip (Apple Silicon or Intel):
 - spacelabel version (`spacelabel --version`):
-- Install method (pipx / uv editable):
+- Install method (Homebrew cask / uv editable):
 - Displays (count, resolution, orientation):
 - "Displays have separate Spaces" (System Settings → Desktop & Dock): on / off
 

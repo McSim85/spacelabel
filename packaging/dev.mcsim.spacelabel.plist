@@ -12,8 +12,8 @@
     __APP_EXE__  ->  the cask-installed spacelabel.app main executable, resolved at
                      install time (e.g. /Applications/spacelabel.app/Contents/MacOS/spacelabel).
                      The agent process IS the bundle so Accessibility (TCC) keys on
-                     dev.mcsim.spacelabel. Legacy pipx installs resolve to
-                     __HOME__/.local/bin/spacelabel instead (deprecated).
+                     dev.mcsim.spacelabel. Falls back to the source/dev console script
+                     for contributors running `spacelabel install` from a uv checkout.
 
   The agent must run in the per-user Aqua GUI domain (NSStatusItem needs a
   window-server session); load with:
