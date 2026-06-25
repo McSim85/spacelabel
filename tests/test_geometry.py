@@ -14,7 +14,6 @@ from spacelabel.agent.geometry import (
     overlay_note_font_size,
     parse_anchor,
     short_side,
-    wallpaper_font_size,
 )
 
 
@@ -82,23 +81,6 @@ def test_overlay_font_auto(size_pt, expected):
 def test_overlay_font_int_passthrough():
     assert overlay_font_size((1080, 1920), 15) == 15
     assert overlay_font_size((3840, 2160), 40) == 40
-
-
-@pytest.mark.parametrize(
-    ("size_pt", "expected"),
-    [
-        ((1080, 1920), 130),  # reference portrait @2x, S=1080 -> 130pt (~259px)
-        ((1920, 1080), 130),  # reference 4K landscape, same short side
-        ((150, 150), 24),  # tiny -> clamp at 24
-        ((4000, 4000), 320),  # huge -> clamp at 320
-    ],
-)
-def test_wallpaper_font_auto(size_pt, expected):
-    assert wallpaper_font_size(size_pt, "auto") == expected
-
-
-def test_wallpaper_font_int_passthrough():
-    assert wallpaper_font_size((1080, 1920), 96) == 96
 
 
 def test_nine_anchors_present():

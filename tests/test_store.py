@@ -152,15 +152,6 @@ def test_set_config_value_int_and_auto(paths):
         store.set_config_value(paths, "hud.duration_ms", "not-a-number")
 
 
-def test_wallpaper_font_size_config(paths):
-    assert store.set_config_value(paths, "wallpaper.font_size", "auto") == "auto"
-    assert store.load_config(paths).wallpaper.font_size == "auto"
-    assert store.set_config_value(paths, "wallpaper.font_size", "96") == 96
-    assert store.load_config(paths).wallpaper.font_size == 96
-    with pytest.raises(ConfigValueError):
-        store.set_config_value(paths, "wallpaper.font_size", "0")
-
-
 def test_font_size_load_rejects_below_minimum():
     # A hand-edited config.json with font_size < 1 must fall back to the default on
     # load (same lower bound `config set` enforces), not pass a value through that
@@ -168,16 +159,32 @@ def test_font_size_load_rejects_below_minimum():
     cfg = store.config_from_dict(
         {
             "schema_version": 1,
-            "wallpaper": {"font_size": 0},
             "hud": {"font_size": -1},
             "overlay": {"font_size": 0},
         }
     )
-    assert cfg.wallpaper.font_size == "auto"  # WallpaperConfig default
     assert cfg.hud.font_size == "auto"  # HudConfig default
     assert cfg.overlay.font_size == 15  # OverlayConfig default
     # a valid value still loads verbatim
-    assert store.config_from_dict({"wallpaper": {"font_size": 96}}).wallpaper.font_size == 96
+    assert store.config_from_dict({"hud": {"font_size": 96}}).hud.font_size == 96
+
+
+def test_stale_wallpaper_config_ignored_on_load_and_dropped_on_save():
+    # Wallpaper mode was removed. An existing on-disk config.json may still carry a
+    # `wallpaper` block and a `modes.wallpaper` flag: loading must not error, and
+    # re-serializing must drop both (config_from_dict reads only known keys;
+    # config_to_dict rebuilds from the in-memory Config). No migration needed.
+    cfg = store.config_from_dict(
+        {
+            "schema_version": 1,
+            "modes": {"menubar": True, "wallpaper": True},
+            "wallpaper": {"position": "top-left", "font_size": 96},
+        }
+    )
+    assert "wallpaper" not in cfg.modes
+    out = store.config_to_dict(cfg)
+    assert "wallpaper" not in out
+    assert "wallpaper" not in out["modes"]
 
 
 def test_set_config_value_range_checks(paths):

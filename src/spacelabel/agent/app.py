@@ -52,7 +52,6 @@ if TYPE_CHECKING:
     from spacelabel.agent.menubar import MenuBarItem
     from spacelabel.agent.overlay import Overlay
     from spacelabel.agent.prefs import PreferencesWindow
-    from spacelabel.agent.wallpaper import WallpaperRenderer
     from spacelabel.model import Config, Display, Label, Space
     from spacelabel.platform.notifications import SpaceObserver
 
@@ -155,7 +154,6 @@ _MODE_MENU_TITLES = (
     ("menubar", "Menu-bar title"),
     ("hud", "On-switch HUD"),
     ("overlay", "Corner overlay"),
-    ("wallpaper", "Wallpaper  [experimental]"),
 )
 
 #: System Settings deep-links offered on the click-to-switch "off" row (best-effort:
@@ -316,7 +314,6 @@ class AppDelegate(NSObject):
         self._menubar: MenuBarItem | None = None
         self._hud: Hud | None = None
         self._overlays: dict[str, Overlay] = {}
-        self._wallpaper: WallpaperRenderer | None = None
         self._prefs: PreferencesWindow | None = None
         self._observer: SpaceObserver | None = None
         self._reload_timer: object | None = None
@@ -359,22 +356,6 @@ class AppDelegate(NSObject):
     def retainLockHandle_(self, handle: object) -> None:  # noqa: N802
         """Keep the single-instance lock handle alive for the process lifetime."""
         self._lock_handle = handle
-
-    @objc.python_method
-    def _wallpaper_cache_dir(self) -> Path | None:
-        """Per-store wallpaper cache dir, or ``None`` for the shared default cache.
-
-        The default store uses the shared ``~/Library/Caches/spacelabel/wallpaper`` (cleared
-        by ``uninstall --purge`` under the default-lock guard). A genuinely custom ``--config``
-        caches under ITS OWN store dir, so a default purge can't delete a live custom-config
-        agent's wallpaper composites / original-tracking map -- mirrors the per-store log
-        routing (:func:`_agent_log_dir`), keeping each instance's shared state isolated.
-        """
-        from spacelabel import install as install_mod
-
-        if install_mod._is_default_store(self._paths.config_file):
-            return None  # WallpaperRenderer's global default
-        return self._paths.directory / "wallpaper"
 
     @objc.python_method
     def set_managed_run(self, managed: bool) -> None:
@@ -469,7 +450,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _build_surfaces(self) -> None:
-        """Build the menu-bar item and any enabled HUD/overlay/wallpaper surfaces."""
+        """Build the menu-bar item and any enabled HUD/overlay surfaces."""
         from spacelabel.agent.menubar import MenuBarItem
 
         config = self._require_config()
@@ -482,10 +463,6 @@ class AppDelegate(NSObject):
             from spacelabel.agent.hud import Hud
 
             self._hud = Hud()
-        if config.modes.get("wallpaper"):
-            from spacelabel.agent.wallpaper import WallpaperRenderer
-
-            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
         # Overlays are built lazily per display in _refresh (one panel per display).
 
     @objc.python_method
@@ -765,7 +742,6 @@ class AppDelegate(NSObject):
                 self._menubar.set_title(title)
         self._update_hud(title, active_space=active_space)
         self._update_overlays(spaces, ordinals)
-        self._update_wallpaper(title)
         # Resync the change-detection baselines AFTER a render, so the next poll doesn't
         # re-fire for what we just reflected (codex P2):
         #  - CGS topology signature: only from a LIVE CGS read (`from_cgs`). The plist
@@ -1204,29 +1180,6 @@ class AppDelegate(NSObject):
             screen = screens_by_uuid.get(display.uuid) or NSScreen.mainScreen()
             overlay.reposition(screen, config.overlay.corner, config.overlay.margin)
             overlay.set_content(text, notes, note_font_size=note_font)
-
-    @objc.python_method
-    def _update_wallpaper(self, title: str) -> None:
-        """Render the label onto the active screen's wallpaper (best-effort)."""
-        config = self._require_config()
-        if not config.modes.get("wallpaper"):
-            return
-        if self._wallpaper is None:  # lazily built so a runtime mode-toggle takes effect
-            from spacelabel.agent.wallpaper import WallpaperRenderer
-
-            self._wallpaper = WallpaperRenderer(cache_dir=self._wallpaper_cache_dir())
-        # Write to the display the active Space is on, not whatever holds the key
-        # window (the title is the active Space's label) -- same mapping as the HUD.
-        active_uuid = self._active_display_uuid()
-        screen = self._screens_by_uuid().get(active_uuid) if active_uuid is not None else None
-        if screen is None:
-            screen = NSScreen.mainScreen()
-        self._wallpaper.render_and_set(
-            title,
-            screen=screen,
-            position=config.wallpaper.position,
-            font_size=config.wallpaper.font_size,
-        )
 
     # -- menu actions -----------------------------------------------------------
 

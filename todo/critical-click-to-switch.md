@@ -11,8 +11,8 @@ wall under SIP-on). Set `/model` and `/effort` before running.
 - **Project:** `spacelabel` — open-source (MIT) macOS menu-bar + CLI tool that labels
   Spaces, **keyed by Space UUID** (reorder-proof — the whole point vs WhichSpace).
 - **Locked stack:** Python; PyObjC (AppKit); `objc.loadBundleFunctions` of CoreGraphics
-  for CGS reads. No SIP disable. pipx install. CLI + UI. Four display modes (menu-bar,
-  HUD, overlay, experimental wallpaper = cosmetic/best-effort).
+  for CGS reads. No SIP disable. pipx install. CLI + UI. Three display modes (menu-bar,
+  HUD, overlay).
 - **Engineering standards:** PEP 8 / 257 / 484 enforced via ruff + mypy `--strict`;
   no silent exception handling (no bare `except: pass`/`continue`); stdlib `logging`;
   stdlib-first (only `click` beyond PyObjC). Conventional Commits.

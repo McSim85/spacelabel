@@ -1,27 +1,36 @@
-# Redesign — wallpaper mode: reliable wallpaper detection (Dynamic/Shuffle + per-Space)  (items R + S)
+# Wallpaper mode — REMOVED (items R + S) ✅ *(2026-06-25)*
 
-**Model:** Opus 4.8 · **effort:** high (a design session — settle the approach before coding). **Fresh session + fresh branch off latest `main`.** Part of the Phase-6 fix set — see [`fix-sessions-overview.md`](fix-sessions-overview.md). **Track B — touches only `wallpaper.py`, safe to run fully in parallel.**
+**Outcome:** the experimental wallpaper mode was **removed entirely**, not redesigned.
+This file is kept as the resolution record for items **R + S** (see
+[`fix-sessions-overview.md`](fix-sessions-overview.md) and [`improvements.md`](improvements.md)).
 
-## Why (Phase-6 findings — full diagnosis in `improvements.md` R + S)
-The experimental wallpaper mode's premise (*capture the current wallpaper → composite a label → set it*) is **unreliable on real setups**:
-- **R (Dynamic/Shuffle):** it grabs one frame + sets a static composite → **irreversibly clobbers** a macOS Dynamic (time-of-day `.heic`) or Shuffle wallpaper, and persists only a frame as the "original".
-- **S (per-Space):** macOS has **per-Space wallpapers**; `NSWorkspace.desktopImageURLForScreen_` returned `/System/Library/CoreServices/DefaultDesktop.heic` (the system default) for a Space actually showing a "Dubai Skyline" photo → the composite base is **wrong**.
+## Why removal (not redesign)
+The mode's premise — *capture the live desktop image → composite the label → set it* —
+is unfixable on real setups:
+- **R:** it grabs one frame and sets a static composite, **irreversibly clobbering**
+  macOS Dynamic (time-of-day `.heic`) / Shuffle wallpapers.
+- **S:** `NSWorkspace.desktopImageURLForScreen_` returns the *system default*, not the
+  true per-Space image, so the composite base is wrong.
 
-Wallpaper mode is **experimental / off-by-default**, so this is non-blocking — but it's effectively non-functional + unsafe on multi-Space/multi-display until the detection is redesigned.
+The considered redesign (composite onto **known/user-supplied** base images, sidestepping
+R+S) was researched and dropped: **macOS has no public API to set a specific non-active
+Space's wallpaper** — only the private `WallpaperExtensionKit` (entitlement-gated, breaks
+across releases); the public `setDesktopImageURL:forScreen:` only sets the *current active*
+Space. High implement+maintain cost for small gain, and **HUD + corner overlay already
+cover the "which Space am I on" need**. Decision recorded in **DECISIONS §7.5**.
 
-## Decide (design first), then implement
-1. **Detect wallpaper type/source** (read-only — **never edit** the WallpaperAgent store, DECISIONS §7):
-   - **Dynamic:** the image is a `.heic` carrying dynamic-desktop metadata (solar / `h24` keys / multiple embedded reps) — inspect via `CGImageSource` properties.
-   - **Shuffle / per-Space:** read the WallpaperAgent store **read-only** — Tahoe `~/Library/Application Support/com.apple.wallpaper/Store/Index.plist` (older: `~/Library/Application Support/Dock/desktoppicture.db`) — fragile/private; OR
-   - **Capture the rendered desktop pixels** (`CGWindowListCreateImage` of the desktop window layer) as the base — sidesteps "which file" but loses dynamic + must exclude icons/widgets.
-2. **Policy:** composite **only** a plain static image; on Dynamic/Shuffle/per-Space-that-can't-be-resolved, **skip with a clear notice** (preferred for the non-interactive agent) and/or require explicit per-display opt-in — **never silently overwrite**.
-3. Keep originals-persistence correct for the static path (capture + restore the real image).
+## What was removed
+- `agent/wallpaper.py` (the whole `WallpaperRenderer` + originals.json / byte-copy /
+  flock / TTL-purge / restart-recovery machinery) and `tests/test_wallpaper.py`.
+- `geometry.wallpaper_font_size` + its constants; the `wallpaper` mode in `model`/`store`/
+  `cli` (`modes.wallpaper`, `wallpaper.position`, `wallpaper.font_size`); the agent wiring
+  in `app.py`; the prefs checkbox.
+- Docs: DESIGN §6.4 (tombstone), DECISIONS §7 (rewritten as the removal record), CLAUDE.md,
+  README, docs/CLI.md, docs/UI.md, docs/TESTING.md, docs/VERIFICATION.md.
 
-## Read first
-`agent/wallpaper.py` (`render_and_set`, `_base_image_path`, `_record_original`, the cache/skip guard), `DECISIONS.md` §7, `DESIGN.md` §6.4, `improvements.md` items R + S.
-
-## Acceptance
-On a **Dynamic** or **Shuffle** desktop, wallpaper mode does **not** alter it (skips with a logged/visible reason); on a **per-Space** static image it composites onto the **correct** current image + persists the real original; restore on `--off` works. Tests for the type-detection branches. Then re-run the deferred Phase-6 composite test (C19–C26 / Part 2 §6) on a **static** wallpaper and record in `docs/VERIFICATION.md`. Update `DECISIONS.md` §7 with the chosen detection approach.
-
-## Before committing
-Gates + **codex review loop** until clean. Conventional Commit (`feat(wallpaper): detect dynamic/shuffle/per-Space; static-only compositing`). Ask before commit/push. Mark R+S done in `improvements.md`, tick the overview.
+## Back-compat
+No migration needed: an existing `config.json` with a stale `wallpaper` block /
+`modes.wallpaper` is ignored on load and dropped on next save (the loader reads only known
+keys; the writer rebuilds from the in-memory `Config`). `mode wallpaper` → usage error
+(exit 2); `config set wallpaper.*` → `ConfigKeyError` (exit 1). Regression test added in
+`tests/test_store.py`.

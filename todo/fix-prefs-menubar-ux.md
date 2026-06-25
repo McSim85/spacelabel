@@ -6,7 +6,7 @@
 - **T** — Preferences window (and the NSColorPanel) open at the **left display's bottom-left**; should **center on the active screen**. And a Preferences window **hidden behind other windows can't be re-surfaced** (accessory app, no Cmd+Tab) — re-selecting Preferences should bring it to front.
 - **U** — in the Label edit field, **Cmd+V/Cut/Copy don't work** (right-click→Paste does) — accessory app has no Edit menu; and **clearing a label doesn't live-revert** the outline to `Desktop N` (stale until reopen).
 - **W** — turning **Menu-bar title OFF** shows an **empty quadrant** instead of the `square.dashed` neutral icon (plan B6).
-- **J** — click-to-switch is enable-only via the CLI (`config set menubar.click_to_switch …`); add a **toggle in the dropdown menu** (alongside the Menu-bar / HUD / Overlay / Wallpaper mode toggles) **and** a Preferences checkbox.
+- **J** — click-to-switch is enable-only via the CLI (`config set menubar.click_to_switch …`); add a **toggle in the dropdown menu** (alongside the Menu-bar / HUD / Overlay mode toggles) **and** a Preferences checkbox.
 
 ## Do this
 - **T:** center the Preferences window on the active `NSScreen` on `show()`; on `openPreferences_`, `makeKeyAndOrderFront:` + `NSApp.activate(ignoringOtherApps:true)` so a hidden window resurfaces (consider a transient activation policy while a window is open so it appears in Cmd+Tab).

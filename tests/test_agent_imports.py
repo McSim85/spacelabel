@@ -19,7 +19,6 @@ AGENT_MODULES = [
     "spacelabel.agent.menubar",
     "spacelabel.agent.hud",
     "spacelabel.agent.overlay",
-    "spacelabel.agent.wallpaper",
     "spacelabel.agent.prefs",
     "spacelabel.platform.notifications",
     "spacelabel.platform.switching",
@@ -430,38 +429,6 @@ def test_update_hud_suppressed_when_no_uuid_space(tmp_path):
     assert not shown, "_update_hud must not show for the default no-UUID Space"
 
 
-def test_wallpaper_is_ours_distinguishes_cache_from_real(tmp_path):
-    # _is_ours distinguishes our cache composites/copies from the user's real
-    # wallpaper file -- the guard behind the label-on-label / recovery logic. The
-    # full TTL-eviction + restart-recovery behavior is covered in test_wallpaper.py.
-    from spacelabel.agent.wallpaper import WallpaperRenderer
-
-    renderer = WallpaperRenderer(cache_dir=tmp_path)
-    assert renderer._is_ours(str(tmp_path / "display-1.png"))
-    assert renderer._is_ours(str(tmp_path / "original-UUID-A.png"))
-    assert not renderer._is_ours("/Users/me/Pictures/wallpaper.jpg")
-
-
-def test_wallpaper_skips_when_original_unknown(monkeypatch):
-    # When the real wallpaper can't be recovered (e.g. after restart, current image
-    # is our own composite), skip -- never paint black over / replace the wallpaper.
-    from pathlib import Path
-
-    from spacelabel.agent.wallpaper import WallpaperRenderer
-
-    renderer = WallpaperRenderer()
-    calls: list[str] = []
-    monkeypatch.setattr(renderer, "_base_image_path", lambda _screen: None)
-    monkeypatch.setattr(
-        renderer, "_render_png", lambda *a, **k: calls.append("render") or Path("x")
-    )
-    monkeypatch.setattr(renderer, "_set_wallpaper", lambda *a, **k: calls.append("set"))
-    monkeypatch.setattr(renderer, "_screen_key", lambda _screen: "display-1")
-
-    renderer.render_and_set("Email", screen=object())
-    assert calls == []  # neither rendered nor set -> the real wallpaper is untouched
-
-
 def test_overlay_exposes_set_content_and_distinct_glyphs():
     # Overlay rendering needs a WindowServer (the panel creates its window device),
     # so it is import-smoke only (docs/TESTING.md). Verify the notes-render entry
@@ -478,11 +445,10 @@ def test_expected_public_classes_exist():
     from spacelabel.agent.menubar import MenuBarItem
     from spacelabel.agent.overlay import Overlay
     from spacelabel.agent.prefs import PreferencesWindow
-    from spacelabel.agent.wallpaper import WallpaperRenderer
     from spacelabel.platform.notifications import SpaceObserver
 
     assert callable(run_agent)
-    for cls in (MenuBarItem, Hud, Overlay, WallpaperRenderer, PreferencesWindow, SpaceObserver):
+    for cls in (MenuBarItem, Hud, Overlay, PreferencesWindow, SpaceObserver):
         assert isinstance(cls, type)
 
 

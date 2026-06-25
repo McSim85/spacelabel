@@ -561,8 +561,7 @@ def purge_targets(paths: store.StorePaths, *, remove_completion: bool) -> list[P
 
     Decided by the **resolved config file** (``_is_default_store``), so a ``--config``
     that is a symlink/spelling of the default config.json still counts as default.
-    **Never** touches the WallpaperAgent store, the pipx venv, or the
-    ``~/.local/bin/spacelabel`` shim.
+    **Never** touches the pipx venv or the ``~/.local/bin/spacelabel`` shim.
 
     :param paths: The resolved store paths for the active ``--config`` selection.
     :param remove_completion: Also include the per-shell completion scripts (default only).

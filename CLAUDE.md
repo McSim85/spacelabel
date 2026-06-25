@@ -29,7 +29,7 @@ authoritative design.
 src/spacelabel/
   cli.py              # click group + main(); dispatches subcommands (heavy imports stay lazy)
   logging_setup.py    # setup_logging(mode=...) — the ONE place handlers are attached
-  model.py            # dataclasses: Space, Display, Label, Config (+ Menubar/Hud/Overlay/WallpaperConfig)
+  model.py            # dataclasses: Space, Display, Label, Config (+ Menubar/Hud/Overlay config)
   labeling.py         # PURE: title_for / pill_text / assign_ordinals / find_orphans (no I/O, no PyObjC)
   store.py            # StorePaths + labels.json/config.json: atomic flock read-modify-write, prune, config schema
   install.py          # LaunchAgent plist (built in code) install/uninstall/status via launchctl
@@ -43,7 +43,7 @@ src/spacelabel/
     app.py            # NSApplication accessory app + AppDelegate + run loop (single-instance flock; 1s mtime-poll reload)
     geometry.py       # PURE: HUD/overlay font math + the nine-anchor placement grid (DESIGN §9.9)
     menubar.py menubar item    hud.py transient HUD    overlay.py corner overlay (one per display)
-    wallpaper.py experimental render+set    prefs.py NSOutlineView prefs window
+    prefs.py NSOutlineView prefs window
 ```
 
 Data store: two JSON files under `~/Library/Application Support/spacelabel/`
@@ -77,15 +77,6 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   **not** the default center; the event carries no Space identity, so **re-read the
   UUID every fire**; debounce ~200ms trailing-edge. `didChangeScreenParameters` is
   the **default** center. (DESIGN §5 / DECISIONS §4)
-- **Wallpaper mode is cosmetic/best-effort** — `WallpaperAgent` self-reverts; it is
-  never the source of truth, ships disabled-by-default, and you must **never edit the
-  WallpaperAgent store/container plists**. (DESIGN §6.4 / DECISIONS §7)
-  **Phase-6 verified-gotcha:** the capture path is **unsafe on macOS Dynamic/Shuffle
-  wallpapers** (it grabs one frame + sets a static composite → clobbers them
-  irreversibly) and **wrong on per-Space wallpapers** (`NSWorkspace.desktopImageURL`
-  returns the system default, not the per-Space image). Treat as **largely
-  non-functional on real multi-Space/multi-display setups** until the detection
-  redesign (todo/improvements.md **R+S**). Composite static images only.
 - **Space *switching* is SIP/Dock-walled** → only via the opt-in Ctrl+N "Switch to
   Desktop N" shortcut + Accessibility, OFF by default; if it can't be confirmed,
   **disable with a visible reason, never silently no-op**. (DECISIONS §9.5 / DESIGN §6)
@@ -183,7 +174,6 @@ for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
   truly must change one, update `DECISIONS.md` deliberately).
 - Don't add dependencies casually — stdlib-first; only `click` beyond PyObjC.
 - Don't hardcode display/Space topology.
-- Don't treat wallpaper output as durable, and don't edit the WallpaperAgent store.
 
 ## Identity
 
@@ -194,7 +184,8 @@ for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
 
 ---
 
-> **This is a living doc.** Refreshed after **Phase 4** (final commands/modules)
-> and after **Phase 6** (verified gotchas — CGS gate confirmed; click-to-switch
-> signed-`.app`/secondary-display + wallpaper Dynamic/Shuffle/per-Space caveats
-> added, 2026-06-23). Next: fold in fixes as the **K–Z** backlog lands.
+> **This is a living doc.** Refreshed after **Phase 4** (final commands/modules),
+> after **Phase 6** (verified gotchas — CGS gate confirmed; click-to-switch
+> signed-`.app`/secondary-display caveats, 2026-06-23), and after the **wallpaper
+> mode removal** (2026-06-25, DECISIONS §7). Next: fold in fixes as the **K–Z**
+> backlog lands.

@@ -74,7 +74,7 @@ spacelabel agent
 ```
 
 Starts the `NSApplication` accessory app (menu-bar item, optional buttons row,
-HUD/overlay/wallpaper per `config.json`) and **blocks** until the agent quits.
+HUD/overlay per `config.json`) and **blocks** until the agent quits.
 This is exactly what the LaunchAgent's `ProgramArguments` invoke
 (`…/spacelabel agent`, DESIGN §9.2).
 
@@ -121,8 +121,8 @@ real `$HOME` substituted into the absolute paths, creates
   but **never deletes files in the `--config`'s own directory** (spacelabel doesn't own
   that directory — a sibling `labels.json` could be another app's); its config/labels
   there are left for manual removal (the command says so). Refuses if a **foreground
-  agent** still holds `agent.lock`. **Never** the WallpaperAgent store, the pipx venv,
-  or the `~/.local/bin/spacelabel` shim. Mirrors the cask's `zap` stanza.
+  agent** still holds `agent.lock`. **Never** the pipx venv or the
+  `~/.local/bin/spacelabel` shim. Mirrors the cask's `zap` stanza.
   - `--dry-run` prints the resolved paths to **stdout** and deletes nothing (exit 0).
   - `--yes`/`-y` skips the confirmation; **non-TTY without `--yes` refuses (exit 2)**.
   - Each delete is independent/best-effort; a partial failure lists what remained and
@@ -200,7 +200,7 @@ across all displays, marking each display's current one. **Data → stdout.**
 ### 3.5 `mode` — show or toggle a display mode
 
 ```text
-spacelabel mode {menubar|hud|overlay|wallpaper} [--on | --off]
+spacelabel mode {menubar|hud|overlay} [--on | --off]
 ```
 
 With **neither** `--on` nor `--off`, prints the mode's current state to stdout
@@ -209,8 +209,6 @@ state. The mode name is a `click.Choice` (invalid value → exit 2).
 
 - A running agent picks up the change live via its config file-watch (DESIGN §7.3) —
   no restart needed.
-- `wallpaper` is **experimental / disabled by default**; enabling it prints a
-  one-line caveat to stderr (cosmetic, may revert — DESIGN §6.4 / §7).
 - **Exit:** `0` on success; `2` on an invalid mode name.
 
 ### 3.6 `label` — create / list / remove labels
@@ -315,7 +313,6 @@ spacelabel config set  <key> <value>
 Keys are **dotted paths** into `config.json` (DESIGN §7.2), e.g.
 `modes.hud`, `hud.position`, `hud.duration_ms`, `overlay.corner`,
 `overlay.show_notes`, `overlay.note_font_size`, `menubar.show_buttons_row`,
-`wallpaper.position`, `wallpaper.font_size` (int point size or `auto`),
 `debounce_ms`, `log_level`.
 
 ```sh
@@ -430,7 +427,7 @@ Notes:
 | Channel | Carries | Examples |
 |---|---|---|
 | **stdout** | Command results: the aligned text table (incl. its header) or the `--json` payload; `config get`/`status` lines; `--version` | `spaces`, `label list`, `config get`, `status` |
-| **stderr** | Everything else: log lines (all levels), warnings, errors, progress, the experimental-wallpaper caveat, idempotent-clear notes | `Error: …`, `INFO: reloaded config`, `WARNING: wallpaper mode is experimental` |
+| **stderr** | Everything else: log lines (all levels), warnings, errors, progress, idempotent-clear notes | `Error: …`, `INFO: reloaded config`, `WARNING: …` |
 
 Consequence: stdout is free of **log noise** at any `--verbose`/`--debug` level, so
 diagnostics never corrupt a redirect. The default text tables are **aligned for
@@ -461,7 +458,7 @@ spacelabel status >/dev/null && echo "agent up" || echo "agent down"
 
 # Toggle modes (agent reloads live)
 spacelabel mode hud --on
-spacelabel mode wallpaper --on        # prints experimental caveat to stderr
+spacelabel mode overlay --on
 
 # Tune config and read it back for substitution
 spacelabel config set hud.duration_ms 900
