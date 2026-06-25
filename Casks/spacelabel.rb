@@ -13,6 +13,13 @@ cask "spacelabel" do
   desc "Label Spaces (virtual desktops) by their stable UUID, reorder-proof"
   homepage "https://github.com/McSim85/spacelabel"
 
+  # `publish.yml`'s `update-cask` job already PR-bumps version+sha256 on each release; this
+  # lets `brew livecheck` independently detect a new GitHub release (cookbook best-practice).
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
   # Verified on macOS 26 "Tahoe" (private CGS reads). The ad-hoc build is arm64-only
   # for now; universal2 + Developer-ID notarization are a deferred follow-on.
   depends_on macos: :tahoe
@@ -29,6 +36,15 @@ cask "spacelabel" do
   # On uninstall just STOP it: `quit:` (clean exit; KeepAlive=SuccessfulExit:false won't
   # relaunch it) + `signal: TERM` as a force-stop fallback. Both act on the user's own
   # process, so NEITHER needs sudo.
+  #
+  # NOTE: Homebrew runs `signal:` ONLY on plain `brew uninstall`, NOT on `brew upgrade`
+  # (it's skipped there unless `on_upgrade: :signal`). So on UPGRADE the lone clean `quit:`
+  # is what stops the old agent. We deliberately do NOT add `on_upgrade: :signal`: the agent
+  # has no SIGTERM handler, so a signal-kill is a non-zero exit that KeepAlive would treat as
+  # a crash and relaunch. The race that remains (launchd + brew "Reopen" briefly both start an
+  # agent on upgrade) is instead made harmless agent-side -- the lock loser exits 0 so
+  # KeepAlive never loops (item AB / `_acquire_single_instance_lock`). We also deliberately
+  # avoid `launchctl:` here -- see below.
   #
   # Deliberately NO `launchctl:` and NO plist `trash:` here:
   #   * `launchctl:` makes Homebrew run `launchctl` under `sudo` (it always does a root pass

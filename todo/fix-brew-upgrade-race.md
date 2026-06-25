@@ -1,5 +1,14 @@
 # Fix — `brew upgrade --cask` race: LaunchAgent KeepAlive restart loop  (item AB)
 
+> **✅ DONE (2026-06-25).** **Fix A applied** (`_acquire_single_instance_lock` exits **0**
+> on lock-busy, `log.warning`). **Fix B (add `uninstall launchctl:`) was REJECTED:** Homebrew's
+> `launchctl:` always does a sudo root pass → a password prompt on every upgrade/uninstall,
+> reversing the passwordless-upgrade decision (#41). Fix A alone satisfies all three acceptance
+> criteria (the upgrade double-start still happens but the loser quits cleanly, so KeepAlive
+> never loops). The cask `uninstall` keeps `quit:`/`signal:` unchanged. See DECISIONS §6.4 +
+> the "Cask `uninstall`/`upgrade`…" note. A separate `chore(cask)` adds a `livecheck` stanza
+> and a comment that `signal:` is skipped on upgrade.
+
 **Model:** Sonnet 4.6 · **effort:** low. **Fresh session + fresh branch off latest `main`.**
 Part of the Phase-6 fix set — see [`fix-sessions-overview.md`](fix-sessions-overview.md).
 

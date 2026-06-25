@@ -191,7 +191,8 @@ def run_agent(
         debug: Foreground dev logging at ``DEBUG``.
 
     Raises:
-        SystemExit: If another agent instance already holds the lock (exit 1).
+        SystemExit: If another agent instance already holds the lock (clean exit
+            0 — a duplicate is not a crash, so launchd ``KeepAlive`` won't relaunch).
     """
     # Configure the real sink first so EVERY startup failure (incl. the
     # single-instance rejection below) lands in the inspectable log: the rotated
@@ -257,7 +258,8 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
         The open lock-file handle (kept open for the process lifetime).
 
     Raises:
-        SystemExit: If the lock is already held by another agent (exit 1).
+        SystemExit: If the lock is already held by another agent (clean exit 0 —
+            see the lock-lost path below).
     """
     paths = store.StorePaths.resolve(config_path)
     paths.directory.mkdir(parents=True, exist_ok=True)
@@ -268,7 +270,7 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
     # Retry the non-blocking flock briefly: a transient holder is almost always a status/purge
     # probe testing the lock, not a real second agent (which holds it persistently and will
     # still be rejected after the retries). This rides out the probe's microsecond hold so a
-    # harmless `spacelabel status` during startup can't make us spuriously exit 1.
+    # harmless `spacelabel status` during startup can't make us spuriously exit.
     for attempt in range(_LOCK_RETRY_ATTEMPTS):
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -276,8 +278,11 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
         except OSError as exc:
             if attempt + 1 >= _LOCK_RETRY_ATTEMPTS:
                 handle.close()  # the loser leaves the winner's recorded pid intact
-                log.error("another spacelabel agent is already running (%s): %s", lock_path, exc)
-                raise SystemExit(1) from exc
+                log.warning("another spacelabel agent is already running (%s): %s", lock_path, exc)
+                # A duplicate is not a crash: exit 0 so launchd KeepAlive
+                # (SuccessfulExit:false) does NOT relaunch us into a restart loop after a
+                # `brew upgrade` double-start (the winner keeps running). Item AB / §6.4.
+                raise SystemExit(0) from exc
             time.sleep(_LOCK_RETRY_DELAY_S)
     log.debug("acquired single-instance lock %s", lock_path)
     # Won the lock: NOW record "<pid>\n<resolved-config>" (truncate the stale content first).

@@ -617,6 +617,13 @@ When the active display's current Space is the **default unlabelable** one (`uui
 
 ### AB. `brew upgrade --cask` race: LaunchAgent `KeepAlive` restart loop  *(Max, 2026-06-25 — live finding)*
 
+**✅ DONE (2026-06-25).** **Fix A applied** (lock loser exits 0). **Fix B (add `uninstall
+launchctl:`) REJECTED** — Homebrew's `launchctl:` always does a sudo root pass → a password
+prompt on every upgrade/uninstall, reversing the passwordless-upgrade decision (#41). Fix A
+alone meets all acceptance criteria; the upgrade double-start still happens but the loser quits
+cleanly so KeepAlive never loops. See DECISIONS §6.4 + the cask `uninstall` note. (Separate
+`chore(cask)` adds `livecheck` + a comment that `signal:` is skipped on upgrade.)
+
 **Severity: critical (operational).** After `brew upgrade --cask spacelabel`, the agent logs
 `another spacelabel agent is already running` every ~10 seconds indefinitely, filling `agent.log`.
 
@@ -645,10 +652,12 @@ records the rejection clearly; the exit code only needs to not look like a crash
 raise SystemExit(0)   # lock held by another agent; not a crash — no KeepAlive restart
 ```
 
-*Fix B — `Casks/spacelabel.rb` (prevents the race):* add an `uninstall launchctl:` stanza
+*Fix B — `Casks/spacelabel.rb` (prevents the race): **❌ REJECTED — see DONE note above.**
+`launchctl:` always triggers a sudo password prompt (Homebrew's root pass), reversing #41's
+passwordless upgrade; Fix A alone is sufficient.* ~~add an `uninstall launchctl:` stanza
 so Homebrew performs a proper `launchctl bootout` (killing the managed agent) before installing
 the new binary. After the new binary lands, `RunAtLoad` fires **once** cleanly with no
-competing `open` process.
+competing `open` process.~~ (Original proposal, kept for the record:)
 
 ```ruby
 uninstall launchctl: "dev.mcsim.spacelabel"
