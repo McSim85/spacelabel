@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0](https://github.com/McSim85/spacelabel/compare/v0.9.1...v1.0.0) (2026-06-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wallpaper:** the `spacelabel mode wallpaper` command and the `wallpaper.position` / `wallpaper.font_size` config keys are removed. `mode wallpaper` now exits 2 (invalid choice) and `config set wallpaper.*` exits 1 (unknown key). Existing config.json files keep loading cleanly.
+
+### Features
+
+* **wallpaper:** remove experimental wallpaper mode ([#62](https://github.com/McSim85/spacelabel/issues/62)) ([5b9a94a](https://github.com/McSim85/spacelabel/commit/5b9a94af9760829c1af8f5fa092ccaa382e79654))
+
+
+### Bug Fixes
+
+* **agent:** exit 0 on lock-busy so KeepAlive doesn't loop (item AB) ([#65](https://github.com/McSim85/spacelabel/issues/65)) ([89dd132](https://github.com/McSim85/spacelabel/commit/89dd132bbc4af829d24035e6a1b88eb3c50be697))
+
 ## [0.9.1](https://github.com/McSim85/spacelabel/compare/v0.9.0...v0.9.1) (2026-06-25)
 
 
