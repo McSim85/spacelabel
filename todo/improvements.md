@@ -663,6 +663,18 @@ The `zap` stanza already handles full teardown; `uninstall` only runs on `brew u
 
 ---
 
+### AC. Hover tooltip on menu-bar pills showing the full Space name  *(Max, 2026-06-25)*
+
+**Context:** a pill shows only a compact glyph — a leading letter (`menubar.pill_label_chars`) for a labeled Space, or the Space number for an unlabeled one. Hovering a pill should pop a **tooltip with the full Space name** (the full label, or `Desktop N` for an unlabeled Space) so a Space is identifiable on hover, without clicking.
+
+**Implementation:** in `ButtonsRowView` (`agent/menubar.py`), register **per-pill tooltip rects** via AppKit `addToolTipRect:owner:userData:` for each pill's frame, with the owner implementing `view:stringForToolTip:point:userData:` to return that pill's full title. Map `userData` → pill index → full title via `labeling.title_for` (full label, `Desktop N` fallback; optionally include the display/custom name for context). **Re-register on every rebuild/`_resize_row`** (`removeAllToolTips` then re-add) since pill rects change as Spaces are added/removed and the row resizes. Display-only — must not affect `hitTest_`/click-to-switch routing.
+
+**Read first:** `agent/menubar.py` (`ButtonsRowView`, `_draw_one_pill`, `preferred_width`/`_resize_row`, the pill model + `hitTest_`), `labeling.title_for`, `agent/app.py` (`_update_buttons_row` — where pills/titles are fed in). **Acceptance:** hovering any pill shows its full Space name (labeled → label; unlabeled → `Desktop N`); tooltips stay correct after add/remove/reorder + row resize; clicking behavior unchanged.
+
+Severity: **low** (UX nicety). **Parallel-safe** — touches only `agent/menubar.py` (+ maybe a title helper); no `app.py` logic changes. Could fold into a menubar-polish session or run standalone.
+
+---
+
 ## After completing each item
 
 1. Run all gates:
