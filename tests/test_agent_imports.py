@@ -150,14 +150,19 @@ def test_prefs_color_well_persists_to_store(tmp_path):
     data_source.colorChanged_(well)  # simulate the color-well action
     assert store.load_labels(paths)[uuid].color == "#ff8000"
 
-    # An unlabeled Space's well is disabled (color is a per-label attribute).
+    # An unlabeled Space: well stays ENABLED (so activate_ fires and shows the
+    # "Set a label first" sheet), but has no space_uuid bound (no target/action).
     unlabeled = Space(uuid="1A0F5C2E-7B3D-4C8A-9E1F-2D4B6A8C0E12", display_uuid="D1")
-    assert data_source._color_cell(None, unlabeled).isEnabled() is False
+    unlabeled_well = data_source._color_cell(None, unlabeled)
+    assert unlabeled_well.isEnabled()  # enabled so AppKit dispatches activate_
+    assert unlabeled_well.space_uuid() == ""  # no UUID -> explanation sheet, not picker
 
 
-def test_prefs_color_well_disabled_for_notes_only_space(tmp_path):
+def test_prefs_color_well_enabled_for_notes_only_space(tmp_path):
     # A notes-only Space (notes but no label, Label.text == "") is unlabeled: the
-    # color well must stay disabled — color is a per-label attribute (DECISIONS 9.10).
+    # color well must stay ENABLED so activate_ fires and shows the "Set a label first"
+    # sheet — setEnabled_(False) would prevent AppKit from dispatching activate_ at all,
+    # leaving clicks silently ignored (DECISIONS 9.10 / T-4 finding).
     from spacelabel import labeling, store
     from spacelabel.agent.prefs import PrefsDataSource, _DisplayNode
     from spacelabel.model import Display, Space
@@ -172,7 +177,9 @@ def test_prefs_color_well_disabled_for_notes_only_space(tmp_path):
     data_source.set_nodes(
         [node], store.load_labels(paths), labeling.assign_ordinals([space]), paths
     )
-    assert data_source._color_cell(None, space).isEnabled() is False
+    well = data_source._color_cell(None, space)
+    assert well.isEnabled()  # enabled so AppKit dispatches activate_
+    assert well.space_uuid() == ""  # no UUID bound -> explanation sheet, not picker
 
 
 def test_prefs_load_tree_counts_default_desktop(tmp_path, monkeypatch):

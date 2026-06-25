@@ -851,11 +851,12 @@ def display_set(ctx: AppContext, target: str, name: str) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit a JSON array to stdout.")
 @click.pass_obj
 def display_list(ctx: AppContext, as_json: bool) -> None:
-    """List connected displays and their custom or system names."""
+    """List connected displays with their names and overlay status."""
     from spacelabel.platform import displays as displays_mod
 
     paths = _paths(ctx)
     overrides = store.load_display_labels(paths)
+    overlay_disabled = store.load_display_overlay_disabled(paths)
     try:
         topology = displays_mod.discover_topology()
     except (OSError, ImportError) as exc:  # ImportError == PyObjC absent; show stored names only
@@ -871,13 +872,23 @@ def display_list(ctx: AppContext, as_json: bool) -> None:
                     "name": displays_mod.resolved_name(disp, overrides),
                     "custom": disp.uuid in overrides,
                     "active": disp.uuid == active,
+                    "overlay": "off" if disp.uuid in overlay_disabled else "on",
                 }
                 for disp in topology
             ]
         else:
+            # Union custom-name UUIDs with overlay-disabled UUIDs: a display that only
+            # has overlay state stored (no custom name) must still appear in the output.
+            all_uuids = sorted(set(overrides.keys()) | overlay_disabled)
             records = [
-                {"uuid": uuid, "name": name, "custom": True, "active": uuid == active}
-                for uuid, name in sorted(overrides.items())
+                {
+                    "uuid": uuid,
+                    "name": overrides.get(uuid, ""),
+                    "custom": uuid in overrides,
+                    "active": uuid == active,
+                    "overlay": "off" if uuid in overlay_disabled else "on",
+                }
+                for uuid in all_uuids
             ]
         click.echo(json.dumps(records))
         return
@@ -889,12 +900,24 @@ def display_list(ctx: AppContext, as_json: bool) -> None:
                 disp.uuid,
                 displays_mod.resolved_name(disp, overrides),
                 "custom" if disp.uuid in overrides else "system",
+                "off" if disp.uuid in overlay_disabled else "on",
             ]
             for disp in topology
         ]
     else:
-        rows = [["", uuid, name, "custom"] for uuid, name in sorted(overrides.items())]
-    _echo_table(["CURRENT", "DISPLAY_UUID", "NAME", "SOURCE"], rows, color_current=True)
+        # Same union as the JSON branch: include overlay-only displays.
+        all_uuids = sorted(set(overrides.keys()) | overlay_disabled)
+        rows = [
+            [
+                "",
+                uuid,
+                overrides.get(uuid, ""),
+                "custom" if uuid in overrides else "stored",
+                "off" if uuid in overlay_disabled else "on",
+            ]
+            for uuid in all_uuids
+        ]
+    _echo_table(["CURRENT", "DISPLAY_UUID", "NAME", "SOURCE", "OVERLAY"], rows, color_current=True)
 
 
 @display.command("clear")

@@ -99,13 +99,14 @@ _ANCHOR_ORDER = (
 assert set(_ANCHOR_ORDER) == ANCHORS
 
 #: Settings-strip mode checkboxes: (tag, dotted config key, label).
+#: Tags 1-5 only; tag 6 ("overlay.hide_on_unlabeled") and tag 7 ("menubar.click_to_switch")
+#: are placed separately on Row 3 so Row 1 doesn't overflow the 720 pt window.
 _MODE_CHECKBOXES = (
     (1, "modes.menubar", "Menu-bar title"),
     (2, "modes.hud", "On-switch HUD"),
     (3, "modes.overlay", "Corner overlay"),
     (4, "modes.wallpaper", "Wallpaper (exp)"),
     (5, "menubar.show_buttons_row", "Buttons row"),
-    (6, "overlay.hide_on_unlabeled", "Hide overlay on unlabeled"),
 )
 
 
@@ -155,7 +156,30 @@ class _LabelColorWell(NSColorWell):
         return self
 
     def activate_(self, exclusive: bool) -> None:
-        """Center the shared NSColorPanel on the active screen before showing it (item T)."""
+        """Centre the NSColorPanel, or explain why color is unavailable for unlabeled Spaces.
+
+        ``NSColorWell.activate_`` is called by AppKit's internal tracking (after
+        ``mouseDown_``), so it is the right intercept point — a ``mouseDown_`` override
+        is NOT sufficient because ``setEnabled_(False)`` prevents AppKit from dispatching
+        ``mouseDown_`` to NSView subclasses at all, making the handler unreachable.  The
+        fix: leave unlabeled wells *enabled* (no ``setEnabled_(False)`` in ``_color_cell``)
+        but intercept here: if no Space UUID is bound, show an explanation sheet and
+        return without opening the colour panel.
+        """
+        if not self._space_uuid:
+            from AppKit import NSAlert
+
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("Set a label first")
+            alert.setInformativeText_(
+                "Color is a per-label attribute.\n"
+                "Label this Space, then click the colour well to assign a color."
+            )
+            alert.addButtonWithTitle_("OK")
+            win = self.window()
+            if win is not None:
+                alert.beginSheetModalForWindow_completionHandler_(win, lambda _r: None)
+            return
         from AppKit import NSColorPanel
 
         _center_on_main_screen(NSColorPanel.sharedColorPanel())
@@ -454,9 +478,9 @@ class PrefsDataSource(NSObject):
             well.set_space_uuid(space.uuid)
             well.setTarget_(self)
             well.setAction_("colorChanged:")
-        else:
-            # Unlabeled (incl. notes-only): no label to attach a color to -> disabled.
-            well.setEnabled_(False)
+        # Unlabeled (incl. notes-only): keep well ENABLED so AppKit dispatches activate_,
+        # where the "Set a label first" sheet is shown. setEnabled_(False) would prevent
+        # mouseDown_/activate_ from being called at all, leaving clicks silently ignored.
         return well
 
     def colorChanged_(self, sender: object) -> None:  # noqa: N802
@@ -589,7 +613,9 @@ class PreferencesWindow:
         outline.addTableColumn_(
             self._make_column(_COL_LABEL, "Space / Label", 220.0, editable=True)
         )
-        outline.addTableColumn_(self._make_column(_COL_UUID, "UUID", 300.0, editable=False))
+        # UUID column narrowed from 300 → 220 pt so the Overlay column (80 pt)
+        # stays visible: 220+220+60+50+80 = 630 pt, well inside the 720 pt window.
+        outline.addTableColumn_(self._make_column(_COL_UUID, "UUID", 220.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_COLOR, "Color", 60.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_NOW, "Now", 50.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_OVERLAY, "Overlay", 80.0, editable=False))
@@ -662,9 +688,10 @@ class PreferencesWindow:
         )
         content.addSubview_(ovl_corner)
 
-        # Row 3: "Click to switch" toggle (item J; effective only when buttons row is on).
-        # Placed at y=396, 6 pt above the scroll view top (390 = 40 + 350).
-        # Tag 7: tags 1-6 are used by _MODE_CHECKBOXES (6 = overlay.hide_on_unlabeled).
+        # Row 3: placed at y=396, 6 pt above the scroll view top (390 = 40 + 350).
+        # Two checkboxes: "Click to switch" (tag 7, item J) and "Hide unlabeled overlay"
+        # (tag 6, item Q). Tag 6 moved here from _MODE_CHECKBOXES so Row 1 doesn't
+        # overflow the 720 pt window — both items are sub-settings, not primary modes.
         cts_tag = 7
         target.register_tag(cts_tag, "menubar.click_to_switch")
         cts = NSButton.alloc().initWithFrame_(NSMakeRect(16.0, 396.0, 130.0, 20.0))
@@ -678,6 +705,20 @@ class PreferencesWindow:
         cts.setFrameOrigin_((16.0, 396.0))
         content.addSubview_(cts)
         self._cts_button = cts  # kept for state sync after dropdown toggles (item J)
+
+        hun_tag = 6
+        target.register_tag(hun_tag, "overlay.hide_on_unlabeled")
+        hun = NSButton.alloc().initWithFrame_(NSMakeRect(0.0, 396.0, 130.0, 20.0))
+        hun.setButtonType_(NSButtonTypeSwitch)
+        hun.setTitle_("Hide unlabeled overlay")
+        hun.setState_(_state(bool(store.get_config_value(config, "overlay.hide_on_unlabeled"))))
+        hun.setTag_(hun_tag)
+        hun.setTarget_(target)
+        hun.setAction_("toggleCheckbox:")
+        hun.sizeToFit()
+        hun_x = 16.0 + float(cts.frame().size.width) + 14.0
+        hun.setFrameOrigin_((hun_x, 396.0))
+        content.addSubview_(hun)
 
     def _add_label(self, content: object, text: str, x: float, y: float, width: float) -> None:
         """Add a static text label to the settings strip."""
