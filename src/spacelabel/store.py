@@ -35,7 +35,6 @@ from spacelabel.model import (
     MenubarConfig,
     Note,
     OverlayConfig,
-    WallpaperConfig,
     default_modes,
 )
 
@@ -934,7 +933,7 @@ def _build_config_schema() -> dict[str, ConfigField]:
     """Build the dotted-key -> :class:`ConfigField` validation table (CONTRACT)."""
     fields: list[ConfigField] = []
 
-    for mode in ("menubar", "hud", "overlay", "wallpaper"):
+    for mode in ("menubar", "hud", "overlay"):
         key = f"modes.{mode}"
         fields.append(
             ConfigField(
@@ -1072,20 +1071,6 @@ def _build_config_schema() -> dict[str, ConfigField]:
         "bool",
     )
     add(
-        "wallpaper.position",
-        lambda raw: _parse_anchor("wallpaper.position", raw),
-        lambda c: c.wallpaper.position,
-        lambda c, v: setattr(c.wallpaper, "position", v),
-        "one of the nine anchors",
-    )
-    add(
-        "wallpaper.font_size",
-        lambda raw: _parse_int_or_auto("wallpaper.font_size", raw, minimum=1),
-        lambda c: c.wallpaper.font_size,
-        lambda c, v: setattr(c.wallpaper, "font_size", v),
-        'int >= 1 or "auto"',
-    )
-    add(
         "debounce_ms",
         lambda raw: _parse_int("debounce_ms", raw, minimum=0),
         lambda c: c.debounce_ms,
@@ -1138,10 +1123,6 @@ def config_to_dict(config: Config) -> dict[str, object]:
             "show_notes": config.overlay.show_notes,
             "note_font_size": config.overlay.note_font_size,
             "hide_on_unlabeled": config.overlay.hide_on_unlabeled,
-        },
-        "wallpaper": {
-            "position": config.wallpaper.position,
-            "font_size": config.wallpaper.font_size,
         },
         "debounce_ms": config.debounce_ms,
         "log_level": config.log_level,
@@ -1238,19 +1219,12 @@ def config_from_dict(data: Mapping[str, object]) -> Config:
         ),
     )
 
-    raw_wallpaper = _as_mapping(data.get("wallpaper"))
-    wallpaper = WallpaperConfig(
-        position=_coerce_str(raw_wallpaper.get("position"), defaults.wallpaper.position),
-        font_size=_coerce_int_or_auto(raw_wallpaper.get("font_size"), defaults.wallpaper.font_size),
-    )
-
     return Config(
         schema_version=_coerce_int(data.get("schema_version"), defaults.schema_version),
         modes=modes,
         menubar=menubar,
         hud=hud,
         overlay=overlay,
-        wallpaper=wallpaper,
         debounce_ms=_coerce_int(data.get("debounce_ms"), defaults.debounce_ms),
         log_level=_coerce_str(data.get("log_level"), defaults.log_level),
     )

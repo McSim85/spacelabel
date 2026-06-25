@@ -13,7 +13,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | ✅ [fix-overlay-behavior.md](fix-overlay-behavior.md) | **Z + P + Q** *(done 2026-06-24)* | medium · Sonnet 4.6 | `overlay.py` `app.py` `store.py` `prefs.py` |
 | ✅ [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** *(done 2026-06-25)* | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
 | ✅ [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** *(done 2026-06-25)* | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |
-| [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** | **high (design)** · Opus 4.8 | `wallpaper.py` |
+| ✅ [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** *(resolved by removal 2026-06-25)* | **high (design)** · Opus 4.8 | removed `wallpaper.py` + `model`/`store`/`cli`/`app`/`prefs`/`geometry`, docs |
 | [remove-pipx.md](remove-pipx.md) | — | medium · Sonnet 4.6 | `install.py` tests docs |
 | **[fix-brew-upgrade-race.md](fix-brew-upgrade-race.md)** | **AB** *(critical)* | low · Sonnet 4.6 | `app.py` `Casks/spacelabel.rb` |
 
@@ -21,7 +21,8 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 
 Four UI units (**O+V, L, Z+P+Q, T+U+W**) all edit **`app.py`** (different methods, but the same file) → running them at the exact same time will produce merge conflicts there.
 
-- **Track B — run fully in parallel (no shared files):** **fix-cli-polish** (`cli.py`/launcher), **wallpaper-redesign** (`wallpaper.py`), **remove-pipx** (`install.py`). These don't touch `app.py`/`prefs.py`/`overlay.py`/`switching.py` — safe to run simultaneously with each other and with one Track-A unit.
+- **Track B — run fully in parallel (no shared files):** **fix-cli-polish** (`cli.py`/launcher), **remove-pipx** (`install.py`). These don't touch `app.py`/`prefs.py`/`overlay.py`/`switching.py` — safe to run simultaneously with each other and with one Track-A unit.
+  - ⚠ **wallpaper-redesign was NOT parallel-safe** (and is now done — resolved by removal 2026-06-25). It was originally scoped as "touches only `wallpaper.py`," but the removal edited `cli.py` (overlaps fix-cli-polish), `install.py` (overlaps remove-pipx), `app.py`/`model.py`/`store.py`/`prefs.py`/`geometry.py`, and shared docs — so it had to run sequentially, not concurrently with the other Track-B units.
 - **Track A — `app.py`-heavy: sequence, or parallelize with rebase discipline.** Suggested order (functional first; each rebases on the prior so `app.py` conflicts stay trivial):
   1. ✅ **fix-multidisplay-ordinal** (O+V) — the headline functional bug. **(done 2026-06-24, branch `fix/multidisplay-ordinal`)**
   2. **fix-stale-accessibility-grant** (L) — rebase on O+V (the next Track-A unit).

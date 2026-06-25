@@ -35,35 +35,6 @@ All modes read the same UUID→label store; enable any combination with
 | **Menu-bar item** (primary) | Shows the active Space's label in the menu bar | on | yes |
 | **On-switch HUD** | Brief centered banner on each Space change | on | yes |
 | **Persistent corner overlay** | Always-on-top label pinned to a screen corner | off | yes |
-| **Wallpaper** (experimental) | Renders the label onto the desktop image | off | **no — best-effort** |
-
-#### How wallpaper mode works (your original is never touched)
-
-Your real wallpaper file is only ever **read** as the compositing base — `spacelabel`
-**never writes to it**. On each Space change it renders *the original + the label* into
-its own cache (`~/Library/Caches/spacelabel/wallpaper/display-<id>.png`, a stable
-filename rewritten atomically each render) and sets **that cache file** as the desktop
-image. So "the wallpaper changes" means the active screen's image is swapped to our
-cached composite while a Space is active — the source image on disk is untouched.
-
-```mermaid
-flowchart TD
-    A["Space change → active Space + label text"] --> B["Read the active screen's<br/>current desktop image path"]
-    B --> C{"Is that path inside our cache?<br/>(~/Library/Caches/spacelabel/wallpaper/)"}
-    C -- "No — the user's real wallpaper, and it exists" --> D["Use it as the base · read-only<br/>remember it (in memory) +<br/>persist path → originals.json<br/>+ byte copy → original-&lt;uuid&gt;.png"]
-    C -- "Yes / gone (e.g. after a restart)" --> E["Recover the original:<br/>in-memory → originals.json path<br/>→ original-&lt;uuid&gt;.png copy"]
-    E -- "nothing recoverable" --> Z["Skip — never paint black,<br/>never modify the original"]
-    D --> F["Composite: load base with NSImage,<br/>draw the label at the anchor"]
-    E -- "recovered" --> F
-    F --> G["Write the composite to the cache<br/>display-&lt;id&gt;.png · stable path · atomic"]
-    G --> H["Set the cache file as wallpaper<br/>setDesktopImageURL:forScreen:"]
-    H --> I["Purge: TTL-sweep only our own files<br/>(keep referenced originals + live composites)"]
-```
-
-A system `WallpaperAgent` owns wallpaper state on Sonoma+/Tahoe and may revert or
-flicker these sets, which is why the mode is experimental and off by default. The
-persisted path + copy let it recover the original (and keep the cache bounded) across
-an agent restart. See [`DESIGN.md`](DESIGN.md) §6.4 / [`DECISIONS.md`](DECISIONS.md) §7.
 
 ### Menu-bar pills (buttons row)
 
@@ -189,7 +160,7 @@ spacelabel [--config PATH] [--verbose] [--debug] [--version]
   uninstall [--purge]           remove the LaunchAgent; --purge also deletes data
   status                        install + run state (managed or foreground agent)
   spaces                        list current Spaces + UUIDs, mark the active one
-  mode <menubar|hud|overlay|wallpaper> [--on/--off]
+  mode <menubar|hud|overlay> [--on/--off]
   label set <uuid|current> <text>
   label list
   label clear <uuid|current>
@@ -220,7 +191,7 @@ constraint.
 
 | Key | Type / values | Default | Notes |
 | --- | --- | --- | --- |
-| `modes.{menubar,hud,overlay,wallpaper}` | bool | `true,true,false,false` | Prefer `spacelabel mode <name> --on/--off` |
+| `modes.{menubar,hud,overlay}` | bool | `true,true,false` | Prefer `spacelabel mode <name> --on/--off` |
 | `menubar.max_length` | int ≥ 1 | `24` | Truncate the menu-bar title |
 | `menubar.show_buttons_row` | bool | `false` | Show per-Space pills instead of the title |
 | `menubar.buttons_scope` | `all_displays` \| `active_display` | `all_displays` | Which displays' pills to show |
@@ -234,7 +205,6 @@ constraint.
 | `overlay.margin` | int (pt) | `12` | Inset from the screen edge |
 | `overlay.font_size` | int \| `auto` | `15` | |
 | `overlay.bold` | bool | `true` | Draw the overlay label bold |
-| `wallpaper.position` | one of the nine anchors | `center` | Label placement (experimental mode) |
 | `debounce_ms` | int | `200` | Coalesce rapid Space switches |
 | `log_level` | `DEBUG`…`CRITICAL` | `WARNING` | Agent file-log level |
 
@@ -266,9 +236,6 @@ The **nine anchors** are `top-left`, `top`, `top-right`, `left`, `center`,
   desktop numbers do match). So spacelabel switches a pill only when its Space is on the
   active display and shows a visible "only works on the focused display" notice otherwise —
   focus that display first, then click its pill.
-- **Wallpaper mode is experimental and best-effort.** macOS exposes no per-Space
-  wallpaper API, and a system `WallpaperAgent` may revert or flicker programmatic
-  changes. It ships disabled by default.
 - **Pills don't redraw on a pure reorder (yet).** The agent refreshes on Space
   *switch* and display change, not on a Mission Control drag — so after reordering,
   the pill row looks stale until your next switch. Clicking is unaffected (it's

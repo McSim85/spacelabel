@@ -296,11 +296,10 @@ def test_mode_invalid_name_is_usage_error(runner, cfg):
     assert r.exit_code == 2  # click.Choice
 
 
-def test_mode_wallpaper_enable_warns_on_stderr(runner, cfg):
+def test_mode_wallpaper_removed_is_usage_error(runner, cfg):
+    # Wallpaper mode was removed: it is no longer a valid `mode` choice.
     r = runner.invoke(cli, _base(cfg, "mode", "wallpaper", "--on"))
-    assert r.exit_code == 0
-    assert r.stdout.strip() == "wallpaper: on"
-    assert "experimental" in r.stderr.lower()
+    assert r.exit_code == 2  # click.Choice rejects it
 
 
 # ---- spaces (mocked CGS) ---------------------------------------------------
@@ -432,14 +431,15 @@ def test_spaces_both_paths_failing_exits_1(runner, cfg, monkeypatch):
     assert r.stdout == ""  # nothing on the data channel
 
 
-def test_wallpaper_is_a_single_mode_toggle(runner, cfg):
-    # The redundant wallpaper.enabled_experimental key is gone; modes.wallpaper alone
-    # toggles the mode (uniform with the other three modes).
-    r = runner.invoke(cli, _base(cfg, "config", "set", "wallpaper.enabled_experimental", "true"))
-    assert r.exit_code == 1  # unknown key now
+def test_wallpaper_config_keys_removed(runner, cfg):
+    # Wallpaper mode was removed: its config keys are gone from the schema, so
+    # `config set wallpaper.*` is a clean unknown-key error (exit 1) and nothing
+    # wallpaper-shaped survives in the serialized config.
+    r = runner.invoke(cli, _base(cfg, "config", "set", "wallpaper.position", "center"))
+    assert r.exit_code == 1  # ConfigKeyError -> exit 1
     r = runner.invoke(cli, _base(cfg, "config", "get"))
-    assert "enabled_experimental" not in r.stdout  # not in the serialized config
-    assert runner.invoke(cli, _base(cfg, "mode", "wallpaper", "--on")).exit_code == 0
+    assert r.exit_code == 0
+    assert "wallpaper" not in r.stdout.lower()
 
 
 def test_spaces_falls_back_to_plist_on_cgs_unavailable(runner, cfg, monkeypatch):

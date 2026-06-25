@@ -539,7 +539,9 @@ When a display's current Space is unlabeled (or it's the single default no-UUID 
 
 ---
 
-### R. Wallpaper mode must not clobber Dynamic / Shuffle wallpapers (static-only, detect + skip/confirm)  *(Max, 2026-06-23 — important safety gap)*
+### R. Wallpaper mode must not clobber Dynamic / Shuffle wallpapers (static-only, detect + skip/confirm)  *(Max, 2026-06-23 — important safety gap)* **✅ RESOLVED BY REMOVAL (2026-06-25)**
+
+> **✅ RESOLVED BY REMOVAL (2026-06-25, DECISIONS §7.5).** Wallpaper mode was removed entirely rather than redesigned — no static-only detection ships because the mode no longer ships. This finding (with **S**) drove the removal. See [`wallpaper-redesign.md`](wallpaper-redesign.md).
 
 **Context (Max):** macOS supports **Dynamic** wallpapers (time-of-day `.heic`) and **Shuffle** (rotating folder/album). spacelabel's experimental wallpaper mode grabs `NSWorkspace.desktopImageURL` (one image) and sets a **static composite** — so on a Dynamic wallpaper it captures **a single frame**, replaces the dynamic `.heic` (kills the time-of-day behavior), and persists only that frame as the "original" → **the dynamic wallpaper can never be restored**. Shuffle breaks the same way (rotation lost, only one image captured). This is worse than the static-image case and effectively clobbers the user's real wallpaper config irreversibly — counter to the "best-effort, never corrupt the source of truth" stance (DECISIONS §7).
 
@@ -556,7 +558,9 @@ Severity: **medium** (data-safety in an experimental, off-by-default mode — bu
 
 ---
 
-### S. Wallpaper mode can't capture the real **per-Space** wallpaper base (`desktopImageURL` is per-screen, stale)  *(Max, 2026-06-23 — foundational finding)*
+### S. Wallpaper mode can't capture the real **per-Space** wallpaper base (`desktopImageURL` is per-screen, stale)  *(Max, 2026-06-23 — foundational finding)* **✅ RESOLVED BY REMOVAL (2026-06-25)**
+
+> **✅ RESOLVED BY REMOVAL (2026-06-25, DECISIONS §7.5).** No public API sets a specific non-active Space's wallpaper, and the redesign (known-base images) wasn't worth the cost — wallpaper mode was removed entirely. See [`wallpaper-redesign.md`](wallpaper-redesign.md).
 
 **Context (verified live):** macOS supports **per-Space wallpapers**. The active portrait display's current Space (3A9B361D) shows a "Dubai Skyline" static photo, but `NSWorkspace.desktopImageURLForScreen_(screen)` returned `/System/Library/CoreServices/DefaultDesktop.heic` (the system default applied to newly-connected displays) — **not** the actual per-Space image. So `wallpaper.py`'s base capture composites onto the **wrong / default** base, and the persisted "original" is wrong too. Together with item **R** (Dynamic/Shuffle), the wallpaper mode's entire premise — *capture the current wallpaper → composite a label → set it* — is **unreliable on real multi-Space / multi-display setups** (the public `desktopImageURL` API predates per-Space wallpapers and doesn't reflect them).
 

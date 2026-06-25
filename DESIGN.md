@@ -19,7 +19,6 @@ Four display modes, all reading the same UUID→label store:
 | **menu-bar item** (primary) | Shows the active Space's label as an `NSStatusItem` title | yes |
 | **on-switch HUD** | Brief centered banner on each Space change | yes |
 | **persistent corner overlay** | Always-on-top label pinned to a screen corner | yes |
-| **wallpaper** (experimental) | Renders the label onto the desktop image | **no — cosmetic/best-effort** |
 
 ---
 
@@ -43,7 +42,6 @@ spacelabel/
     menubar.py        # NSStatusItem surface
     hud.py            # transient HUD NSPanel
     overlay.py        # persistent corner NSPanel
-    wallpaper.py      # experimental wallpaper rendering + set
     prefs.py          # NSTableView preferences window
   install.py          # LaunchAgent plist install/uninstall via launchctl
   model.py            # dataclasses: Space, Display, Label, Config
@@ -60,9 +58,9 @@ NSApp didChangeScreenParameters ──┘                                       
         │                                                                    ▼
         └─► displays.refresh() (rebuild NSScreen<->UUID map)        store.label_for(uuid)
                                                                              │
-                                          ┌──────────────┬──────────────┬────┴─────────┐
-                                          ▼              ▼              ▼              ▼
-                                     menubar.set    hud.show      overlay.set    wallpaper.set
+                                          ┌──────────────┬──────┴───────┐
+                                          ▼              ▼              ▼
+                                     menubar.set    hud.show      overlay.set
 ```
 
 The CGS reads run off the AppKit main thread (they are pure WindowServer IPC); UI updates are marshalled back to the main thread.
@@ -231,7 +229,7 @@ def discover_topology() -> list[dict]:
 ## 5. Space-change observation & debounce
 
 - Observe `NSWorkspaceActiveSpaceDidChangeNotification` on `NSWorkspace.sharedWorkspace().notificationCenter()` — **not** the default center. The notification **carries no Space identity**; re-read the UUID every fire.
-- **Debounce (trailing edge, ~200ms):** rapid Space switching is the common case. Coalesce a burst of notifications and re-read the CGS path **once** after quiescence. Mechanism: cancel-and-reschedule a single timer (`NSTimer` invalidated/rescheduled on each fire, or a trailing-edge dispatch). The debounced callback does the off-main CGS read, then marshals the UI update (menu-bar/HUD/overlay/wallpaper) back to the main thread.
+- **Debounce (trailing edge, ~200ms):** rapid Space switching is the common case. Coalesce a burst of notifications and re-read the CGS path **once** after quiescence. Mechanism: cancel-and-reschedule a single timer (`NSTimer` invalidated/rescheduled on each fire, or a trailing-edge dispatch). The debounced callback does the off-main CGS read, then marshals the UI update (menu-bar/HUD/overlay) back to the main thread.
 - This is the "notification-center footgun" Phase 4 must get right: wrong center → no events; no debounce → thrash.
 - **Hybrid: events + a 1 s liveness poll (DECISIONS §4.3).** A Mission Control **reorder** fires neither `activeSpaceDidChange` (active Space unchanged) nor `didChangeScreenParameters`, so the existing 1 s `_poll_reload` also reads a cheap live CGS **topology signature** (ordered `(display_uuid, uuid, is_current)` tuples) and refreshes when it differs from the last tick — catching reorder, create, and delete uniformly. Live CGS only (the plist can't show reorder, §3.4); an unreadable tick is skipped so a transient hiccup never spuriously refreshes.
 
@@ -252,12 +250,11 @@ Borderless `NSPanel` with `NSWindowStyleMaskNonactivatingPanel`; `level = NSScre
 ### 6.3 Persistent corner overlay — always-on-top `NSPanel`
 Same non-activating, click-through, all-Spaces config as the HUD, but `level = NSStatusWindowLevel` (25 — above apps, below menus/popups, the polite always-on-top tier). Pin to a corner of the active screen's `visibleFrame()` (avoids menu bar/Dock); reposition on `didChangeScreenParameters`. Corner + margin are config-driven.
 
-### 6.4 Wallpaper (experimental, disabled by default)
-**Cosmetic / best-effort only — there is no per-Space wallpaper API.** `NSWorkspace.setDesktopImageURL_forScreen_options_error_` is **per-`NSScreen`, never per-Space**; on Sonoma+/Tahoe a separate `WallpaperAgent` owns wallpaper state, self-reverts programmatic sets, and silently flips "Show on all spaces" off on repeated sets. Best-effort = on each (debounced) space change, render a label image and set it for the active screen, accepting flicker and revert.
-
-- **Render natively (no Pillow):** `NSBitmapImageRep` + `NSGraphicsContext` + `NSString.drawInRect:withAttributes:` (Core Text under the hood) at `frame.size × backingScaleFactor` pixels for Retina crispness, write a PNG, set it. Pillow is rejected — zero benefit for text-over-image, and a new dep.
-- Write the PNG to a **stable per-display temp path overwritten in place** (WallpaperAgent reads it asynchronously; deleting too early can blank the desktop).
-- Ship **disabled by default**, labeled experimental, documented as may-revert/flicker.
+### 6.4 Wallpaper mode — removed, see DECISIONS §7
+The experimental wallpaper mode (capture the desktop image → composite the label →
+set it) was **removed** (2026-06-25): unfixable on Dynamic/Shuffle/per-Space setups,
+no public API for per-Space wallpaper, and HUD + overlay already cover the need. Full
+rationale in DECISIONS §7.5.
 
 ---
 
@@ -288,24 +285,17 @@ Same non-activating, click-through, all-Spaces config as the HUD, but `level = N
 ```json
 {
   "schema_version": 1,
-  "modes": { "menubar": true, "hud": true, "overlay": false, "wallpaper": false },
+  "modes": { "menubar": true, "hud": true, "overlay": false },
   "menubar":  { "max_length": 24 },
   "hud":      { "duration_ms": 1100, "font_size": 42 },
   "overlay":  { "corner": "top-right", "margin": 12, "font_size": 15, "bold": true },
-  "wallpaper":{ "position": "center" },
   "debounce_ms": 200,
   "log_level": "WARNING"
 }
 ```
 
-> Phase-4 updates: wallpaper is toggled solely by `modes.wallpaper` (uniform with
-> the other modes); the confusing `wallpaper.enabled_experimental` key was removed
-> and the `wallpaper` block now holds only the label `position` (one of the nine
-> anchors), composited onto the **real** desktop image (never a blank background,
-> never modifying the original file) and written to a purged cache. `overlay.bold`
-> draws the corner label (its title) in the bold system font. Wallpaper stays
-> cosmetic/best-effort (§6.4); the experimental framing is surfaced via the CLI
-> caveat and menu/prefs labels. (DECISIONS "Second/third review round".)
+> `overlay.bold` draws the corner label (its title) in the bold system font.
+> (The `wallpaper` mode and its `wallpaper.*` config were removed — DECISIONS §7.)
 
 ### 7.3 Persistence mechanics
 - **Atomic writes:** write to a sibling temp file in the same directory, `flush`+`os.fsync`, then `os.replace(tmp, target)` (atomic on the same filesystem). Readers therefore never observe a partial file.
@@ -326,7 +316,7 @@ spacelabel [--config PATH] [--verbose] [--debug] [--version]
   install | uninstall           manage the login LaunchAgent
   status                        is the agent / LaunchAgent running?
   spaces                        list current Spaces + UUIDs, mark the active one   (data → stdout)
-  mode <menubar|hud|overlay|wallpaper> [--on/--off]
+  mode <menubar|hud|overlay> [--on/--off]
   label set <uuid|current> <text>
   label list
   label clear <uuid|current>
@@ -387,7 +377,7 @@ Machine-readable output (`spaces`, `label list`) goes to **stdout** via `click.e
 | CGS reads | PyObjC `loadBundleFunctions` of CoreGraphics (re-exports SkyLight) | none |
 | Menu bar | raw `NSStatusItem` | **no** (rumps rejected) |
 | HUD / overlay | `NSPanel` (non-activating) | none |
-| Wallpaper text | `NSBitmapImageRep` + Core Text | **no** (Pillow rejected) |
+| Overlay / HUD text | `NSBitmapImageRep` + Core Text | **no** (Pillow rejected) |
 | Preferences | view-based `NSTableView` | none |
 | CLI | **click** | yes — earns its keep (nested commands) |
 | Logging | stdlib `logging` | none |
@@ -417,5 +407,4 @@ The Phase-6 read-only probe (designed, not run this phase): print the active-dis
 5. **Dict-key correctness on hardware:** `id64` vs `ManagedSpaceID` equivalence; `type==0` user Spaces; `TileLayoutManager` marks fullscreen.
 6. **Active-display fallback** path (NSScreen.main UUID) works if `CGSCopyActiveMenuBarDisplayIdentifier` is forced absent.
 7. **Menu-bar icon visibility** on Tahoe (Settings → Menu Bar, no ControlCenter negotiation loop, single instance).
-8. **Wallpaper revert timing** (observational; experimental mode only).
-9. **`"Main"` sentinel** handling when "Displays have separate Spaces" is on/off.
+8. **`"Main"` sentinel** handling when "Displays have separate Spaces" is on/off.

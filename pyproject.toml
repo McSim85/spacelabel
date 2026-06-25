@@ -155,7 +155,6 @@ module = [
   "spacelabel.agent.menubar",
   "spacelabel.agent.hud",
   "spacelabel.agent.overlay",
-  "spacelabel.agent.wallpaper",
   "spacelabel.agent.prefs",
   "spacelabel.platform.notifications",
 ]

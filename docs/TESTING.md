@@ -98,7 +98,6 @@ first two — DECISIONS "Cross-phase impact / Phase 6"):
 5. Menu-bar **icon visibility** on Tahoe (Settings → Menu Bar; no ControlCenter
    negotiation loop; single instance); HUD level vs system alerts; panels never
    steal focus and float across all Spaces.
-6. **Wallpaper** revert/flicker timing (experimental; observational only).
 
 > **Status (Phase 4, on the reference machine):** the live read path was already
 > exercised during implementation — `spacelabel spaces` returns 14 real Space

@@ -30,7 +30,7 @@ from spacelabel.logging_setup import LogMode, setup_logging
 
 log = logging.getLogger(__name__)
 
-_MODE_NAMES = ["menubar", "hud", "overlay", "wallpaper"]
+_MODE_NAMES = ["menubar", "hud", "overlay"]
 
 #: LaunchAgent reverse-DNS label, reused in ``status`` output (DECISIONS 6.7).
 _AGENT_LABEL = "dev.mcsim.spacelabel"
@@ -245,8 +245,7 @@ def uninstall(
     By default user data (labels, config) is KEPT, like apt remove. Pass --purge
     to also delete spacelabel's data, caches, logs, and completion scripts, like
     apt purge (--dry-run previews the paths; --yes skips the prompt and is
-    required when not running on a TTY). Never touches the WallpaperAgent store
-    or the spacelabel shim on PATH.
+    required when not running on a TTY). Never touches the spacelabel shim on PATH.
     """
     from spacelabel import install as install_mod
 
@@ -305,7 +304,7 @@ def uninstall(
     # that lock + labels/displays, so a config-aware status check would miss it (this is a
     # lock-level question, not a per-config one). The managed LaunchAgent is excluded (it is
     # stopped below). A custom --config deletes nothing, so it never reaches this guard; and
-    # an agent on a *different* store dir keeps its own logs/wallpaper cache (per-store), so a
+    # an agent on a *different* store dir keeps its own logs (per-store), so a
     # default purge can't pull live state from it.
     if is_default:
         blocked, holder_pid = install_mod.unmanaged_default_lock_holder()
@@ -527,7 +526,7 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
 @click.option("--on/--off", "enabled", default=None, help="Enable or disable the mode.")
 @click.pass_obj
 def mode(ctx: AppContext, name: str, enabled: bool | None) -> None:
-    """Show or toggle a display mode (menubar, hud, overlay, wallpaper)."""
+    """Show or toggle a display mode (menubar, hud, overlay)."""
     paths = _paths(ctx)
     if enabled is None:
         config = store.load_config(paths)
@@ -541,8 +540,6 @@ def mode(ctx: AppContext, name: str, enabled: bool | None) -> None:
         log.error("could not set mode %s: %s", name, exc)
         raise click.ClickException(str(exc)) from exc
     on = bool(stored)
-    if name == "wallpaper" and on:
-        _diag("WARNING: wallpaper mode is experimental and cosmetic; it may revert.")
     click.echo(f"{name}: {'on' if on else 'off'}")
 
 

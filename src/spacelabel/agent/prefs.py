@@ -99,14 +99,13 @@ _ANCHOR_ORDER = (
 assert set(_ANCHOR_ORDER) == ANCHORS
 
 #: Settings-strip mode checkboxes: (tag, dotted config key, label).
-#: Tags 1-5 only; tag 6 ("overlay.hide_on_unlabeled") and tag 7 ("menubar.click_to_switch")
+#: Tags 1-4 only; tag 6 ("overlay.hide_on_unlabeled") and tag 7 ("menubar.click_to_switch")
 #: are placed separately on Row 3 so Row 1 doesn't overflow the 720 pt window.
 _MODE_CHECKBOXES = (
     (1, "modes.menubar", "Menu-bar title"),
     (2, "modes.hud", "On-switch HUD"),
     (3, "modes.overlay", "Corner overlay"),
-    (4, "modes.wallpaper", "Wallpaper (exp)"),
-    (5, "menubar.show_buttons_row", "Buttons row"),
+    (4, "menubar.show_buttons_row", "Buttons row"),
 )
 
 

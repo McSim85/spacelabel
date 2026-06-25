@@ -14,7 +14,7 @@ Usage::
         --icns packaging/icon/spacelabel.icns
 
 The drawing uses the same offscreen ``NSBitmapImageRep`` pattern as
-``agent/wallpaper.py`` (PyObjC is present in the build venv); no window server needed.
+``agent/overlay.py`` (PyObjC is present in the build venv); no window server needed.
 """
 
 from __future__ import annotations

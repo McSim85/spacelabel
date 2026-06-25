@@ -106,7 +106,6 @@ Click the status item → `NSMenu`. WhichSpace parity, minus the index bug.
 │  ✓ Menu-bar title               │   ← per-mode toggles (mirror `mode` CLI)
 │  ✓ On-switch HUD                │
 │    Corner overlay               │
-│    Wallpaper            [exp]   │   ← experimental badge (cosmetic, may revert)
 ├────────────────────────────────┤
 │  Preferences…             ⌘,    │
 │  Quit spacelabel          ⌘Q    │
@@ -118,7 +117,7 @@ Click the status item → `NSMenu`. WhichSpace parity, minus the index bug.
 - **All-Spaces list grouped under per-display section headers** (disabled header
   rows; friendly name resolved from the display UUID so per-display Spaces never
   conflate). Current Space on each display is checkmarked.
-- **Per-mode toggles** for menubar/hud/overlay/wallpaper write `config.json`
+- **Per-mode toggles** for menubar/hud/overlay write `config.json`
   exactly like `spacelabel mode <name> --on/--off`; a running agent reloads live.
 - **Quit** stays stopped (LaunchAgent `KeepAlive` is crash-only — DECISIONS 6.4).
 - **Never loop-toggle `isVisible`** to force the icon back (Tahoe Control Center
@@ -339,8 +338,6 @@ editable surface if ever wanted.
 
 - Plain verbs, sentence case; name things by what the user controls
   ("Rename this Space", "Corner overlay"), not by implementation.
-- The experimental wallpaper mode always reads as cosmetic/may-revert wherever
-  it appears (`[exp]` badge in menu; caveat line on enable).
 - Failure states are directive, never silent: a disabled click-to-switch pill
   says *why* and *how to enable it*; a missing menu-bar icon points to the
   Settings check.
