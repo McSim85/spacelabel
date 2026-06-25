@@ -93,15 +93,16 @@ def _row_view(groups):
     return view
 
 
-def test_disabled_row_falls_clicks_through_to_the_status_button():
-    # click_to_switch off (default): hitTest_ returns nil so the click reaches the
-    # status button and opens the menu -- the NSView click-through equivalent of the
-    # old "ignoresMouseEvents == True" smoke check (DECISIONS.md 9.5).
+def test_disabled_row_is_always_hit_target_for_tooltip_tracking():
+    # hitTest_ must return the view regardless of click-to-switch state so that
+    # addToolTipRect tracking areas fire (returning nil makes the view mouse-transparent
+    # and breaks tooltip tracking). mouseDown_ handles the disabled case by opening the
+    # menu (DECISIONS.md 9.5).
     from AppKit import NSMakePoint
 
     view = _row_view([[_pill("E", "U1")]])
     view.set_click_enabled(False)
-    assert view.hitTest_(NSMakePoint(10.0, 10.0)) is None
+    assert view.hitTest_(NSMakePoint(10.0, 10.0)) is view
 
 
 def test_enabled_row_is_the_hit_target():
