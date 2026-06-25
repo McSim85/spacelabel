@@ -222,7 +222,7 @@ def _resolve_install_shim() -> Path:
         log.warning(
             "not running from the spacelabel.app bundle; the LaunchAgent will exec the "
             "source/dev shim %s. Fine for local development, but prefer the Homebrew cask "
-            "for a stable Accessibility identity (DECISIONS.md §6); the agent breaks if this "
+            "for a stable Accessibility identity; the agent breaks if this "
             "venv is removed.",
             durable,
         )
