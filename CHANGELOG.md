@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.1](https://github.com/McSim85/spacelabel/compare/v0.9.0...v0.9.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **cli:** prog_name, help markup, status color, NO_COLOR (K+M+N+Y) ([#59](https://github.com/McSim85/spacelabel/issues/59)) ([29a50f3](https://github.com/McSim85/spacelabel/commit/29a50f3e5a0bcebd9bc0838f877ef9dcfedea0a5))
+* **prefs+cli:** Overlay column visible in Prefs; hide-unlabeled moved to Row 3; display list shows overlay status ([#58](https://github.com/McSim85/spacelabel/issues/58)) ([96978ce](https://github.com/McSim85/spacelabel/commit/96978ced6bac1211951e81c9ac585243c82c335d))
+
+
+### Documentation
+
+* **todo:** add item AB — brew upgrade KeepAlive restart loop (fix-brew-upgrade-race) ([#56](https://github.com/McSim85/spacelabel/issues/56)) ([5178990](https://github.com/McSim85/spacelabel/commit/5178990a70c58d6beed791d41d3e00c10bd32b3c))
+* **todo:** add item AC — hover tooltip on menu-bar pills (full Space name) ([#60](https://github.com/McSim85/spacelabel/issues/60)) ([ee898bb](https://github.com/McSim85/spacelabel/commit/ee898bbb35f85faca47891aab02cef35b9cc8d43))
+
 ## [0.9.0](https://github.com/McSim85/spacelabel/compare/v0.8.3...v0.9.0) (2026-06-25)
 
 
