@@ -440,11 +440,9 @@ Severity: **low** (UX). Cross-refs `critical-click-to-switch.md` (shipped).
 
 ### K. CLI shows `launcher.py` as prog_name when run from the .app bundle  *(Phase-6 finding, 2026-06-23)*
 
+> **✅ DONE (2026-06-25, PR #59 `fix/cli-polish`).** `main()` now accepts `prog_name`; `launcher.py` calls `main(prog_name="spacelabel")`. Launcher test added (`test_launcher.py`). Parametrized help-markup test also asserts `Usage: spacelabel` for every command.
+
 **Context:** through the cask CLI shim (`spacelabel.app/Contents/Resources/spacelabel` → `launcher.py`), `spacelabel --help` prints `Usage: launcher.py [OPTIONS] …` instead of `Usage: spacelabel …`. The py2app launcher invokes the click group without `prog_name`, so click derives it from `sys.argv[0]` (`launcher.py`). Cosmetic, but it contradicts the CLI contract (plan row **A4** expects `prog_name="spacelabel"`) and leaks into any usage/error text.
-
-**Read first:** `packaging/py2app/launcher.py`; `src/spacelabel/cli.py` (`main()` / the click group, which sets `prog_name="spacelabel"` on the normal entry point).
-
-**Fix:** have the launcher call the group with `prog_name="spacelabel"` (e.g. `cli.main(prog_name="spacelabel")`) — matching the pyproject entry-point behavior — so the bundle CLI and the pipx/dev CLI present identically. Add/extend a launcher test (`tests/test_launcher.py`) asserting the usage line says `spacelabel`.
 
 Severity: **low** (cosmetic / contract consistency).
 
@@ -484,11 +482,9 @@ Severity: **low** (cosmetic / contract consistency).
 
 ### M. `status --help` (and audit all) leaks raw RST/markdown markup + internal refs  *(Max, 2026-06-23)*
 
-**Context:** `spacelabel status --help` prints the docstring verbatim, including `**selected store**`, `` ``--config`` ``, `*different*`, `` ``agent.lock`` ``, and internal references `(DECISIONS.md §9)`, `(per review F3)` — click renders none of this in plain-text help, so the raw markup/refs show (`src/spacelabel/cli.py` `status` docstring, ~line 382).
+> **✅ DONE (2026-06-25, PR #59 `fix/cli-polish`).** Eight command docstrings cleaned (`agent`, `uninstall`, `status`, `spaces`, `label list`, `note list`, `display`, `completion install`). Internal refs moved to code comments. Parametrized acceptance test in `test_cli.py` walks the full command tree, asserts no `**`/` `` `/`DECISIONS.md`/`review F`/`§` in any `--help` output, and asserts `Usage: spacelabel` (K guard).
 
-**Fix:** rewrite the `status` docstring as clean, concise plain text — no `**bold**`, no `` ``literals`` ``, no `*emphasis*` — and move the `DECISIONS §9` / `review F3` notes into a **code comment**, not user-facing help. **Audit every command docstring** for the same leak.
-
-**Acceptance test (Max asked):** in `tests/test_cli.py`, parametrize over the CLI command tree and assert no command's `--help` contains `**`, `` `` `` (double backtick), or internal-ref substrings (`DECISIONS.md`, `review F`, `§`). Doubles as a regression guard. (The usage line also shows `launcher.py` not `spacelabel` under the cask — that's item **K**; the test should assert `spacelabel` once K lands.)
+**Context:** `spacelabel status --help` prints the docstring verbatim, including `**selected store**`, `` ``--config`` ``, `*different*`, `` ``agent.lock`` ``, and internal references `(DECISIONS.md §9)`, `(per review F3)` — click renders none of this in plain-text help, so the raw markup/refs show.
 
 Severity: **low** (cosmetic / CLI contract A4).
 
@@ -496,11 +492,13 @@ Severity: **low** (cosmetic / CLI contract A4).
 
 ### N. Colorize `status` output (dep-free); do NOT colorize help (needs a rejected dep)  *(Max, 2026-06-23)*
 
-**`status` output — yes:** color `running (managed) …` green and `not running …` yellow via `click.style`, TTY-gated + `NO_COLOR`-aware — the existing pattern for `spaces`/`display list` (the bold/green helper near `cli.py:80`). No new dep; fits the CLI contract (DECISIONS §9 / A11–A18: color only on an interactive TTY, stripped when piped/`NO_COLOR`). Test: ANSI present on a faked TTY, absent when piped / `NO_COLOR=1`.
+> **✅ DONE (2026-06-25, PR #59 `fix/cli-polish`).** `status` running → green, not-running → yellow via `click.style` + `_color_arg()`. TTY-gated + `NO_COLOR`-aware. Tests added. `--help` stays plain (no new dep).
 
-**`--help` colorization — no:** click has no native colored help; the only easy route is `rich-click`/`rich`, a **new dependency** contradicting the locked **stdlib-first / only-`click`** policy (DECISIONS §2; `rumps`/`Pillow` already rejected). Keep help plain unless that decision is deliberately relaxed.
+**`status` output — yes:** color `running (managed) …` green and `not running …` yellow via `click.style`, TTY-gated + `NO_COLOR`-aware.
 
-Pairs with **K** + **M** (one `fix(cli): help/output polish` PR). Severity: **low**.
+**`--help` colorization — no:** requires `rich-click`/`rich`, rejected per DECISIONS §2.
+
+Pairs with **K** + **M**. Severity: **low**.
 
 ---
 
@@ -593,7 +591,10 @@ A Space shown as **"Desktop 3"** in the Preferences outline appears as **"4"** i
 Turning **Menu-bar title OFF** leaves an **empty quadrant** in the menu bar rather than the documented neutral **`square.dashed` SF Symbol** + "menu-bar label off" accessibility label (plan B6 / `menubar.py:449` `set_inactive`). Investigate why `set_inactive` isn't rendering the symbol (possibly the buttons-row view still occupies the item, or the SF Symbol image isn't applied). Read first: `agent/menubar.py` `set_inactive`, `agent/app.py` menubar-mode toggle + buttons-row interaction. Severity: **low** (cosmetic, but looks broken).
 
 ### Y. CLI table coloring ignores `NO_COLOR` on a TTY  *(Max, 2026-06-23 — H18/A18)*
-`NO_COLOR=1 spacelabel spaces` still shows the **bold header + green current-row** color on an interactive TTY — `NO_COLOR` is not honored. Plan A18/A12 + the CLI contract (DECISIONS §9) require color suppressed when `NO_COLOR` is set. The table color helper (`cli.py` ~`:80–89`, the bold/green `click.style` path) gates on `isatty` but **not** on `NO_COLOR`. Fix: suppress styling when `os.environ.get("NO_COLOR")` is set (or pass `color=False` to `click.echo`) — the logging sink already does this (`logging_setup.py:36`). Test: `NO_COLOR=1` → no ANSI even on a faked TTY; `*` marker still present. Severity: **low** (cosmetic / contract).
+
+> **✅ DONE (2026-06-25, PR #59 `fix/cli-polish`).** `_color_arg()` uses `"NO_COLOR" in os.environ` (presence check per no-color.org spec, not value-truthiness); wired into `_echo_table` and `status` output. Tests cover `NO_COLOR=1` and `NO_COLOR=` (empty string). `*` marker still present.
+
+`NO_COLOR=1 spacelabel spaces` still shows **bold header + green current-row** on a TTY — `NO_COLOR` not honored. Severity: **low** (cosmetic / contract).
 
 ### Z. Overlay + HUD show a STALE Space when the active Space is fullscreen/tiled  *(Max, 2026-06-23 — H2/H3)*
 
@@ -659,6 +660,18 @@ The `zap` stanza already handles full teardown; `uninstall` only runs on `brew u
 `Casks/spacelabel.rb` (`uninstall` / `zap` stanzas), DECISIONS §6.4/§6.8 (LaunchAgent
 `KeepAlive` policy). **Tests:** mock the lock-busy path and assert exit code == 0; a
 `brew audit` dry-run on the updated cask.
+
+---
+
+### AC. Hover tooltip on menu-bar pills showing the full Space name  *(Max, 2026-06-25)*
+
+**Context:** a pill shows only a compact glyph — a leading letter (`menubar.pill_label_chars`) for a labeled Space, or the Space number for an unlabeled one. Hovering a pill should pop a **tooltip with the full Space name** (the full label, or `Desktop N` for an unlabeled Space) so a Space is identifiable on hover, without clicking.
+
+**Implementation:** in `ButtonsRowView` (`agent/menubar.py`), register **per-pill tooltip rects** via AppKit `addToolTipRect:owner:userData:` for each pill's frame, with the owner implementing `view:stringForToolTip:point:userData:` to return that pill's full title. Map `userData` → pill index → full title via `labeling.title_for` (full label, `Desktop N` fallback; optionally include the display/custom name for context). **Re-register on every rebuild/`_resize_row`** (`removeAllToolTips` then re-add) since pill rects change as Spaces are added/removed and the row resizes. Display-only — must not affect `hitTest_`/click-to-switch routing.
+
+**Read first:** `agent/menubar.py` (`ButtonsRowView`, `_draw_one_pill`, `preferred_width`/`_resize_row`, the pill model + `hitTest_`), `labeling.title_for`, `agent/app.py` (`_update_buttons_row` — where pills/titles are fed in). **Acceptance:** hovering any pill shows its full Space name (labeled → label; unlabeled → `Desktop N`); tooltips stay correct after add/remove/reorder + row resize; clicking behavior unchanged.
+
+Severity: **low** (UX nicety). **Parallel-safe** — touches only `agent/menubar.py` (+ maybe a title helper); no `app.py` logic changes. Could fold into a menubar-polish session or run standalone.
 
 ---
 
