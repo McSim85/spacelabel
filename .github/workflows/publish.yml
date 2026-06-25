@@ -25,7 +25,7 @@ name: Build and attach release artifacts
 # an already-published sha256 in a merged cask bump stays valid); and the cask bump forks
 # from main and is idempotent (reuses its branch/PR), so a retry never corrupts a release.
 #
-# Ad-hoc caveats (documented in README/UI.md): the cdhash changes each build so the
+# Ad-hoc caveats (documented in README.md): the cdhash changes each build so the
 # Accessibility grant drops on upgrade until re-granted, and downloads hit Gatekeeper
 # quarantine (right-click→Open). Developer-ID signing + notarization (paid Apple Developer
 # Program + secrets) is a deferred follow-on for friction-free public installs.

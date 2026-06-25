@@ -152,8 +152,7 @@ def _enclosing_app_exe() -> Path | None:
     stanza), so a user invoking ``spacelabel install`` is running *inside*
     ``spacelabel.app``. The LaunchAgent must exec that bundle executable so the agent
     process **is** the bundle and macOS attributes Accessibility (TCC) to
-    ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot
-    (DECISIONS.md §6 / §2.7, todo/phase-6-blockers.md Tier 1 step 5). Detected by
+    ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot. Detected by
     walking up from the running executable / this module's file to the enclosing
     ``.app``; returns ``None`` when not bundled (a dev install).
 
