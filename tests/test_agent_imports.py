@@ -3,7 +3,7 @@
 These confirm every agent module imports cleanly and registers its Objective-C
 subclasses without building any UI (UI construction lives in ``__init__``/``show``).
 They need PyObjC but no WindowServer; on a non-macOS box PyObjC is absent, so the
-whole module is skipped rather than failed (DESIGN.md §12 testing reality).
+whole module is skipped rather than failed.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def test_prefs_datasource_uses_correct_view_based_selector():
 def test_click_to_switch_warning_item_is_visible_and_actionable():
     # The "click-to-switch off" row must be ENABLED (not a grayed/disabled line that
     # is easy to miss) with a colored emoji; when a Settings deep-link is known it
-    # opens it on click (DECISIONS.md 9.5).
+    # opens it on click.
     from spacelabel.agent.app import _SETTINGS_URL_KEYBOARD, AppDelegate
 
     delegate = AppDelegate.alloc().initWithConfigPath_(None)
@@ -431,7 +431,7 @@ def test_update_hud_suppressed_when_no_uuid_space(tmp_path):
 
 def test_overlay_exposes_set_content_and_distinct_glyphs():
     # Overlay rendering needs a WindowServer (the panel creates its window device),
-    # so it is import-smoke only (docs/TESTING.md). Verify the notes-render entry
+    # so it is import-smoke only. Verify the notes-render entry
     # point exists and the two checkbox glyphs differ, without building the panel.
     from spacelabel.agent import overlay as overlay_mod
 

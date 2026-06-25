@@ -1,4 +1,4 @@
-"""Pure HUD/overlay geometry — fonts + the nine-anchor grid (DESIGN.md §9.9 / §4.2)."""
+"""Pure HUD/overlay geometry — fonts + the nine-anchor grid."""
 
 from __future__ import annotations
 

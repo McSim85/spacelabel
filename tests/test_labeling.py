@@ -1,4 +1,4 @@
-"""Pure label-resolution helpers (DESIGN.md §6.1, DECISIONS.md 9.4)."""
+"""Pure label-resolution helpers."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def test_assign_ordinals_counts_default_desktop():
 
 def test_ordinal_for_uuid_resolves_live_position():
     # Click-to-switch maps the clicked Space's UUID to its current ordinal at click
-    # time (DECISIONS.md 9.5); reordering shifts the answer, which is why it is never
+    # time; reordering shifts the answer, which is why it is never
     # cached.
     a, b, c = _space("a"), _space("b"), _space("c")
     assert ordinal_for_uuid([a, b, c], "b") == 2

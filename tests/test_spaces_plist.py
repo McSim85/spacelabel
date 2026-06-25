@@ -1,4 +1,4 @@
-"""Pure plist fallback parsing (DESIGN.md §11, DECISIONS.md 3.4)."""
+"""Pure plist fallback parsing."""
 
 from __future__ import annotations
 

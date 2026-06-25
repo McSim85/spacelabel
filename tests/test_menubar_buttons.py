@@ -1,8 +1,8 @@
-"""Buttons-row layout, hit-testing, and click-to-switch dispatch (DECISIONS.md 9.4/9.5).
+"""Buttons-row layout, hit-testing, and click-to-switch dispatch.
 
 The layout/hit-test helpers are pure (no WindowServer); the ``ButtonsRowView`` tests
 need PyObjC but no window server (an ``NSView`` allocates headless) and are skipped
-where AppKit is absent (DESIGN.md §12 testing reality).
+where AppKit is absent.
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def test_disabled_row_is_always_hit_target_for_tooltip_tracking():
     # hitTest_ must return the view regardless of click-to-switch state so that
     # addToolTipRect tracking areas fire (returning nil makes the view mouse-transparent
     # and breaks tooltip tracking). mouseDown_ handles the disabled case by opening the
-    # menu (DECISIONS.md 9.5).
+    # menu.
     from AppKit import NSMakePoint
 
     view = _row_view([[_pill("E", "U1")]])

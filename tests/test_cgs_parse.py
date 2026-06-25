@@ -1,7 +1,7 @@
-"""Pure CGS structure parsing — the testable core of the read path (DESIGN.md §3.4).
+"""Pure CGS structure parsing — the testable core of the read path.
 
 Exercises ``parse_spaces`` with mocked ``CGSCopyManagedDisplaySpaces`` output (plain
-dicts), so it runs with no WindowServer (DESIGN.md §12 testing reality).
+dicts), so it runs with no WindowServer.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 from spacelabel.platform import cgs
 from spacelabel.platform.cgs import parse_spaces
 
-# Real-format CFUUID strings (the stable per-Space key, DECISIONS.md 1.4).
+# Real-format CFUUID strings (the stable per-Space key).
 U_EMAIL = "6622AC87-2FD2-48E8-934D-F6EB303AC9BA"
 U_CODE = "1A0F5C2E-7B3D-4C8A-9E1F-2D4B6A8C0E12"
 U_TERM = "9C44E7B1-3E2A-4F5C-8B6D-1A2B3C4D5E6F"
@@ -178,7 +178,7 @@ def test_include_unlabelable_skips_id64_zero_placeholder():
 def test_current_marking_keyed_by_display_not_bare_id64():
     # Two displays each have a default Space with the SAME id64 (a low/reused default id).
     # Only the display whose live current IS that id is marked current -- keying by
-    # (display, id64), not a flat id64 set which would mark BOTH (DECISIONS.md 1.5).
+    # (display, id64), not a flat id64 set which would mark BOTH.
     managed = [
         {"Display Identifier": DISP_A, "Spaces": [{"uuid": "", "id64": 1, "type": 0}]},
         {"Display Identifier": DISP_B, "Spaces": [{"uuid": "", "id64": 1, "type": 0}]},

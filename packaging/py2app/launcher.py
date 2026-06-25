@@ -4,7 +4,7 @@ py2app makes this the bundle's main executable, so the running process *is* the
 ``spacelabel.app`` bundle and macOS attributes TCC (Accessibility) to the bundle's
 ``CFBundleIdentifier`` (``dev.mcsim.spacelabel``) -- a stable, *named* identity. This
 is the whole point of the bundle: without it the agent runs as the shared interpreter
-so Accessibility shows "python3.x" rather than "spacelabel" (DECISIONS.md §6 / §9.5).
+so Accessibility shows "python3.x" rather than "spacelabel".
 The same exe is both the agent (``… agent``, what the LaunchAgent runs) and the CLI
 (the cask symlinks it onto PATH).
 """
