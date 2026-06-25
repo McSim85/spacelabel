@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.3](https://github.com/McSim85/spacelabel/compare/v0.8.2...v0.8.3) (2026-06-25)
+
+
+### Bug Fixes
+
+* **overlay:** clear on fullscreen; add per-display toggle + unlabeled suppression ([#51](https://github.com/McSim85/spacelabel/issues/51)) ([4b6271a](https://github.com/McSim85/spacelabel/commit/4b6271a3f80a80b6f9dd8d735f4fee8fd3f2196b))
+
+
+### Documentation
+
+* **verification:** record live multi-display acceptance results (O/V/X/AA, 0.8.2) ([#49](https://github.com/McSim85/spacelabel/issues/49)) ([2647fc5](https://github.com/McSim85/spacelabel/commit/2647fc576cdaba80f602f7afdfb61c7e25cda687))
+
 ## [0.8.2](https://github.com/McSim85/spacelabel/compare/v0.8.1...v0.8.2) (2026-06-24)
 
 
