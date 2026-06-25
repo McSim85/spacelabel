@@ -216,6 +216,42 @@ def test_display_labels_roundtrip(paths):
     assert store.load_display_labels(paths) == {"disp-2": "Portrait"}
 
 
+def test_display_overlay_disabled_roundtrip(paths):
+    # Missing key -> all displays enabled (empty set).
+    assert store.load_display_overlay_disabled(paths) == set()
+    # Disable one display.
+    store.set_display_overlay_enabled(paths, "disp-1", False)
+    assert store.load_display_overlay_disabled(paths) == {"disp-1"}
+    # Re-enable removes it.
+    store.set_display_overlay_enabled(paths, "disp-1", True)
+    assert store.load_display_overlay_disabled(paths) == set()
+
+
+def test_display_overlay_disabled_preserved_by_label_write(paths):
+    # set_display_label must NOT clobber the overlay_disabled slice (and vice versa).
+    store.set_display_overlay_enabled(paths, "disp-1", False)
+    store.set_display_label(paths, "disp-1", "Main 4K")
+    # Name write preserves disabled flag.
+    assert "disp-1" in store.load_display_overlay_disabled(paths)
+    assert store.load_display_labels(paths) == {"disp-1": "Main 4K"}
+    # Overlay write preserves name.
+    store.set_display_overlay_enabled(paths, "disp-2", False)
+    assert store.load_display_labels(paths) == {"disp-1": "Main 4K"}
+    assert store.load_display_overlay_disabled(paths) == {"disp-1", "disp-2"}
+
+
+def test_display_overlay_hide_on_unlabeled_config_schema(paths):
+    # hide_on_unlabeled is a config key; default is False.
+    cfg = store.load_config(paths)
+    assert cfg.overlay.hide_on_unlabeled is False
+    store.set_config_value(paths, "overlay.hide_on_unlabeled", "true")
+    assert store.load_config(paths).overlay.hide_on_unlabeled is True
+    # Round-trip through config_to_dict / config_from_dict.
+    cfg.overlay.hide_on_unlabeled = True
+    again = store.config_from_dict(store.config_to_dict(cfg))
+    assert again.overlay.hide_on_unlabeled is True
+
+
 def test_display_labels_independent_of_space_labels(paths):
     # Display names live in a separate file, so a label write must not wipe them.
     store.set_display_label(paths, "disp-1", "Main")

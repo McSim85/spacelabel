@@ -17,12 +17,25 @@ __all__ = [
     "assign_ordinals",
     "canonical_uuid",
     "find_orphans",
+    "is_labelable",
     "is_uuid",
     "ordinal_for_uuid",
     "pill_text",
     "title_for",
     "truncate",
 ]
+
+
+def is_labelable(space: Space) -> bool:
+    """Return ``True`` if ``space`` can carry a user label (has a persistent UUID).
+
+    Only spaces with a real macOS-assigned UUID are labelable (DESIGN.md §3.4).
+    Spaces with ``uuid=""`` (a display's single default no-UUID desktop) are ordinary
+    ``type==0`` user desktops that ``parse_spaces`` includes when
+    ``include_unlabelable=True`` but that cannot be labeled — the overlay/HUD should
+    show nothing for them rather than a "Desktop N" placeholder.
+    """
+    return bool(space.uuid)
 
 
 def is_uuid(value: str) -> bool:

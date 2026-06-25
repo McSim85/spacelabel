@@ -6,6 +6,7 @@ from spacelabel.labeling import (
     assign_ordinals,
     canonical_uuid,
     find_orphans,
+    is_labelable,
     is_uuid,
     ordinal_for_uuid,
     pill_text,
@@ -17,6 +18,12 @@ from spacelabel.model import Label, Space
 
 def _space(uuid, display="D1", current=False):
     return Space(uuid=uuid, display_uuid=display, is_current=current)
+
+
+def test_is_labelable_gates_on_uuid():
+    # Spaces with a real UUID are labelable; the no-UUID default desktop is not.
+    assert is_labelable(_space("6622AC87-2FD2-48E8-934D-F6EB303AC9BA"))
+    assert not is_labelable(_space(""))  # the default no-UUID single-Space desktop
 
 
 def test_is_uuid():

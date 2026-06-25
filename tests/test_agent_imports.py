@@ -200,7 +200,7 @@ def test_prefs_load_tree_counts_default_desktop(tmp_path, monkeypatch):
     )
 
     window = PreferencesWindow(config_path=tmp_path / "config.json")
-    nodes, _labels, ordinals, _paths = window._load_tree()
+    nodes, _labels, ordinals, _paths, _overlay_disabled = window._load_tree()
 
     # The default desktop is counted, so the 4K's labelable Space is Desktop 2 (matches
     # the pill), and the portrait's first is Desktop 3.
@@ -211,6 +211,216 @@ def test_prefs_load_tree_counts_default_desktop(tmp_path, monkeypatch):
     assert default not in shown
     assert on_4k in shown
     assert on_portrait in shown
+
+
+def test_update_overlays_orders_out_when_current_is_none(monkeypatch, tmp_path):
+    # Z: when the current Space on a display is a fullscreen/tiled app (filtered out
+    # by enumerate_spaces, so current=None), the display's overlay must be ordered out
+    # rather than left stale from the previous render.
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Display, Space
+    from spacelabel.platform import cgs, displays
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    # Enable overlay mode so _update_overlays actually runs.
+    delegate._config = delegate._load_config()
+    delegate._config.modes["overlay"] = True
+
+    disp_uuid = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    # The display has a space but no current (fullscreen swallowed it).
+    spaces = [Space(uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA", display_uuid=disp_uuid)]
+
+    # A pre-existing overlay for the display (simulating a previous render).
+    ordered_out: list[str] = []
+
+    class _FakeOverlay:
+        def order_out(self) -> None:
+            ordered_out.append(disp_uuid)
+
+    delegate._overlays[disp_uuid] = _FakeOverlay()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        displays, "discover_topology", lambda: [Display(uuid=disp_uuid, cg_display_id=1)]
+    )
+    monkeypatch.setattr(cgs, "enumerate_spaces", lambda **kw: spaces)
+
+    ordinals = {id(spaces[0]): 1}
+    delegate._update_overlays(spaces, ordinals)
+
+    assert disp_uuid in ordered_out, "order_out must be called when current is None"
+
+
+def test_update_overlays_orders_out_for_per_display_disabled(monkeypatch, tmp_path):
+    # P: when a display's overlay is toggled off in displays.json, _update_overlays
+    # must order-out that display's panel and not render a new one.
+    from spacelabel import store
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Display, Space
+    from spacelabel.platform import cgs, displays
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = delegate._load_config()
+    delegate._config.modes["overlay"] = True
+
+    disp_uuid = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    sp = Space(
+        uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA",
+        display_uuid=disp_uuid,
+        is_current=True,
+    )
+    spaces = [sp]
+
+    # Persist the display as overlay-disabled in the store.
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    store.set_display_overlay_enabled(paths, disp_uuid, False)
+
+    ordered_out: list[str] = []
+
+    class _FakeOverlay:
+        def order_out(self) -> None:
+            ordered_out.append(disp_uuid)
+
+    delegate._overlays[disp_uuid] = _FakeOverlay()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        displays, "discover_topology", lambda: [Display(uuid=disp_uuid, cg_display_id=1)]
+    )
+    monkeypatch.setattr(cgs, "enumerate_spaces", lambda **kw: spaces)
+
+    ordinals = {id(sp): 1}
+    delegate._update_overlays(spaces, ordinals)
+
+    assert disp_uuid in ordered_out, "order_out must be called when per-display overlay is off"
+
+
+def test_update_overlays_orders_out_for_unlabeled_when_flag_set(monkeypatch, tmp_path):
+    # Q: when overlay.hide_on_unlabeled is True, a current Space with no user label
+    # must cause the overlay to be ordered out rather than show "Desktop N".
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Display, Space
+    from spacelabel.platform import cgs, displays
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = delegate._load_config()
+    delegate._config.modes["overlay"] = True
+    delegate._config.overlay.hide_on_unlabeled = True
+
+    disp_uuid = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    sp = Space(
+        uuid="6622AC87-2FD2-48E8-934D-F6EB303AC9BA",
+        display_uuid=disp_uuid,
+        is_current=True,
+    )
+    spaces = [sp]
+    # No label for this space -> "Desktop 1" placeholder.
+
+    ordered_out: list[str] = []
+
+    class _FakeOverlay:
+        def order_out(self) -> None:
+            ordered_out.append(disp_uuid)
+
+    delegate._overlays[disp_uuid] = _FakeOverlay()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        displays, "discover_topology", lambda: [Display(uuid=disp_uuid, cg_display_id=1)]
+    )
+    monkeypatch.setattr(cgs, "enumerate_spaces", lambda **kw: spaces)
+
+    ordinals = {id(sp): 1}
+    delegate._update_overlays(spaces, ordinals)
+
+    assert disp_uuid in ordered_out, "order_out must be called when hide_on_unlabeled + no label"
+
+
+def test_update_overlays_does_not_hide_notes_only_when_flag_set(monkeypatch, tmp_path):
+    # Q exception (DECISIONS 9.10): a Space with notes but no label is still user
+    # content; hide_on_unlabeled must NOT suppress its overlay.
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Display, Label, Note, Space
+    from spacelabel.platform import cgs, displays
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = delegate._load_config()
+    delegate._config.modes["overlay"] = True
+    delegate._config.overlay.hide_on_unlabeled = True
+
+    disp_uuid = "874A623F-F8F5-43C1-B11C-4AAC3E383C0F"
+    sp_uuid = "6622AC87-2FD2-48E8-934D-F6EB303AC9BA"
+    sp = Space(uuid=sp_uuid, display_uuid=disp_uuid, is_current=True)
+    spaces = [sp]
+    # Notes-only: no label text, but has tasks.
+    delegate._labels = {sp_uuid: Label(text="", notes=[Note(text="buy milk")])}
+
+    ordered_out: list[str] = []
+
+    class _FakeOverlay:
+        def order_out(self) -> None:
+            ordered_out.append(disp_uuid)
+
+        def set_font(self, *a, **kw):
+            pass
+
+        def reposition(self, *a, **kw):
+            pass
+
+        def set_content(self, *a, **kw):
+            pass
+
+    delegate._overlays[disp_uuid] = _FakeOverlay()  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        displays, "discover_topology", lambda: [Display(uuid=disp_uuid, cg_display_id=1)]
+    )
+    monkeypatch.setattr(cgs, "enumerate_spaces", lambda **kw: spaces)
+
+    ordinals = {id(sp): 1}
+    delegate._update_overlays(spaces, ordinals)
+
+    assert disp_uuid not in ordered_out, "notes-only overlay must not be suppressed"
+
+
+def test_update_hud_suppressed_when_no_active_space(tmp_path):
+    # Z: _update_hud must not show the HUD when active_space is None (fullscreen).
+    from spacelabel.agent.app import AppDelegate
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = delegate._load_config()
+    delegate._config.modes["hud"] = True
+
+    shown: list[str] = []
+
+    class _FakeHud:
+        def show(self, text, **_kw):
+            shown.append(text)
+
+    delegate._hud = _FakeHud()  # type: ignore[assignment]
+
+    delegate._update_hud("irrelevant-title", active_space=None)
+    assert not shown, "_update_hud must not show when active_space is None"
+
+
+def test_update_hud_suppressed_when_no_uuid_space(tmp_path):
+    # Z: _update_hud must not show the HUD for the default no-UUID Space (uuid=""),
+    # because is_labelable returns False for it.
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Space
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = delegate._load_config()
+    delegate._config.modes["hud"] = True
+
+    shown: list[str] = []
+
+    class _FakeHud:
+        def show(self, text, **_kw):
+            shown.append(text)
+
+    delegate._hud = _FakeHud()  # type: ignore[assignment]
+
+    no_uuid_space = Space(uuid="", display_uuid="D1", is_current=True)
+    delegate._update_hud("Desktop 1", active_space=no_uuid_space)
+    assert not shown, "_update_hud must not show for the default no-UUID Space"
 
 
 def test_wallpaper_is_ours_distinguishes_cache_from_real(tmp_path):

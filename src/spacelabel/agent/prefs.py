@@ -58,6 +58,7 @@ _COL_LABEL = "label"
 _COL_UUID = "uuid"
 _COL_COLOR = "color"
 _COL_NOW = "now"
+_COL_OVERLAY = "overlay"
 
 #: The nine anchors in reading order for the position/corner popups.
 _ANCHOR_ORDER = (
@@ -81,6 +82,7 @@ _MODE_CHECKBOXES = (
     (3, "modes.overlay", "Corner overlay"),
     (4, "modes.wallpaper", "Wallpaper (exp)"),
     (5, "menubar.show_buttons_row", "Buttons row"),
+    (6, "overlay.hide_on_unlabeled", "Hide overlay on unlabeled"),
 )
 
 
@@ -151,6 +153,18 @@ class _DisplayNode:
         self.title = title
         self.spaces = spaces
 
+    @property
+    def display_uuid(self) -> str | None:
+        """Return the display UUID from the topology entry or from the first Space.
+
+        Synthetic rows (created when topology discovery fails) have ``display=None``
+        but their Spaces carry the real ``display_uuid`` — so the per-display overlay
+        toggle works even when CGS/NSScreen topology is temporarily unavailable.
+        """
+        if self.display is not None:
+            return self.display.uuid
+        return self.spaces[0].display_uuid if self.spaces else None
+
 
 class PrefsDataSource(NSObject):
     """``NSOutlineView`` data source + delegate backing the prefs tree.
@@ -168,6 +182,8 @@ class PrefsDataSource(NSObject):
         self._labels: dict[str, Label] = {}
         self._ordinals: dict[int, int] = {}
         self._paths: store.StorePaths | None = None
+        # Per-display overlay-disabled set (P feature).
+        self._overlay_disabled: set[str] = set()
         # tag -> (kind, uuid) so an edited field maps back to a Space or a display.
         self._fields: dict[int, tuple[str, str]] = {}
         self._tag_counter: dict[str, int] = {}
@@ -184,12 +200,14 @@ class PrefsDataSource(NSObject):
         labels: dict[str, Label],
         ordinals: dict[int, int],
         paths: store.StorePaths,
+        overlay_disabled: set[str] | None = None,
     ) -> None:
         """Replace the tree contents and the store paths used for edits."""
         self._nodes = nodes
         self._labels = labels
         self._ordinals = ordinals
         self._paths = paths
+        self._overlay_disabled = overlay_disabled if overlay_disabled is not None else set()
         self._fields.clear()
         self._tag_counter.clear()
         self._original.clear()
@@ -250,6 +268,9 @@ class PrefsDataSource(NSObject):
             return self._text_cell(
                 outline, column_id, text, editable=True, commit=commit, bold=False
             )
+        # Overlay column: only display rows carry a toggle; Space rows show nothing.
+        if column_id == _COL_OVERLAY:
+            return self._text_cell(outline, column_id, "", editable=False, commit=None, bold=False)
         now_text = "now" if space.is_current else ""
         return self._text_cell(
             outline, column_id, now_text, editable=False, commit=None, bold=False
@@ -275,7 +296,61 @@ class PrefsDataSource(NSObject):
             return self._text_cell(
                 outline, column_id, uuid, editable=False, commit=None, bold=False
             )
+        if column_id == _COL_OVERLAY:
+            return self._overlay_cell(node)
         return self._text_cell(outline, column_id, "", editable=False, commit=None, bold=False)
+
+    @objc.python_method
+    def _overlay_cell(self, node: _DisplayNode) -> object:
+        """Return a checkbox cell that toggles per-display overlay on/off (P feature).
+
+        Disabled only when no display UUID is resolvable at all (extremely rare:
+        a synthetic fallback group with no Spaces at all). Synthetic rows created
+        when topology discovery is temporarily unavailable still expose a UUID via
+        ``node.display_uuid`` (from the first Space's ``display_uuid``), so the
+        toggle works even when NSScreen / CGS topology is unavailable.
+        """
+        from AppKit import NSButton, NSButtonTypeSwitch
+
+        box = NSButton.alloc().initWithFrame_(NSMakeRect(0.0, 0.0, 70.0, 18.0))
+        box.setButtonType_(NSButtonTypeSwitch)
+        box.setTitle_("Overlay")
+        uuid = node.display_uuid
+        if uuid is None:
+            box.setState_(NSControlStateValueOff)
+            box.setEnabled_(False)
+        else:
+            enabled = uuid not in self._overlay_disabled
+            box.setState_(_state(enabled))
+            box.setTag_(self._tag_for(uuid))
+            box.setTarget_(self)
+            box.setAction_("toggleOverlay:")
+        return box
+
+    def toggleOverlay_(self, sender: object) -> None:  # noqa: N802
+        """Persist an overlay on/off toggle for a display (P feature)."""
+        if self._paths is None:
+            log.warning("prefs has no store paths; overlay toggle dropped")
+            return
+        tag = int(sender.tag())
+        # Recover the display UUID from the tag_counter (same tag registry as text fields)
+        uuid = next((u for u, t in self._tag_counter.items() if t == tag), None)
+        if uuid is None:
+            return
+        from AppKit import NSControlStateValueOff, NSControlStateValueOn
+
+        enabled = sender.state() == NSControlStateValueOn
+        try:
+            store.set_display_overlay_enabled(self._paths, uuid, enabled)
+            if enabled:
+                self._overlay_disabled.discard(uuid)
+            else:
+                self._overlay_disabled.add(uuid)
+        except (OSError, store.StoreError) as exc:
+            log.warning("failed to set overlay for display %s: %s", uuid, exc)
+            # Store write failed: revert the checkbox so the UI matches the
+            # (unchanged) store state — never leave them diverged.
+            sender.setState_(NSControlStateValueOff if enabled else NSControlStateValueOn)
 
     @objc.python_method
     def _text_cell(
@@ -451,6 +526,7 @@ class PreferencesWindow:
         outline.addTableColumn_(self._make_column(_COL_UUID, "UUID", 300.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_COLOR, "Color", 60.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_NOW, "Now", 50.0, editable=False))
+        outline.addTableColumn_(self._make_column(_COL_OVERLAY, "Overlay", 80.0, editable=False))
         outline.setOutlineTableColumn_(outline.tableColumnWithIdentifier_(_COL_LABEL))
 
         data_source = PrefsDataSource.alloc().init()
@@ -575,8 +651,8 @@ class PreferencesWindow:
         """Reload Spaces, labels, and topology into the outline tree."""
         if self._outline is None or self._data_source is None:
             return
-        nodes, labels, ordinals, paths = self._load_tree()
-        self._data_source.set_nodes(nodes, labels, ordinals, paths)
+        nodes, labels, ordinals, paths, overlay_disabled = self._load_tree()
+        self._data_source.set_nodes(nodes, labels, ordinals, paths, overlay_disabled)
         self._outline.reloadData()
         # expandItem_(None) is a no-op; expand each expandable row explicitly so the
         # display nodes show their Spaces. numberOfRows grows as rows expand.
@@ -590,11 +666,12 @@ class PreferencesWindow:
     @objc.python_method
     def _load_tree(
         self,
-    ) -> tuple[list[_DisplayNode], dict[str, Label], dict[int, int], store.StorePaths]:
+    ) -> tuple[list[_DisplayNode], dict[str, Label], dict[int, int], store.StorePaths, set[str]]:
         """Build the display->Spaces tree plus an orphan group from live reads."""
         paths = store.StorePaths.resolve(self._config_path)
         labels = store.load_labels(paths)
         display_labels = store.load_display_labels(paths)
+        overlay_disabled = store.load_display_overlay_disabled(paths)
         # Number over the FULL enumeration (incl. each display's default unlabelable
         # Space) so the "Desktop N" shown here counts every desktop and matches the
         # menu-bar pill + the switch path -- the one ordinal source of truth (item V,
@@ -608,7 +685,7 @@ class PreferencesWindow:
         orphan_uuids = labeling.find_orphans(labels, [s.uuid for s in labelable])
         if orphan_uuids:
             log.debug("%d orphaned labels present", len(orphan_uuids))
-        return nodes, labels, ordinals, paths
+        return nodes, labels, ordinals, paths, overlay_disabled
 
     @objc.python_method
     def _read_spaces(self, *, include_unlabelable: bool = False) -> list[Space]:
