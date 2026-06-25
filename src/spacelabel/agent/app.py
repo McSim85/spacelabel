@@ -1,7 +1,7 @@
 """NSApplication accessory app, AppDelegate, and run loop (DESIGN.md §6).
 
 Runs under ``NSApplicationActivationPolicyAccessory`` (set in code -- no Dock icon,
-no ``LSUIElement`` plist needed for the pipx path) via
+no ``LSUIElement`` plist needed for a dev run) via
 ``PyObjCTools.AppHelper.runEventLoop()``. The delegate wires the space/display
 observer (debounced) to the enabled display modes, all reading the same
 UUID->label store.
@@ -944,15 +944,15 @@ class AppDelegate(NSObject):
         toggling the stale row often re-grants the old cdhash (DECISIONS.md §6.9, item L).
         Staleness is inferred from the persisted cdhash / ax-trusted checkpoint (we can't
         read TCC.db — SIP — but we can read our own code identity). The entry name is also
-        branched: the signed cask bundle (frozen) lists as "spacelabel"; a legacy pipx/dev
-        run lists under the Python interpreter.
+        branched: the signed cask bundle (frozen) lists as “spacelabel”; a dev/uv run
+        lists under the Python interpreter.
         """
         from spacelabel.platform import switching
 
         name = (
             "“spacelabel”"
             if getattr(sys, "frozen", False)
-            else "the Python-interpreter entry (a legacy pipx/dev install lists it as, "
+            else "the Python-interpreter entry (a dev/uv install lists it as, "
             "e.g., “python3.x”, not “spacelabel”)"
         )
         state = store.load_agent_state(self._paths)

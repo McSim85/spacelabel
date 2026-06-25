@@ -7,7 +7,7 @@ Invoked by ``tools/build_app.sh`` from this directory::
 py2app is a *build-time* dependency only -- it is never added to the project's
 runtime dependencies (DESIGN.md §9 / todo/phase-6-blockers.md Tier 1 step 2). The
 resulting bundle is self-contained (it embeds ``Python.framework`` + PyObjC + click),
-so the Homebrew cask can ship it to machines without the dev/pipx environment.
+so the Homebrew cask can ship it to machines without the dev environment.
 
 The version is read from the *installed* package metadata (the build venv installs
 the project), keeping ``pyproject.toml`` the single source of truth. The icon path is
@@ -32,8 +32,8 @@ PLIST = {
     "CFBundleShortVersionString": VERSION,
     "CFBundleVersion": VERSION,
     # Accessory (menu-bar) app: no Dock icon, no app menu -- preserves the
-    # NSApplicationActivationPolicyAccessory behavior the agent set in code under
-    # pipx (DECISIONS.md §2.7), now declared in the bundle.
+    # NSApplicationActivationPolicyAccessory behavior the agent sets in code for dev
+    # runs (DECISIONS.md §2.7), now declared in the bundle.
     "LSUIElement": True,
     "NSHumanReadableCopyright": "MIT © Max Kramarenko",
 }

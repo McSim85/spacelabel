@@ -25,8 +25,7 @@ uv run spacelabel --help
 uv run spacelabel agent --debug
 ```
 
-> `uv` (dev) and `pipx` (distribution) never share an environment — see
-> `DESIGN.md` §9.3.
+> `uv` is the dev environment. Distribution is the Homebrew cask — see `DESIGN.md` §9.
 
 ## Quality gates (must pass before a PR)
 

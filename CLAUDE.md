@@ -81,8 +81,8 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   Desktop N" shortcut + Accessibility, OFF by default; if it can't be confirmed,
   **disable with a visible reason, never silently no-op**. (DECISIONS §9.5 / DESIGN §6)
   **Phase-6 verified-gotcha:** the grant only binds when the agent runs as the
-  **signed `.app`** (`dev.mcsim.spacelabel`) — a pipx/shared-`python3.x` identity
-  can't be granted, and the **ad-hoc cdhash rotates each release so the grant goes
+  **signed `.app`** (`dev.mcsim.spacelabel`) — a shared-`python3.x` identity
+  (e.g. a dev/uv run) can't be granted, and the **ad-hoc cdhash rotates each release so the grant goes
   stale on upgrade** (re-grant; detection = todo **L**). **Multi-display (item O, fixed
   2026-06-24):** the earlier "fails on secondary displays / ordinal mismatch" framing
   was **wrong** — the ordinal *does* match macOS's Desktop-N numbering. The real limit
@@ -112,7 +112,7 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
 
 ## Commands
 
-Dev via **`uv`** (never share an env with pipx):
+Dev via **`uv`**:
 
 ```sh
 uv venv
@@ -132,9 +132,8 @@ uv run spacelabel agent --debug    # run the agent in the foreground
   pipx-only #30): `brew install --cask spacelabel`. Build the bundle with
   `tools/build_app.sh [--sign]` (py2app, build-time only — never a runtime dep); the
   agent process **is** the bundle so Accessibility keys on `dev.mcsim.spacelabel`. The
-  cask `binary` stanza puts the same exe on PATH as the `spacelabel` CLI. pipx
-  (`pipx install .`, `~/.local/bin/spacelabel`) is the **deprecated** legacy path,
-  kept only as a dev/source convenience.
+  cask `binary` stanza puts the same exe on PATH as the `spacelabel` CLI. The dev
+  convenience is `uv` (`uv pip install -e '.[dev]'`) — pipx is no longer supported.
 
 ### Pre-commit checklist (required before every commit)
 

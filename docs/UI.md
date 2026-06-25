@@ -137,9 +137,7 @@ one-time steps:
 2. **Grant Accessibility** to the spacelabel agent. *With the **cask** (signed `.app`,
    the supported install) the entry reads **"spacelabel"** and a single grant binds —
    that's the point of the bundle (DECISIONS §6.8). Because it is ad-hoc-signed, the
-   grant must be **re-approved after a cask upgrade** (§6.9). On a legacy **pipx**
-   install the agent instead appears under **"python3.x"** and the grant is unreliable
-   (shared Python identity) — prefer the cask.*
+   grant must be **re-approved after a cask upgrade** (§6.9).*
 
 Then a left-click on a pill maps the clicked Space's **UUID → its current ordinal**
 at click time (ordinals shift on reorder, so resolve live, never cache) and posts

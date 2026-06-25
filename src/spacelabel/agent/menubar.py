@@ -1,7 +1,8 @@
 """Menu-bar item (primary display mode) -- raw ``NSStatusItem`` (DESIGN.md §6.1).
 
 ``rumps`` is rejected (DECISIONS.md 2.1): it wraps these same ~15 calls, would
-seize ``NSApplication``/run-loop ownership, and is a pipx packaging trap. Tahoe
+seize ``NSApplication``/run-loop ownership, and is poorly packaged (sdist-only,
+no PyObjC deps). Tahoe
 caveat: "process alive" is not "icon visible" -- run exactly one instance, don't
 hardcode contrast against the transparent Liquid-Glass bar, and surface a
 non-menu-bar fallback.

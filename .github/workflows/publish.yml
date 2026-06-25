@@ -3,7 +3,7 @@ name: Build and attach release artifacts
 # Triggered when the release-please PR is merged and a GitHub Release is created.
 #
 # Distribution is a signed .app shipped via a Homebrew CASK (DECISIONS.md §6 — the
-# 2026-06-22 pivot that reversed pipx-only). The jobs:
+# 2026-06-22 pivot that reversed the former pipx-only path; pipx removed 2026-06-25). The jobs:
 #
 #   build-app:    builds the self-contained spacelabel.app on a macOS arm64 runner
 #                 (py2app, ad-hoc signed inside-out — no Apple account/secrets/cost),
@@ -17,7 +17,7 @@ name: Build and attach release artifacts
 #                 until that PR is merged (the default branch carries the placeholder until
 #                 then). Merge it promptly, or have CI push the bump straight to main.
 #   build-wheel:  also attaches the pure-Python wheel + sdist for dev / source installs
-#                 (`uv pip install <wheel-url>`); pipx is deprecated in favour of the cask.
+#                 (`uv pip install <wheel-url>`). The cask is the only supported distribution.
 #
 # Rerun safety (manual workflow_dispatch backfills + retries): every build job checks out
 # the COMMIT THE TAG POINTS AT (not the dispatch branch tip); tagged release assets are
@@ -209,8 +209,8 @@ jobs:
 
   build-wheel:
     # Pure-Python wheel + sdist for dev / source installs (no macOS runner needed —
-    # no C extensions; PyObjC resolves from PyPI at install time). pipx is deprecated
-    # in favour of the cask, but the wheel stays useful for `uv pip install`.
+    # no C extensions; PyObjC resolves from PyPI at install time). The wheel is useful
+    # for `uv pip install` dev builds; the cask is the only supported distribution.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

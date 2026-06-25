@@ -6,8 +6,8 @@ verbatim as the LaunchAgent ``Label`` and the plist filename.
 
 The plist is BUILT in code (:func:`build_launch_agent`) as the single source of
 truth at runtime: the packaging template ``packaging/dev.mcsim.spacelabel.plist``
-is not shipped inside the pipx wheel, so it stays a human reference only and a
-test asserts the two stay in sync.
+is not shipped in the wheel, so it stays a human reference only and a test asserts
+the two stay in sync.
 """
 
 from __future__ import annotations
@@ -85,22 +85,36 @@ def caches_dir(home: Path | None = None) -> Path:
     return base / "Library" / "Caches" / "spacelabel"
 
 
-def _canonical_shim() -> Path:
-    """Return the legacy pipx shim path ``~/.local/bin/spacelabel`` (DESIGN §9.1)."""
-    return Path.home() / ".local" / "bin" / "spacelabel"
-
-
 def _is_ephemeral_path(path: Path) -> bool:
-    """Return True if ``path`` is under a cache/temp dir that may be evicted on reboot.
+    """Return True if ``path`` must not be persisted into a LaunchAgent.
 
-    Distinguishes a DURABLE project venv (``~/code/proj/.venv/bin/spacelabel`` -- safe to
-    persist into a LaunchAgent) from a DISPOSABLE runner venv (``uvx``/``uv tool run`` ->
-    ``~/.cache/uv/…``, ``pipx run`` -> ``~/.local/pipx/.cache/…``, or a ``$TMPDIR`` build),
-    whose path can vanish and break the login item (DECISIONS.md §9.1).
+    Rejects two kinds of paths:
+    - **Ephemeral** (evictable): cache dirs and ``$TMPDIR`` — checked on the *resolved*
+      path so ``/tmp → /private/tmp`` comparisons work. (``uvx``/``uv tool run`` →
+      ``~/.cache/uv/…``; ``$TMPDIR`` builds.)
+    - **Pipx-managed venvs** (unsupported install path): ``~/.local/pipx/`` —
+      checked on the *original* path before symlink resolution, because the
+      console script may be a symlink pointing outside ``~/.local/pipx`` while
+      the invoking Python still lives there (DECISIONS.md §6.6/§6.8).
+
+    A DURABLE project venv (``~/code/proj/.venv/bin/spacelabel``) returns False.
     """
     resolved = path.resolve()  # follow symlinks so /tmp -> /private/tmp etc. compare equal
-    if ".cache" in resolved.parts:  # ~/.cache/uv, ~/.local/pipx/.cache, XDG_CACHE_HOME, …
+    if ".cache" in resolved.parts:  # ~/.cache/uv, XDG_CACHE_HOME, …
         return True
+    # Pipx-managed venvs: reject by the original (unresolved) path so that a
+    # pipx console script that symlinks outside the pipx home is still caught.
+    # Check both the default location and PIPX_HOME if the user customises it.
+    pipx_roots = [Path.home() / ".local" / "pipx"]
+    pipx_home_env = os.environ.get("PIPX_HOME")
+    if pipx_home_env:
+        pipx_roots.append(Path(pipx_home_env).expanduser())
+    for pipx_root in pipx_roots:
+        try:
+            path.relative_to(pipx_root)
+            return True
+        except ValueError:
+            pass
     caches = [Path(tempfile.gettempdir()).resolve(), (Path.home() / "Library" / "Caches").resolve()]
     for base in caches:
         try:
@@ -141,7 +155,7 @@ def _enclosing_app_exe() -> Path | None:
     ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot
     (DECISIONS.md §6 / §2.7, todo/phase-6-blockers.md Tier 1 step 5). Detected by
     walking up from the running executable / this module's file to the enclosing
-    ``.app``; returns ``None`` when not bundled (a dev or legacy-pipx install).
+    ``.app``; returns ``None`` when not bundled (a dev install).
 
     Paths are only ``abspath``-normalized, **not** symlink-resolved: the cask moves
     the app to a STABLE location (e.g. ``~/Applications/spacelabel.app``) that
@@ -182,8 +196,7 @@ def _resolve_install_shim() -> Path:
     1. the cask-installed ``spacelabel.app`` main executable, so the agent process **is**
        the bundle -- a stable, *named* Accessibility identity (the distribution pivot,
        DECISIONS.md §6);
-    2. the legacy pipx shim ``~/.local/bin/spacelabel`` (deprecated);
-    3. a **source/dev** console script beside the running interpreter
+    2. a **source/dev** console script beside the running interpreter
        (``<bindir>/spacelabel`` next to ``<bindir>/python``, e.g. ``.venv/bin/spacelabel``
        from ``uv run`` / an editable install) -- a real, durable venv path, NOT the
        transient ``PATH`` lookup §9.1 warns against, so contributors can exercise the
@@ -193,24 +206,15 @@ def _resolve_install_shim() -> Path:
     than persist a path that would make the login item fragile.
 
     Raises:
-        InstallError: If no bundle, pipx shim, or source/venv console script resolves.
+        InstallError: If no bundle or source/venv console script resolves.
     """
     bundle_exe = _enclosing_app_exe()
     if bundle_exe is not None:
         return bundle_exe
-    canonical = _canonical_shim()
-    if canonical.exists():
-        log.warning(
-            "not running from the spacelabel.app bundle; the LaunchAgent will exec the "
-            "legacy pipx shim %s. Prefer the Homebrew cask (`brew install --cask spacelabel`) "
-            "so the agent gets its own stable Accessibility identity (DECISIONS.md §6).",
-            canonical,
-        )
-        return canonical
     # Source/dev install: the console script sits beside the interpreter (bin/spacelabel
     # next to bin/python). Use sys.executable's dir to FIND the script (not resolve(), which
     # would follow a venv python symlink out of the venv's bin/). Reject a shim under a
-    # cache/temp dir (uvx / pipx run / $TMPDIR) -- those vanish and break the login item --
+    # cache/temp dir (uvx / $TMPDIR) -- those vanish and break the login item --
     # and persist the RESOLVED target so a durable script reached via a temp/cache symlink
     # records its real durable path, never the ephemeral symlink (kept consistent with the
     # ephemerality check, which also classifies the resolved target).
@@ -227,9 +231,9 @@ def _resolve_install_shim() -> Path:
         return durable
     raise InstallError(
         "could not resolve the agent executable: install spacelabel via the Homebrew cask "
-        "(`brew install --cask spacelabel`), the legacy `pipx install spacelabel`, or a "
-        "source/venv install (`uv pip install -e .`) before `spacelabel install`, so the "
-        "login agent points at a durable path rather than a transient shell executable."
+        "(`brew install --cask spacelabel`) or a source/venv install (`uv pip install -e .`) "
+        "before `spacelabel install`, so the login agent points at a durable path rather "
+        "than a transient shell executable."
     )
 
 
@@ -238,11 +242,11 @@ def build_launch_agent(home: Path, shim: Path) -> dict[str, object]:
 
     The returned dict matches ``packaging/dev.mcsim.spacelabel.plist`` after the
     ``__HOME__`` token is replaced with ``home`` and ``__APP_EXE__`` with ``shim``
-    (the resolved agent executable -- the cask bundle exe, or the legacy pipx shim).
+    (the resolved agent executable).
 
     :param home: Absolute home directory templated into the log paths.
     :param shim: Absolute path to the agent executable (the ``spacelabel.app`` bundle
-        exe under the cask; the pipx console-script shim on the legacy path).
+        exe under the cask, or the source/dev console script).
     """
     log_root = home / "Library" / "Logs" / "spacelabel"
     return {
@@ -327,12 +331,10 @@ def refresh_plist_if_stale() -> bool:
     never repoints the agent or drops customizations. No-op when not installed or
     already current.
 
-    This deliberately does **not** migrate a legacy pipx ``ProgramArguments[0]``
-    (``~/.local/bin/spacelabel``) to the cask bundle exe: it cannot (the pipx plist runs
-    the pipx agent, not the bundle one, so the bundle's startup never sees that plist),
-    and silently repointing someone's program path would be surprising. The pipx→cask
-    migration is instead an explicit, documented step — re-run ``spacelabel install``
-    (which resolves and writes the bundle exe via ``_resolve_install_shim``).
+    This deliberately does **not** repoint ``ProgramArguments[0]`` to a different
+    executable: silently repointing someone's program path would be surprising, and a
+    non-bundle path can't see the bundle's plist anyway. Migrating to the cask bundle
+    exe is an explicit step — re-run ``spacelabel install``.
 
     Best-effort: a read/parse/write failure is logged and returns ``False`` rather
     than raising — a logging-housekeeping refresh must never block agent startup.
@@ -561,7 +563,7 @@ def purge_targets(paths: store.StorePaths, *, remove_completion: bool) -> list[P
 
     Decided by the **resolved config file** (``_is_default_store``), so a ``--config``
     that is a symlink/spelling of the default config.json still counts as default.
-    **Never** touches the pipx venv or the ``~/.local/bin/spacelabel`` shim.
+    **Never** touches files outside the spacelabel-owned paths listed above.
 
     :param paths: The resolved store paths for the active ``--config`` selection.
     :param remove_completion: Also include the per-shell completion scripts (default only).
