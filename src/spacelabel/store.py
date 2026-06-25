@@ -61,12 +61,14 @@ __all__ = [
     "load_agent_state",
     "load_config",
     "load_display_labels",
+    "load_display_overlay_disabled",
     "load_labels",
     "prune_labels",
     "save_agent_state",
     "save_config",
     "set_config_value",
     "set_display_label",
+    "set_display_overlay_enabled",
     "set_label",
     "set_note_done",
 ]
@@ -690,44 +692,102 @@ def clear_note(
 # --------------------------------------------------------------------------- #
 
 
+def _load_displays_raw(paths: StorePaths) -> tuple[dict[str, str], set[str]]:
+    """Load the full ``displays.json`` payload; recover silently on errors.
+
+    Returns ``(names, overlay_disabled)`` where ``names`` maps display UUID to a
+    custom name and ``overlay_disabled`` is the set of display UUIDs whose corner
+    overlay is turned off (P feature). Missing keys recover to empty containers;
+    both UUIDs are canonicalized on read so ``_update_overlays`` lookups match.
+    """
+    data = _read_json(paths.displays_file)
+    if data is None:
+        return {}, set()
+    if not isinstance(data, Mapping):
+        log.warning("displays file %s is not a JSON object; ignoring", paths.displays_file)
+        return {}, set()
+    # Names dict (existing field)
+    names: dict[str, str] = {}
+    raw_names = data.get("displays")
+    if isinstance(raw_names, Mapping):
+        for uuid, name in raw_names.items():
+            if isinstance(uuid, str) and isinstance(name, str) and name:
+                names[canonical_uuid(uuid)] = name
+    # Per-display overlay-disabled set (new field; missing → all enabled)
+    overlay_disabled: set[str] = set()
+    raw_disabled = data.get("overlay_disabled")
+    if isinstance(raw_disabled, list):
+        for uuid in raw_disabled:
+            if isinstance(uuid, str) and uuid:
+                overlay_disabled.add(canonical_uuid(uuid))
+    return names, overlay_disabled
+
+
+def _write_displays(paths: StorePaths, names: dict[str, str], overlay_disabled: set[str]) -> None:
+    """Atomically write the full ``displays.json`` payload (names + overlay_disabled).
+
+    Both writers — :func:`set_display_label` and :func:`set_display_overlay_enabled`
+    — call this so neither clobbers the other's slice of the file.
+    """
+    payload: dict[str, object] = {"schema_version": SCHEMA_VERSION, "displays": names}
+    if overlay_disabled:  # omit the key when empty (backward-compatible reads)
+        payload["overlay_disabled"] = sorted(overlay_disabled)
+    _atomic_write_json(paths.displays_file, payload)
+
+
 def load_display_labels(paths: StorePaths) -> dict[str, str]:
     """Load custom display names (display UUID -> name); ``{}`` if absent/corrupt.
 
     Stored separately from labels in ``displays.json`` so the labels read-modify-
     write never has to preserve it. Missing/corrupt files recover as ``{}``.
     """
-    data = _read_json(paths.displays_file)
-    if data is None:
-        return {}
-    if not isinstance(data, Mapping):
-        log.warning("displays file %s is not a JSON object; ignoring", paths.displays_file)
-        return {}
-    raw = data.get("displays")
-    if not isinstance(raw, Mapping):
-        return {}
-    result: dict[str, str] = {}
-    for uuid, name in raw.items():
-        if isinstance(uuid, str) and isinstance(name, str) and name:
-            result[canonical_uuid(uuid)] = name  # canonical on read too (see load_labels)
-    return result
+    names, _ = _load_displays_raw(paths)
+    return names
+
+
+def load_display_overlay_disabled(paths: StorePaths) -> set[str]:
+    """Load the set of display UUIDs whose corner overlay is disabled (P feature).
+
+    Returns an empty set (all displays enabled) when the file is absent or the
+    ``overlay_disabled`` key is missing — so the default is overlay-on everywhere.
+    Never raises; missing/corrupt data recovers to the empty set.
+    """
+    _, overlay_disabled = _load_displays_raw(paths)
+    return overlay_disabled
 
 
 def set_display_label(paths: StorePaths, display_uuid: str, name: str) -> None:
     """Set (or, when ``name`` is empty, clear) a custom name for a display UUID.
 
     Locked read-modify-write + atomic replace, mirroring the label store.
+    Preserves the ``overlay_disabled`` slice so the two writers don't clobber each other.
     """
     display_uuid = canonical_uuid(display_uuid)
     with _file_lock(paths.displays_lock):
         _guard_before_rewrite(paths.displays_file)
-        names = load_display_labels(paths)
+        names, overlay_disabled = _load_displays_raw(paths)
         if name:
             names[display_uuid] = name
         else:
             names.pop(display_uuid, None)
-        _atomic_write_json(
-            paths.displays_file, {"schema_version": SCHEMA_VERSION, "displays": names}
-        )
+        _write_displays(paths, names, overlay_disabled)
+
+
+def set_display_overlay_enabled(paths: StorePaths, display_uuid: str, enabled: bool) -> None:
+    """Enable or disable the corner overlay for a specific display (P feature).
+
+    Locked read-modify-write. When ``enabled`` is True the display UUID is removed
+    from ``overlay_disabled`` (default state); when False it is added.
+    """
+    display_uuid = canonical_uuid(display_uuid)
+    with _file_lock(paths.displays_lock):
+        _guard_before_rewrite(paths.displays_file)
+        names, overlay_disabled = _load_displays_raw(paths)
+        if enabled:
+            overlay_disabled.discard(display_uuid)
+        else:
+            overlay_disabled.add(display_uuid)
+        _write_displays(paths, names, overlay_disabled)
 
 
 # --------------------------------------------------------------------------- #
@@ -1005,6 +1065,13 @@ def _build_config_schema() -> dict[str, ConfigField]:
         'int >= 1 or "auto"',
     )
     add(
+        "overlay.hide_on_unlabeled",
+        lambda raw: _parse_bool("overlay.hide_on_unlabeled", raw),
+        lambda c: c.overlay.hide_on_unlabeled,
+        lambda c, v: setattr(c.overlay, "hide_on_unlabeled", v),
+        "bool",
+    )
+    add(
         "wallpaper.position",
         lambda raw: _parse_anchor("wallpaper.position", raw),
         lambda c: c.wallpaper.position,
@@ -1070,6 +1137,7 @@ def config_to_dict(config: Config) -> dict[str, object]:
             "bold": config.overlay.bold,
             "show_notes": config.overlay.show_notes,
             "note_font_size": config.overlay.note_font_size,
+            "hide_on_unlabeled": config.overlay.hide_on_unlabeled,
         },
         "wallpaper": {
             "position": config.wallpaper.position,
@@ -1164,6 +1232,9 @@ def config_from_dict(data: Mapping[str, object]) -> Config:
         show_notes=_coerce_bool(raw_overlay.get("show_notes"), defaults.overlay.show_notes),
         note_font_size=_coerce_int_or_auto(
             raw_overlay.get("note_font_size"), defaults.overlay.note_font_size
+        ),
+        hide_on_unlabeled=_coerce_bool(
+            raw_overlay.get("hide_on_unlabeled"), defaults.overlay.hide_on_unlabeled
         ),
     )
 

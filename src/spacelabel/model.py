@@ -129,6 +129,10 @@ class OverlayConfig:
     #: Notes-body point size: an int, or ``"auto"`` = one step below the title
     #: (computed in :mod:`spacelabel.agent.geometry`) so the body reads as smaller.
     note_font_size: int | str = "auto"
+    #: Q: when True, suppress the overlay on displays whose current Space has no
+    #: user label (shows only a "Desktop N" placeholder without this flag). Default
+    #: False so existing behaviour is unchanged on upgrade.
+    hide_on_unlabeled: bool = False
 
 
 @dataclass(slots=True)

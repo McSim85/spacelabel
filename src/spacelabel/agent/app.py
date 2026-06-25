@@ -703,7 +703,7 @@ class AppDelegate(NSObject):
             else:
                 self._menubar.set_show_buttons_row(False)
                 self._menubar.set_title(title)
-        self._update_hud(title)
+        self._update_hud(title, active_space=active_space)
         self._update_overlays(spaces, ordinals)
         self._update_wallpaper(title)
         # Resync the change-detection baselines AFTER a render, so the next poll doesn't
@@ -1011,10 +1011,19 @@ class AppDelegate(NSObject):
         return geometry.hud_font_size((float(frame.size.width), float(frame.size.height)))
 
     @objc.python_method
-    def _update_hud(self, title: str) -> None:
-        """Show the on-switch HUD on the active (switched-to) screen, if enabled."""
+    def _update_hud(self, title: str, *, active_space: Space | None = None) -> None:
+        """Show the on-switch HUD on the active (switched-to) screen, if enabled.
+
+        Suppressed (Z) when there is no labelable active Space — e.g. when the user
+        just entered a fullscreen app, whose Space is filtered out of the enumeration.
+        Showing "spacelabel" or "Desktop N" on a fullscreen transition looks stale.
+        The existing auto-dismiss timer clears any lingering panel naturally.
+        """
         config = self._require_config()
         if not config.modes.get("hud"):
+            return
+        # Z: no labelable active space (fullscreen / no-UUID default) -> suppress HUD
+        if active_space is None or not labeling.is_labelable(active_space):
             return
         if self._hud is None:  # lazily built so a runtime mode-toggle takes effect
             from spacelabel.agent.hud import Hud
@@ -1067,7 +1076,13 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _update_overlays(self, spaces: list[Space], ordinals: dict[int, int]) -> None:
-        """Update one overlay panel per display with that display's current label."""
+        """Update one overlay panel per display with that display's current label.
+
+        Hides (order_out) the panel for a display when any of these apply:
+        - Z: no labelable current Space (fullscreen, tiled, or no-UUID default desktop)
+        - P: the display's per-display overlay is toggled off in ``displays.json``
+        - Q: ``overlay.hide_on_unlabeled`` is true and the Space has no user label
+        """
         config = self._require_config()
         if not config.modes.get("overlay"):
             for panel in self._overlays.values():
@@ -1075,11 +1090,39 @@ class AppDelegate(NSObject):
             return
         from spacelabel.agent.overlay import Overlay
 
+        overlay_disabled = self._load_display_overlay_disabled()
         screens_by_uuid = self._screens_by_uuid()
         for display, display_spaces in self._group_by_display(spaces):
             current = next((s for s in display_spaces if s.is_current), None)
-            if current is None:
+
+            # Z: fullscreen/tiled Space (no current in list) or no-UUID unlabelable
+            # default desktop → order out this display's overlay and skip it.
+            if current is None or not labeling.is_labelable(current):
+                if display.uuid in self._overlays:
+                    self._overlays[display.uuid].order_out()
                 continue
+
+            # P: per-display overlay disabled → order out and skip.
+            if display.uuid in overlay_disabled:
+                if display.uuid in self._overlays:
+                    self._overlays[display.uuid].order_out()
+                continue
+
+            # Q: suppress on unlabeled/placeholder if the flag is set. Match
+            # title_for's blank-label test (.strip()) so whitespace-only labels
+            # are treated as unlabeled (they'd show "Desktop N" anyway).
+            # Exception: notes-only entries (Label.text == "" but with notes)
+            # still carry user content (DECISIONS.md 9.10) and must show the
+            # overlay — they're an unlabeled task list, not an empty Space.
+            if config.overlay.hide_on_unlabeled:
+                label = self._labels.get(current.uuid)
+                has_real_label = label is not None and bool(label.text.strip())
+                has_notes = label is not None and bool(label.notes)
+                if not has_real_label and not has_notes:
+                    if display.uuid in self._overlays:
+                        self._overlays[display.uuid].order_out()
+                    continue
+
             ordinal = ordinals.get(id(current), 0)
             text = labeling.title_for(
                 current, self._labels, ordinal, max_length=config.menubar.max_length
@@ -1356,6 +1399,15 @@ class AppDelegate(NSObject):
         except (OSError, store.StoreError) as exc:
             log.warning("display-labels load failed; using none: %s", exc)
             return {}
+
+    @objc.python_method
+    def _load_display_overlay_disabled(self) -> set[str]:
+        """Load per-display overlay-disabled UUIDs (P); empty set = all enabled."""
+        try:
+            return store.load_display_overlay_disabled(self._paths)
+        except (OSError, store.StoreError) as exc:
+            log.warning("display overlay-disabled load failed; assuming all enabled: %s", exc)
+            return set()
 
     # -- small helpers ----------------------------------------------------------
 

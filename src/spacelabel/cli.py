@@ -916,6 +916,36 @@ def display_clear(ctx: AppContext, target: str) -> None:
         _diag(f"No custom name stored for display {uuid}; nothing to clear.")
 
 
+@display.command("overlay-on")
+@click.argument("target", shell_complete=completion.complete_display_target)
+@click.pass_obj
+def display_overlay_on(ctx: AppContext, target: str) -> None:
+    """Enable the corner overlay for a display (default; undoes overlay-off)."""
+    uuid = _resolve_display_target(target, validate=True)
+    paths = _paths(ctx)
+    try:
+        store.set_display_overlay_enabled(paths, uuid, True)
+    except store.StoreError as exc:
+        log.error("could not enable overlay for display %s: %s", uuid, exc)
+        raise click.ClickException(str(exc)) from exc
+    _diag(f"Corner overlay enabled for display {uuid}.")
+
+
+@display.command("overlay-off")
+@click.argument("target", shell_complete=completion.complete_display_target)
+@click.pass_obj
+def display_overlay_off(ctx: AppContext, target: str) -> None:
+    """Disable the corner overlay for a display."""
+    uuid = _resolve_display_target(target, validate=True)
+    paths = _paths(ctx)
+    try:
+        store.set_display_overlay_enabled(paths, uuid, False)
+    except store.StoreError as exc:
+        log.error("could not disable overlay for display %s: %s", uuid, exc)
+        raise click.ClickException(str(exc)) from exc
+    _diag(f"Corner overlay disabled for display {uuid}.")
+
+
 def _resolve_display_target(target: str, *, validate: bool = False) -> str:
     """Resolve a ``display`` TARGET ('current' -> active display UUID, else literal).
 

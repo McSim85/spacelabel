@@ -528,9 +528,15 @@ Pairs with **K** + **M** (one `fix(cli): help/output polish` PR). Severity: **lo
 ---
 
 ### P. Per-display overlay on/off  *(Max, 2026-06-23)*
+
+> **✅ DONE (2026-06-24, fix/overlay-behavior PR).** `displays.json` extended with an `overlay_disabled` list (backward-compatible — missing key = all enabled). `store.load_display_overlay_disabled` / `set_display_overlay_enabled` added; both writers (`set_display_label`, `set_display_overlay_enabled`) go through the shared `_load_displays_raw`/`_write_displays` helpers so neither clobbers the other slice. `_update_overlays` loads and checks the set per refresh; a disabled display gets `order_out()`. CLI: `display overlay-on <uuid|current>` / `display overlay-off <uuid|current>`. Prefs: a per-display "Overlay" checkbox column in the NSOutlineView (display rows only; Space rows show nothing). Tests: store round-trip + clobber prevention.
+
 Let the corner overlay be enabled/disabled **per display** (not just the global `modes.overlay`). Store a per-display flag (extend `displays.json` like the custom-name pattern) + expose in `display` CLI and the Preferences per-display rows; `_update_overlays` (`app.py`) skips displays toggled off. Read first: `agent/overlay.py`, `_update_overlays`, `store.py` displays.json pattern, `agent/prefs.py`. Severity: **low** (UX).
 
 ### Q. Hide overlay on displays with only a single / unlabeled Space  *(Max, 2026-06-23)*
+
+> **✅ DONE (2026-06-24, fix/overlay-behavior PR).** `overlay.hide_on_unlabeled` config flag (bool, default `false` — preserves existing behaviour on upgrade). Wired through `OverlayConfig`, `CONFIG_SCHEMA`, `config_to_dict`, `config_from_dict`. `_update_overlays` checks the flag and calls `order_out()` when the current Space has no user label. The `is_labelable` predicate in `labeling.py` also handles the no-UUID case (empty-UUID default Space → order out even without the flag). Test in `test_agent_imports`.
+
 When a display's current Space is unlabeled (or it's the single default no-UUID Space), the overlay shows a `Desktop N` placeholder that adds noise. Option to **suppress the overlay** on such displays (config flag, default on/off TBD) — only show where there's a real label. Pairs with P. Read first: `_update_overlays`/`overlay.py` (`title_for` fallback), DECISIONS §6.3. Severity: **low** (UX).
 
 ---
@@ -589,6 +595,9 @@ Turning **Menu-bar title OFF** leaves an **empty quadrant** in the menu bar rath
 `NO_COLOR=1 spacelabel spaces` still shows the **bold header + green current-row** color on an interactive TTY — `NO_COLOR` is not honored. Plan A18/A12 + the CLI contract (DECISIONS §9) require color suppressed when `NO_COLOR` is set. The table color helper (`cli.py` ~`:80–89`, the bold/green `click.style` path) gates on `isatty` but **not** on `NO_COLOR`. Fix: suppress styling when `os.environ.get("NO_COLOR")` is set (or pass `color=False` to `click.echo`) — the logging sink already does this (`logging_setup.py:36`). Test: `NO_COLOR=1` → no ANSI even on a faked TTY; `*` marker still present. Severity: **low** (cosmetic / contract).
 
 ### Z. Overlay + HUD show a STALE Space when the active Space is fullscreen/tiled  *(Max, 2026-06-23 — H2/H3)*
+
+> **✅ DONE (2026-06-24, fix/overlay-behavior PR).** Root cause: `_update_overlays` did `continue` without `order_out()` when `current is None` (fullscreen Space filtered out by `parse_spaces`); `_update_hud` showed the HUD for any title including the neutral `"spacelabel"`. Fix: (1) `_update_overlays` now calls `order_out()` on any existing panel when `current is None` or `not is_labelable(current)` before `continue`; (2) `_update_hud` signature extended with `active_space` kwarg — suppresses when `active_space is None or not is_labelable(active_space)`. `is_labelable` is a new PURE predicate in `labeling.py` (testable without a WindowServer). Hardware live-test still pending (unit tests cover the gate; see `test_agent_imports`). `docs/VERIFICATION.md` §H2/H3 row updated.
+
 Entering a fullscreen app (its own `type != 0` Space) correctly drops it from `spaces`/pills (H1 ✅), but the **corner overlay and HUD on that display keep showing the previous Space's label** instead of clearing/going neutral. Plan H2/H3 expect: no labelable current Space on that display → menu-bar title falls back to `spacelabel`, that display gets **no** overlay, HUD neutral/none. Either the fullscreen transition doesn't trigger a refresh or the refresh doesn't clear the panel when the active Space has no labelable match. Fix: in `_update_overlays`/`_update_hud` (`agent/app.py`), when the active display's current Space resolves to no labelable Space (fullscreen/tiled), **order-out that display's overlay** and suppress the HUD. Read first: `agent/app.py` `_update_overlays`/`_update_hud`/`read_active_space_uuid`, `platform/notifications.py` (does a fullscreen transition fire `activeSpaceDidChange`?). No crash. Severity: **low–medium** (stale display).
 
 ### X. Default unlabelable-Space pill is not a switch target (a click opens the menu)  *(Max, 2026-06-24 — from the O+V review)*
