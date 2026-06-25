@@ -15,6 +15,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |
 | [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** | **high (design)** · Opus 4.8 | `wallpaper.py` |
 | [remove-pipx.md](remove-pipx.md) | — | medium · Sonnet 4.6 | `install.py` tests docs |
+| **[fix-brew-upgrade-race.md](fix-brew-upgrade-race.md)** | **AB** *(critical)* | low · Sonnet 4.6 | `app.py` `Casks/spacelabel.rb` |
 
 ## ⚠ Parallelization plan — `app.py` is the bottleneck
 

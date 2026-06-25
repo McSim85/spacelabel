@@ -613,6 +613,55 @@ When the active display's current Space is the **default unlabelable** one (`uui
 
 ---
 
+### AB. `brew upgrade --cask` race: LaunchAgent `KeepAlive` restart loop  *(Max, 2026-06-25 — live finding)*
+
+**Severity: critical (operational).** After `brew upgrade --cask spacelabel`, the agent logs
+`another spacelabel agent is already running` every ~10 seconds indefinitely, filling `agent.log`.
+
+**Root cause (two cooperating bugs):**
+
+1. **Exit code:** when `_acquire_single_instance_lock` loses the lock-race, it does
+   `raise SystemExit(1)`. The LaunchAgent plist has `KeepAlive: {SuccessfulExit: false}`,
+   which means *restart on any non-zero exit*. So every failed start attempt (exit 1)
+   schedules another → infinite retry loop.
+
+2. **Cask has no `uninstall launchctl:` stanza.** During `brew upgrade --cask`, Homebrew
+   (a) quits the running app via its bundle id and (b) "Reopens" it via `open` after
+   installing the new binary. It does **not** `launchctl bootout` the service. So launchd's
+   `RunAtLoad` and brew's "Reopen" both fire simultaneously → two instances race for the
+   lock → one wins (holds the lock permanently), the other exits 1 → KeepAlive loop.
+
+**Fixes (both needed; independent, can ship together):**
+
+*Fix A — `install.py` / `agent/app.py` (fast):* when the lock is already held, exit **0**
+instead of 1. `KeepAlive: {SuccessfulExit: false}` then treats it as "done, no restart
+needed." This caps the blast radius if the race ever recurs. The existing WARNING log already
+records the rejection clearly; the exit code only needs to not look like a crash.
+
+```python
+# app.py _acquire_single_instance_lock — change the losing-instance exit:
+raise SystemExit(0)   # lock held by another agent; not a crash — no KeepAlive restart
+```
+
+*Fix B — `Casks/spacelabel.rb` (prevents the race):* add an `uninstall launchctl:` stanza
+so Homebrew performs a proper `launchctl bootout` (killing the managed agent) before installing
+the new binary. After the new binary lands, `RunAtLoad` fires **once** cleanly with no
+competing `open` process.
+
+```ruby
+uninstall launchctl: "dev.mcsim.spacelabel"
+```
+
+The `zap` stanza already handles full teardown; `uninstall` only runs on `brew uninstall` and
+`brew upgrade` (not `brew install`), so this is safe.
+
+**Read first:** `install.py` (`_acquire_single_instance_lock` → `app.py` re-export),
+`Casks/spacelabel.rb` (`uninstall` / `zap` stanzas), DECISIONS §6.4/§6.8 (LaunchAgent
+`KeepAlive` policy). **Tests:** mock the lock-busy path and assert exit code == 0; a
+`brew audit` dry-run on the updated cask.
+
+---
+
 ## After completing each item
 
 1. Run all gates:
