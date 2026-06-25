@@ -236,10 +236,6 @@ The **nine anchors** are `top-left`, `top`, `top-right`, `left`, `center`,
   desktop numbers do match). So spacelabel switches a pill only when its Space is on the
   active display and shows a visible "only works on the focused display" notice otherwise —
   focus that display first, then click its pill.
-- **Pills don't redraw on a pure reorder (yet).** The agent refreshes on Space
-  *switch* and display change, not on a Mission Control drag — so after reordering,
-  the pill row looks stale until your next switch. Clicking is unaffected (it's
-  UUID-keyed and resolves live), it's only the visual that lags.
 - **Menu-bar visibility on Tahoe** — see [System Settings](#menu-bar-icon-visibility-tahoe) above.
 - The tool relies on private CoreGraphics-Services (CGS) reads that Apple may
   change between point releases; `spacelabel` resolves symbols defensively and
