@@ -155,6 +155,30 @@ class _LabelColorWell(NSColorWell):
         self._space_uuid = ""
         return self
 
+    def mouseDown_(self, event: object) -> None:  # noqa: N802
+        """On click: open the colour picker for labeled Spaces; explain why for unlabeled ones.
+
+        ``NSColorWell.setEnabled_(False)`` silently swallows clicks (T-4 finding).
+        By intercepting ``mouseDown_`` we can surface a brief non-modal sheet when
+        the user clicks a disabled well, instead of leaving them wondering why nothing
+        happened. For enabled wells, fall through to the normal NSColorWell behaviour.
+        """
+        if not self._space_uuid:
+            from AppKit import NSAlert
+
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("Set a label first")
+            alert.setInformativeText_(
+                "Color is a per-label attribute.\n"
+                "Label this Space, then click the colour well to assign a color."
+            )
+            alert.addButtonWithTitle_("OK")
+            win = self.window()
+            if win is not None:
+                alert.beginSheetModalForWindow_completionHandler_(win, lambda _r: None)
+            return
+        objc.super(_LabelColorWell, self).mouseDown_(event)
+
     def activate_(self, exclusive: bool) -> None:
         """Center the shared NSColorPanel on the active screen before showing it (item T)."""
         from AppKit import NSColorPanel
