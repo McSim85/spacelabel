@@ -458,6 +458,7 @@ class MenuBarItem:
             log.warning("status item has no button; cannot set title %r", text)
             return
         button.setImage_(None)  # drop any inactive-mode icon
+        button.setImagePosition_(0)  # NSNoImage: reset from NSImageOnly so title shows
         button.setTitle_(str(text))
 
     def set_inactive(self) -> None:
@@ -465,7 +466,7 @@ class MenuBarItem:
 
         The status item also hosts the Preferences/Quit menu, so it must stay
         present even when the menu-bar *display* mode is disabled -- it just stops
-        reflecting the active Space (DESIGN.md §6.1).
+        reflecting the active Space (DESIGN.md §6.1 / item W).
         """
         self.set_show_buttons_row(False)
         button = self._item.button()
@@ -478,7 +479,11 @@ class MenuBarItem:
             "square.dashed", "spacelabel (menu-bar label off)"
         )
         if icon is not None:
+            icon.setTemplate_(True)  # correct tint in light/dark menu bar
             button.setImage_(icon)
+            button.setImagePosition_(1)  # NSImageOnly: icon without title padding
+        else:
+            log.warning("square.dashed SF Symbol unavailable; menu-bar-off item shows blank")
 
     def set_buttons_row(
         self,
