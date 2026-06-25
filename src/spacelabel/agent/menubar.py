@@ -161,11 +161,11 @@ class ButtonsRowView(NSView):
     left-to-right grouped by physical display, displays separated by a thin
     vertical divider, the current Space marked by full alpha and the rest dimmed.
 
-    When click-to-switch is enabled (DECISIONS.md 9.5) the view becomes the hit
-    target (:meth:`hitTest_`) and a pill click resolves to its Space UUID via the
-    shared layout; a click off a pill (or a right-click) opens the status menu so
-    Preferences/Quit stay reachable while the row captures clicks. Display-only by
-    default (the row falls clicks through to the status button).
+    The view is always the hit target (:meth:`hitTest_` always delegates to super) so
+    that tooltip tracking areas fire regardless of click-to-switch state. When
+    click-to-switch is enabled (DECISIONS.md 9.5) a pill click resolves to its Space
+    UUID; when disabled, every click opens the status menu so Preferences/Quit stay
+    reachable. Right-click always opens the menu.
     """
 
     def initWithFrame_(self, frame: object) -> ButtonsRowView | None:  # noqa: N802
@@ -229,12 +229,10 @@ class ButtonsRowView(NSView):
 
     @objc.python_method
     def set_click_enabled(self, enabled: bool) -> None:
-        """Capture clicks (enabled) or pass them through to the status button (disabled).
+        """Enable or disable pill click-to-switch (DECISIONS.md 9.5).
 
-        Capture is gated in :meth:`hitTest_`: when disabled the view is transparent to
-        the mouse, so a click falls through to the status item and opens the menu
-        (display-only pills); when enabled the view is the hit target so a pill press
-        reaches :meth:`mouseDown_` and can switch Spaces (DECISIONS.md 9.5).
+        The view is always the hit target (so tooltip tracking fires regardless).
+        When disabled, :meth:`mouseDown_` opens the menu instead of switching Spaces.
         """
         self._click_enabled = enabled
 
@@ -248,16 +246,16 @@ class ButtonsRowView(NSView):
         return False
 
     def hitTest_(self, point: object) -> object:  # noqa: N802
-        """Be the hit target only when click capture is enabled; else fall through.
+        """Return the view as hit target so tooltip tracking areas fire (DECISIONS.md 9.5).
 
-        Returning ``nil`` while disabled makes the row transparent to the mouse so the
-        click reaches the status button and opens the menu -- the NSView equivalent of
-        the click-through used for display-only pills (DECISIONS.md 9.5). NSView has no
-        ``ignoresMouseEvents`` (that is an NSWindow property), so hit-testing is the
-        correct gate.
+        Previously this returned ``nil`` when click-to-switch was disabled to make the
+        view mouse-transparent and let clicks reach the status button. That silently
+        broke ``addToolTipRect`` tracking: AppKit stops polling tooltip rects on a view
+        that returns ``nil`` for the cursor position. The fix: always return the result
+        of ``super`` — the view is always the hit target. :meth:`mouseDown_` handles
+        the disabled case by opening the menu directly, which is equivalent to the
+        button's natural response.
         """
-        if not self._click_enabled:
-            return None
         return objc.super(ButtonsRowView, self).hitTest_(point)
 
     def drawRect_(self, rect: object) -> None:  # noqa: N802
@@ -269,12 +267,11 @@ class ButtonsRowView(NSView):
             log.warning("buttons-row draw failed: %s", exc)
 
     def mouseDown_(self, event: object) -> None:  # noqa: N802
-        """Switch to the clicked pill's Space, or open the menu off a pill.
+        """Switch to the clicked pill's Space, or open the menu (DECISIONS.md 9.5).
 
-        Only reached when click-to-switch is enabled (otherwise the view ignores the
-        mouse). A pill hit invokes the switch handler with its UUID; a click in the
-        gap/margin opens the status menu so Preferences/Quit stay reachable
-        (DECISIONS.md 9.5).
+        When click-to-switch is disabled, every click opens the menu so
+        Preferences/Quit stay reachable (display-only pills). When enabled, a pill
+        hit invokes the switch handler; a click in the gap/margin still opens the menu.
         """
         if not self._click_enabled:
             self._invoke_menu()
@@ -429,8 +426,8 @@ class MenuBarItem:
         frame = NSMakeRect(0.0, 0.0, _PILL_MIN_WIDTH + _ROW_MARGIN_X * 2, _ROW_HEIGHT)
         view = ButtonsRowView.alloc().initWithFrame_(frame)
         # Pills are display-only until click-to-switch enables capture: the view
-        # starts with _click_enabled False, so hitTest_ falls clicks through to the
-        # status button (the menu) until set_click_enabled(True) (DECISIONS.md 9.5).
+        # starts with _click_enabled False, so mouseDown_ opens the menu until
+        # set_click_enabled(True) arms pill switching (DECISIONS.md 9.5).
         button.addSubview_(view)
         self._row_view = view
         # Re-wire handlers if they were set before the row existed (runtime re-install).
