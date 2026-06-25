@@ -1,9 +1,9 @@
 # Contributing to spacelabel
 
 Thanks for your interest! This is a small, focused macOS tool. Please read
-[`DESIGN.md`](DESIGN.md) and [`DECISIONS.md`](DECISIONS.md) first — they capture
-the locked architecture and the rationale (with confidence levels) behind every
-choice, so a change that contradicts them needs a deliberate decision update.
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) before touching the load-bearing
+invariants — a change that contradicts them needs a deliberate decision, not a quiet
+override.
 
 ## Development setup
 
@@ -25,7 +25,7 @@ uv run spacelabel --help
 uv run spacelabel agent --debug
 ```
 
-> `uv` is the dev environment. Distribution is the Homebrew cask — see `DESIGN.md` §9.
+> `uv` is the dev environment. Distribution is the Homebrew cask.
 
 ## Quality gates (must pass before a PR)
 
@@ -46,18 +46,50 @@ uv run pytest                  # tests
   ruff + mypy (`strict`).
 - **No silent exception handling.** Never `except: pass` / `continue`. Catch
   specific exceptions, log with context (`logging.getLogger(__name__)`), then
-  recover or re-raise. See `DESIGN.md` §8.2.
+  recover or re-raise.
 - **Prefer the standard library.** Add a third-party dependency only when it
   clearly earns its keep. The current set is PyObjC (unavoidable) + `click`.
 - Library/module code never configures logging — only `setup_logging()` does.
+
+## Testing
+
+Mocked unit tests run in CI (macOS only — PyObjC wheels don't install on Linux).
+Live CGS reads, Spaces, GUI, and LaunchAgent behavior are **local-only on a real
+Mac** — a hosted runner has no window server, no displays, and cannot load a
+LaunchAgent.
+
+**Mock boundary:** keep pure logic behind functions that take plain Python data.
+The live calls (CGS IPC, `NSScreen`, `NSPanel`, launchctl) are thin shells around
+that logic and are not unit-tested.
+
+| Test file | Covers (pure) | Mock boundary |
+|---|---|---|
+| `test_labeling.py` | title / pill / ordinal / orphan resolution | none — pure |
+| `test_geometry.py` | HUD/overlay font math + nine-anchor placement | none — pure arithmetic |
+| `test_store.py` | atomic locked read-modify-write, label CRUD, prune, config schema | real `tmp_path` files; no GUI |
+| `test_cgs_parse.py` | `parse_spaces` — labelable filter, current-marking, "Main" remap, multi-display | mocked `CGSCopyManagedDisplaySpaces` dicts |
+| `test_spaces_plist.py` | `parse_spaces_plist` — UUID extraction | mocked plist mapping |
+| `test_install.py` | `build_launch_agent`/`render_plist` | pure dict/plist; no launchctl |
+| `test_cli.py` | every command, exit codes 0/1/2/3, stdout=data/stderr=diagnostics | monkeypatched `cgs.*`, `displays.*`, `install.agent_status` |
+| `test_smoke.py` | package import, `--help`/`--version`, locked command tree | click only |
+
+**Local-only verification** (live behavior — cannot run in CI):
+
+```sh
+uv run spacelabel spaces                 # live CGS reads across displays
+uv run spacelabel label set current "X"  # exercises read_active_space_uuid end-to-end
+uv run spacelabel agent --debug          # menu-bar agent (needs a GUI session)
+spacelabel install && spacelabel status  # LaunchAgent lifecycle
+```
+
+Keep new logic testable without a GUI: put pure work behind a function that takes
+plain data (the way `parse_spaces` sits behind `enumerate_spaces`), and unit-test that.
 
 ## Commits & pull requests
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:` …).
-- Keep PRs focused; describe the change and reference the relevant `DESIGN.md` /
-  `DECISIONS.md` section. If a change revises a decision, update `DECISIONS.md` in
-  the same PR.
+- Keep PRs focused; describe what changed and why.
 - Fill in the pull-request template.
 
 ## Reporting issues
