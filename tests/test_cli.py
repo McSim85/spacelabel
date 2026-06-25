@@ -854,3 +854,96 @@ def test_label_prune_removes_orphans(runner, cfg, monkeypatch):
     r = runner.invoke(cli, _base(cfg, "label", "list"))
     assert U2 not in r.stdout
     assert U1 in r.stdout
+
+
+# ---- item M: no help markup leak (acceptance test) --------------------------
+
+
+import click as _click  # noqa: E402
+
+
+def _all_command_paths(group: _click.Group, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    paths: list[tuple[str, ...]] = []
+    for name, cmd in group.commands.items():
+        path = (*prefix, name)
+        paths.append(path)
+        if isinstance(cmd, _click.Group):
+            paths.extend(_all_command_paths(cmd, path))
+    return paths
+
+
+@pytest.mark.parametrize(
+    "cmd_path",
+    _all_command_paths(cli),
+    ids=lambda p: "/".join(p),
+)
+def test_no_help_markup_leak(cmd_path: tuple[str, ...]) -> None:
+    """No command's --help may contain raw RST/markup or internal refs (item M/K)."""
+    r = CliRunner().invoke(cli, [*cmd_path, "--help"], prog_name="spacelabel")
+    assert r.exit_code == 0
+    for pattern in ("**", "``", "DECISIONS.md", "review F", "§"):
+        assert pattern not in r.output, (
+            f"spacelabel {' '.join(cmd_path)} --help contains {pattern!r}"
+        )
+    assert "Usage: spacelabel" in r.output
+
+
+# ---- items N + Y: status color + NO_COLOR -----------------------------------
+
+
+def test_status_running_colored_green_on_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Running status shows green ANSI on a faked TTY (item N)."""
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=True, pid=42, managed=True),
+    )
+    r = CliRunner().invoke(cli, ["status"], color=True)
+    assert r.exit_code == 0
+    assert "\x1b[" in r.stdout  # ANSI present
+
+
+def test_status_not_running_colored_yellow_on_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not-running status shows yellow ANSI on a faked TTY (item N)."""
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=False, loaded=False, running=False, pid=None, managed=False),
+    )
+    r = CliRunner().invoke(cli, ["status"], color=True)
+    assert r.exit_code == 3
+    assert "\x1b[" in r.stdout  # ANSI present
+
+
+def test_status_no_color_suppresses_ansi_on_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NO_COLOR=1 strips ANSI from status even on a faked TTY (item Y)."""
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=True, pid=42, managed=True),
+    )
+    r = CliRunner().invoke(cli, ["status"], color=True, env={"NO_COLOR": "1"})
+    assert r.exit_code == 0
+    assert "\x1b[" not in r.stdout  # no ANSI despite TTY
+    assert "running" in r.stdout  # text still present
+
+
+def test_status_no_color_empty_string_also_suppresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NO_COLOR= (empty value) also strips ANSI — presence, not truthiness (no-color.org)."""
+    _patch_status(
+        monkeypatch,
+        AgentStatus(installed=True, loaded=True, running=True, pid=42, managed=True),
+    )
+    r = CliRunner().invoke(cli, ["status"], color=True, env={"NO_COLOR": ""})
+    assert r.exit_code == 0
+    assert "\x1b[" not in r.stdout
+
+
+def test_spaces_no_color_suppresses_table_ansi_on_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """NO_COLOR=1 strips table ANSI (bold header + green current row) even on TTY (item Y)."""
+    monkeypatch.setattr("spacelabel.platform.cgs.enumerate_spaces", _fake_spaces)
+    monkeypatch.setattr("spacelabel.platform.displays.discover_topology", _fake_topology)
+    cfg = str(tmp_path / "config.json")
+    r = CliRunner().invoke(cli, _base(cfg, "spaces"), color=True, env={"NO_COLOR": "1"})
+    assert r.exit_code == 0
+    assert "\x1b[" not in r.stdout
+    assert "*" in r.stdout  # current marker still present

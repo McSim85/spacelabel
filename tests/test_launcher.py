@@ -48,3 +48,33 @@ def test_opened_from_finder(argv: list[str], xpc: str, expected: bool, monkeypat
     monkeypatch.setenv("XPC_SERVICE_NAME", xpc)
     launcher = _load_launcher()
     assert launcher._opened_from_finder(argv) is expected
+
+
+def test_launcher_main_passes_prog_name_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    """launcher.py calls main(prog_name='spacelabel') so usage shows 'spacelabel' (item K)."""
+    import spacelabel.cli as cli_mod
+
+    received: list[str | None] = []
+
+    def _capture(*_args: object, **kwargs: object) -> None:
+        received.append(kwargs.get("prog_name"))
+
+    monkeypatch.setattr(cli_mod, "cli", _capture)
+    cli_mod.main(prog_name="spacelabel")
+
+    assert received == ["spacelabel"]
+
+
+def test_main_no_prog_name_forwards_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() without prog_name passes None so click derives the name from sys.argv[0]."""
+    import spacelabel.cli as cli_mod
+
+    received: list[str | None] = []
+
+    def _capture(*_args: object, **kwargs: object) -> None:
+        received.append(kwargs.get("prog_name"))
+
+    monkeypatch.setattr(cli_mod, "cli", _capture)
+    cli_mod.main()
+
+    assert received == [None]
