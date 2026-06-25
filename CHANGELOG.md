@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/McSim85/spacelabel/compare/v0.8.3...v0.9.0) (2026-06-25)
+
+
+### Features
+
+* **menubar:** click-to-switch toggle in dropdown + Preferences (J) ([ffe2051](https://github.com/McSim85/spacelabel/commit/ffe205102c4287303b2d9f36eaebae1154b8087f))
+
+
+### Bug Fixes
+
+* **prefs:** center+resurface window on active screen; Edit-menu paste; live clear revert (T+U) ([#53](https://github.com/McSim85/spacelabel/issues/53)) ([ffe2051](https://github.com/McSim85/spacelabel/commit/ffe205102c4287303b2d9f36eaebae1154b8087f))
+
 ## [0.8.3](https://github.com/McSim85/spacelabel/compare/v0.8.2...v0.8.3) (2026-06-25)
 
 
