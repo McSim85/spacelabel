@@ -99,13 +99,14 @@ _ANCHOR_ORDER = (
 assert set(_ANCHOR_ORDER) == ANCHORS
 
 #: Settings-strip mode checkboxes: (tag, dotted config key, label).
+#: Tags 1-5 only; tag 6 ("overlay.hide_on_unlabeled") and tag 7 ("menubar.click_to_switch")
+#: are placed separately on Row 3 so Row 1 doesn't overflow the 720 pt window.
 _MODE_CHECKBOXES = (
     (1, "modes.menubar", "Menu-bar title"),
     (2, "modes.hud", "On-switch HUD"),
     (3, "modes.overlay", "Corner overlay"),
     (4, "modes.wallpaper", "Wallpaper (exp)"),
     (5, "menubar.show_buttons_row", "Buttons row"),
-    (6, "overlay.hide_on_unlabeled", "Hide overlay on unlabeled"),
 )
 
 
@@ -589,7 +590,9 @@ class PreferencesWindow:
         outline.addTableColumn_(
             self._make_column(_COL_LABEL, "Space / Label", 220.0, editable=True)
         )
-        outline.addTableColumn_(self._make_column(_COL_UUID, "UUID", 300.0, editable=False))
+        # UUID column narrowed from 300 → 220 pt so the Overlay column (80 pt)
+        # stays visible: 220+220+60+50+80 = 630 pt, well inside the 720 pt window.
+        outline.addTableColumn_(self._make_column(_COL_UUID, "UUID", 220.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_COLOR, "Color", 60.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_NOW, "Now", 50.0, editable=False))
         outline.addTableColumn_(self._make_column(_COL_OVERLAY, "Overlay", 80.0, editable=False))
@@ -662,9 +665,10 @@ class PreferencesWindow:
         )
         content.addSubview_(ovl_corner)
 
-        # Row 3: "Click to switch" toggle (item J; effective only when buttons row is on).
-        # Placed at y=396, 6 pt above the scroll view top (390 = 40 + 350).
-        # Tag 7: tags 1-6 are used by _MODE_CHECKBOXES (6 = overlay.hide_on_unlabeled).
+        # Row 3: placed at y=396, 6 pt above the scroll view top (390 = 40 + 350).
+        # Two checkboxes: "Click to switch" (tag 7, item J) and "Hide unlabeled overlay"
+        # (tag 6, item Q). Tag 6 moved here from _MODE_CHECKBOXES so Row 1 doesn't
+        # overflow the 720 pt window — both items are sub-settings, not primary modes.
         cts_tag = 7
         target.register_tag(cts_tag, "menubar.click_to_switch")
         cts = NSButton.alloc().initWithFrame_(NSMakeRect(16.0, 396.0, 130.0, 20.0))
@@ -678,6 +682,20 @@ class PreferencesWindow:
         cts.setFrameOrigin_((16.0, 396.0))
         content.addSubview_(cts)
         self._cts_button = cts  # kept for state sync after dropdown toggles (item J)
+
+        hun_tag = 6
+        target.register_tag(hun_tag, "overlay.hide_on_unlabeled")
+        hun = NSButton.alloc().initWithFrame_(NSMakeRect(0.0, 396.0, 130.0, 20.0))
+        hun.setButtonType_(NSButtonTypeSwitch)
+        hun.setTitle_("Hide unlabeled overlay")
+        hun.setState_(_state(bool(store.get_config_value(config, "overlay.hide_on_unlabeled"))))
+        hun.setTag_(hun_tag)
+        hun.setTarget_(target)
+        hun.setAction_("toggleCheckbox:")
+        hun.sizeToFit()
+        hun_x = 16.0 + float(cts.frame().size.width) + 14.0
+        hun.setFrameOrigin_((hun_x, 396.0))
+        content.addSubview_(hun)
 
     def _add_label(self, content: object, text: str, x: float, y: float, width: float) -> None:
         """Add a static text label to the settings strip."""

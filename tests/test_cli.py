@@ -473,6 +473,24 @@ def test_spaces_falls_back_to_plist_when_pyobjc_absent(runner, cfg, monkeypatch)
 # ---- display labels --------------------------------------------------------
 
 
+def test_display_list_shows_overlay_status(runner, cfg, monkeypatch):
+    # display list --json must include "overlay" key so users can see per-display state.
+    monkeypatch.setattr("spacelabel.platform.displays.discover_topology", lambda: [])
+    monkeypatch.setattr("spacelabel.platform.cgs.active_display_uuid", lambda: "")
+    runner.invoke(cli, _base(cfg, "display", "set", DISP_A, "Main"))
+    # Default: overlay on.
+    r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
+    assert json.loads(r.stdout)[0]["overlay"] == "on"
+    # After overlay-off: overlay shows "off".
+    runner.invoke(cli, _base(cfg, "display", "overlay-off", DISP_A))
+    r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
+    assert json.loads(r.stdout)[0]["overlay"] == "off"
+    # After overlay-on: back to "on".
+    runner.invoke(cli, _base(cfg, "display", "overlay-on", DISP_A))
+    r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
+    assert json.loads(r.stdout)[0]["overlay"] == "on"
+
+
 def test_display_set_list_clear(runner, cfg, monkeypatch):
     # No live displays in the test -> list falls back to stored overrides.
     monkeypatch.setattr("spacelabel.platform.displays.discover_topology", lambda: [])
@@ -482,7 +500,7 @@ def test_display_set_list_clear(runner, cfg, monkeypatch):
     r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
     assert r.exit_code == 0
     assert json.loads(r.stdout) == [
-        {"uuid": DISP_A, "name": "Main", "custom": True, "active": False}
+        {"uuid": DISP_A, "name": "Main", "custom": True, "active": False, "overlay": "on"}
     ]
     assert runner.invoke(cli, _base(cfg, "display", "clear", DISP_A)).exit_code == 0
     r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
@@ -502,7 +520,7 @@ def test_display_list_degrades_when_pyobjc_absent(runner, cfg, monkeypatch):
     r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
     assert r.exit_code == 0
     assert json.loads(r.stdout) == [
-        {"uuid": DISP_A, "name": "Main", "custom": True, "active": False}
+        {"uuid": DISP_A, "name": "Main", "custom": True, "active": False, "overlay": "on"}
     ]
 
 
