@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/McSim85/spacelabel/compare/v1.1.0...v1.1.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **menubar:** tooltips don't show — hitTest_ was returning nil for disabled pills ([#70](https://github.com/McSim85/spacelabel/issues/70)) ([4d80580](https://github.com/McSim85/spacelabel/commit/4d80580abbd6f6de0ea1fb8c7665939228c0c76d))
+
 ## [1.1.0](https://github.com/McSim85/spacelabel/compare/v1.0.0...v1.1.0) (2026-06-25)
 
 
