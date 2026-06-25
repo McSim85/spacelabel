@@ -469,6 +469,36 @@ def test_is_managed_run_only_default_config_nondev_noninteractive():
     assert _is_managed_run(Path("/tmp/x.json"), **base) is False
 
 
+def test_acquire_single_instance_lock_loser_exits_zero(tmp_path):
+    # Item AB: a second agent that loses the single-instance lock-race must exit 0 (a
+    # duplicate is not a crash), so launchd KeepAlive (SuccessfulExit:false) does NOT
+    # relaunch it into a restart loop after a `brew upgrade` double-start. The winner's
+    # recorded pid/config in agent.lock must survive the loser's failed attempt.
+    import os
+
+    import pytest as _pytest
+
+    from spacelabel.agent.app import _acquire_single_instance_lock
+
+    config_path = tmp_path / "config.json"
+    winner = _acquire_single_instance_lock(config_path)  # holds the lock + records our pid
+    try:
+        recorded_before = (tmp_path / "agent.lock").read_text()
+        assert recorded_before.startswith(f"{os.getpid()}\n")  # winner recorded its pid
+
+        # A second acquire (a distinct open file description) contends and, after the
+        # brief retry window, must raise SystemExit(0) -- not 1.
+        with _pytest.raises(SystemExit) as excinfo:
+            _acquire_single_instance_lock(config_path)
+        assert excinfo.value.code == 0
+
+        # The loser opened agent.lock with "a+" and never truncated, so the winner's
+        # recorded pid/config line is left intact for `spacelabel status`.
+        assert (tmp_path / "agent.lock").read_text() == recorded_before
+    finally:
+        winner.close()  # release the advisory lock
+
+
 def test_topology_signature_detects_reorder_create_delete():
     from spacelabel.agent.app import _topology_signature
     from spacelabel.model import Space
