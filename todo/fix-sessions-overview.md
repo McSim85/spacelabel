@@ -11,7 +11,7 @@ Phase-6 verification (`docs/VERIFICATION.md`, verdict **PASS**) opened backlog i
 | ✅ [fix-multidisplay-ordinal.md](fix-multidisplay-ordinal.md) | **O + V** *(done 2026-06-24)* | **high** · Opus 4.8 | `labeling.py` `switching.py` `app.py` `prefs.py` (not `menubar.py`) |
 | ✅ [fix-stale-accessibility-grant.md](fix-stale-accessibility-grant.md) | **L** *(done 2026-06-24)* | **high** · Opus 4.8 | `switching.py` `app.py` `store.py` |
 | ✅ [fix-overlay-behavior.md](fix-overlay-behavior.md) | **Z + P + Q** *(done 2026-06-24)* | medium · Sonnet 4.6 | `overlay.py` `app.py` `store.py` `prefs.py` |
-| [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
+| ✅ [fix-prefs-menubar-ux.md](fix-prefs-menubar-ux.md) | **T + U + W + J** *(done 2026-06-25)* | medium · Sonnet 4.6 | `prefs.py` `app.py` `menubar.py` |
 | [fix-cli-polish.md](fix-cli-polish.md) | **K + M + N + Y** | low · Sonnet 4.6 | `cli.py` `packaging/py2app/launcher.py` |
 | [wallpaper-redesign.md](wallpaper-redesign.md) | **R + S** | **high (design)** · Opus 4.8 | `wallpaper.py` |
 | [remove-pipx.md](remove-pipx.md) | — | medium · Sonnet 4.6 | `install.py` tests docs |

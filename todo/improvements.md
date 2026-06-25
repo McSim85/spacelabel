@@ -411,7 +411,7 @@ Severity: **low–medium** (UX/observability; changes the documented status cont
 
 ---
 
-### J. Menu-bar dropdown + Preferences toggle for click-to-switch  *(Max, 2026-06-22)*
+### J. Menu-bar dropdown + Preferences toggle for click-to-switch  *(Max, 2026-06-22)* **✅ DONE (2026-06-24, PR fix/prefs-menubar-ux)**
 
 **Context:**
 Click-to-switch is enable-only via the CLI (`config set menubar.click_to_switch true/false`). The
@@ -571,13 +571,14 @@ This is a **foundational redesign of wallpaper mode**, not a quick fix → its o
 
 ---
 
-### T. Preferences / color-picker window placement + can't re-surface when hidden  *(Max, 2026-06-23 — §D)*
+### T. Preferences / color-picker window placement + can't re-surface when hidden  *(Max, 2026-06-23 — §D)* **✅ DONE (2026-06-24, PR fix/prefs-menubar-ux)** — hardware-pending
+
 Two window-management UX gaps in the accessory app:
 - **Placement:** the Preferences window (and the NSColorPanel from the Color column) open at the **bottom-left of the left display**. Should open **centered on the active (menu-bar-owning) display** by default (`center()` relative to the active `NSScreen`).
 - **Re-surface:** because the agent is an `NSApplicationActivationPolicyAccessory` app (no Dock icon, no Cmd+Tab entry), a Preferences window **hidden behind other windows can't be found again**. Make re-selecting **Preferences…** (and the menu open) **bring the existing window to front** (`makeKeyAndOrderFront:` + `NSApp.activate(ignoringOtherApps:true)`), and consider a transient activation policy while a window is open so it appears in the app switcher.
 Read first: `agent/prefs.py` (`show()`/window setup), `agent/app.py` (`openPreferences_`, accessory policy `:178`). Severity: **low–medium** (UX; the "can't find the window" one is genuinely confusing).
 
-### U. Preferences inline-edit bugs — paste shortcut + no live revert on clear  *(Max, 2026-06-23 — §D / D1)*
+### U. Preferences inline-edit bugs — paste shortcut + no live revert on clear  *(Max, 2026-06-23 — §D / D1)* **✅ DONE (2026-06-24, PR fix/prefs-menubar-ux)** — hardware-pending
 - **Cmd+V/Cut/Copy don't work** in the Label edit field (right-click → Paste works). The accessory app has **no Edit menu**, so the standard Cmd-C/V/X key equivalents aren't wired to the field editor. Fix: add a minimal **Edit menu** (Undo/Cut/Copy/Paste/Select All with standard selectors+key equivalents) to the app, or install the standard responder-chain edit items so the field editor receives them.
 - **Clearing a label doesn't live-revert the outline** to `Desktop N` — the row stays stale until Preferences is reopened (`refresh()` not triggered after an empty commit → `clear_label`). Fix: refresh the outline row after a commit/clear (the `controlTextDidEndEditing_`/`_commit` path, `prefs.py:376`).
 Read first: `agent/prefs.py` (`_commit`, the outline editing), `agent/app.py` (menu construction). Severity: **low** (UX).
@@ -588,7 +589,7 @@ Read first: `agent/prefs.py` (`_commit`, the outline editing), `agent/app.py` (m
 
 A Space shown as **"Desktop 3"** in the Preferences outline appears as **"4"** in the menu-bar pill. The two surfaces derive the fallback ordinal from different enumerations (one likely per-display / store-ordered, the other the global live `assign_ordinals`). They must agree. **Same root family as item O** (cross-display ordinal). Read first: `labeling.assign_ordinals`/`title_for`/`pill_text`, `agent/prefs.py` (how it numbers), `agent/menubar.py` (pill number), DECISIONS §6.1. Severity: **low–medium** (confusing inconsistency; also a clue for O).
 
-### W. Menu-bar mode OFF shows an empty status item instead of the `square.dashed` icon  *(Max, 2026-06-23 — §D / B6)*
+### W. Menu-bar mode OFF shows an empty status item instead of the `square.dashed` icon  *(Max, 2026-06-23 — §D / B6)* **✅ DONE (2026-06-24, PR fix/prefs-menubar-ux)** — hardware-pending
 Turning **Menu-bar title OFF** leaves an **empty quadrant** in the menu bar rather than the documented neutral **`square.dashed` SF Symbol** + "menu-bar label off" accessibility label (plan B6 / `menubar.py:449` `set_inactive`). Investigate why `set_inactive` isn't rendering the symbol (possibly the buttons-row view still occupies the item, or the SF Symbol image isn't applied). Read first: `agent/menubar.py` `set_inactive`, `agent/app.py` menubar-mode toggle + buttons-row interaction. Severity: **low** (cosmetic, but looks broken).
 
 ### Y. CLI table coloring ignores `NO_COLOR` on a TTY  *(Max, 2026-06-23 — H18/A18)*

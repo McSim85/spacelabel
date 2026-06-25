@@ -400,6 +400,7 @@ class AppDelegate(NSObject):
             NSApplication.sharedApplication().setActivationPolicy_(
                 NSApplicationActivationPolicyAccessory
             )
+            self._install_edit_menu()
             self._config = self._load_config()
             self._labels = self._load_labels()
             self._build_surfaces()
@@ -419,6 +420,52 @@ class AppDelegate(NSObject):
             AppHelper.stopEventLoop()
 
     # -- construction -----------------------------------------------------------
+
+    @objc.python_method
+    def _install_edit_menu(self) -> None:
+        """Add a minimal Edit menu so Cmd+C/V/X/Z/A work in NSTextField fields (item U).
+
+        An accessory app has no visible menu bar, but AppKit still processes the main
+        menu's key equivalents — which is what routes Cmd+V to the field editor.
+        Appends to an existing main menu rather than replacing it so any entries
+        AppHelper or AppKit already installed are preserved. Targets are nil so
+        actions dispatch through the standard responder chain.
+
+        Called only from :meth:`applicationDidFinishLaunching_` (NSApp guaranteed
+        ready). Uses the module-level ``NSApplication`` import to avoid calling
+        ``sharedApplication()`` before AppKit is fully initialized.
+        """
+        from AppKit import NSApp, NSMenu
+
+        if NSApp is None:
+            log.warning("_install_edit_menu: NSApp not yet ready; Edit menu skipped")
+            return
+        app = NSApp
+        main_menu = app.mainMenu()
+        if main_menu is None:
+            main_menu = NSMenu.alloc().init()
+            NSApp.setMainMenu_(main_menu)
+
+        # Idempotent: if an Edit menu is already present (e.g. AppHelper installed one),
+        # don't add a second one with duplicate key equivalents.
+        if main_menu.itemWithTitle_("Edit") is not None:
+            return
+
+        edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
+        edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+        for title, action, key in (
+            ("Undo", "undo:", "z"),
+            ("Redo", "redo:", "Z"),
+            ("Cut", "cut:", "x"),
+            ("Copy", "copy:", "c"),
+            ("Paste", "paste:", "v"),
+            ("Select All", "selectAll:", "a"),
+        ):
+            edit_menu.addItem_(
+                NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, key)
+            )
+        edit_item.setSubmenu_(edit_menu)
+        main_menu.addItem_(edit_item)
 
     @objc.python_method
     def _build_surfaces(self) -> None:
@@ -504,6 +551,19 @@ class AppDelegate(NSObject):
             entry.setRepresentedObject_(mode_name)
             entry.setState_(_STATE_ON if config.modes.get(mode_name) else _STATE_OFF)
             items.append(entry)
+
+        # "Switch to Space on click" toggle: shown whenever the menu-bar mode is on
+        # so the setting is always reachable even when the buttons row is off (item J).
+        if config.modes.get("menubar"):
+            cts_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Switch to Space on click", "toggleClickToSwitch:", ""
+            )
+            cts_item.setTarget_(self)
+            cts_item.setState_(_STATE_ON if config.menubar.click_to_switch else _STATE_OFF)
+            # Disable (gray) when the buttons row is off: there are no pills to capture
+            # clicks, so the toggle would have no immediate effect (item J).
+            cts_item.setEnabled_(bool(config.menubar.show_buttons_row))
+            items.append(cts_item)
 
         # Surface WHY click-to-switch is off when it is enabled but unusable, so the
         # opt-in never looks active yet silently no-ops (DECISIONS.md 9.5).
@@ -1176,7 +1236,6 @@ class AppDelegate(NSObject):
 
         if self._prefs is None:
             self._prefs = PreferencesWindow(self._config_path)
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         self._prefs.show()
 
     def openClickToSwitchSettings_(self, sender: object) -> None:  # noqa: N802
@@ -1232,6 +1291,23 @@ class AppDelegate(NSObject):
         self._config = self._load_config()
         self._config_mtime = _mtime(self._paths.config_file)
         self._refresh()
+
+    def toggleClickToSwitch_(self, _sender: object) -> None:  # noqa: N802
+        """Toggle click-to-switch from the dropdown, persist it, and refresh live (item J)."""
+        config = self._require_config()
+        new_value = not config.menubar.click_to_switch
+        try:
+            store.set_config_value(self._paths, "menubar.click_to_switch", str(new_value))
+        except (OSError, store.StoreError) as exc:
+            log.error("could not toggle click-to-switch: %s", exc)
+            return
+        self._config = self._load_config()
+        self._config_mtime = _mtime(self._paths.config_file)
+        self._refresh()
+        # Sync an open Prefs window so its checkbox reflects the new state immediately
+        # (refresh() only updates the Spaces tree, not the settings strip; item J P3).
+        if self._prefs is not None:
+            self._prefs.sync_cts_state()
 
     @objc.python_method
     def _rename_space(self, uuid: str) -> None:

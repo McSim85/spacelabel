@@ -47,11 +47,34 @@ from spacelabel import labeling, store
 from spacelabel.agent.geometry import ANCHORS
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from spacelabel.model import Display, Label, Space
 
 __all__ = ["PreferencesWindow"]
 
 log = logging.getLogger(__name__)
+
+
+def _center_on_main_screen(window: object) -> None:
+    """Position ``window`` at the centre of the menu-bar-owning screen (item T).
+
+    ``NSWindow.center()`` centres on *the window's current screen*, which may differ
+    from the active (menu-bar-owning) screen after a monitor layout change or a
+    multi-display move. This helper always targets ``NSScreen.mainScreen()``.
+    """
+    from AppKit import NSScreen
+
+    screen = NSScreen.mainScreen()
+    if screen is None:
+        window.center()
+        return
+    sf = screen.visibleFrame()
+    wf = window.frame()
+    x = float(sf.origin.x) + (float(sf.size.width) - float(wf.size.width)) / 2.0
+    y = float(sf.origin.y) + (float(sf.size.height) - float(wf.size.height)) / 2.0
+    window.setFrameOrigin_((x, y))
+
 
 #: Column identifiers.
 _COL_LABEL = "label"
@@ -131,6 +154,13 @@ class _LabelColorWell(NSColorWell):
         self._space_uuid = ""
         return self
 
+    def activate_(self, exclusive: bool) -> None:
+        """Center the shared NSColorPanel on the active screen before showing it (item T)."""
+        from AppKit import NSColorPanel
+
+        _center_on_main_screen(NSColorPanel.sharedColorPanel())
+        objc.super(_LabelColorWell, self).activate_(exclusive)
+
     @objc.python_method
     def set_space_uuid(self, uuid: str) -> None:
         """Bind the Space UUID this well edits."""
@@ -191,7 +221,16 @@ class PrefsDataSource(NSObject):
         # change (view-based fields can fire controlTextDidEndEditing on teardown/
         # reload, which would otherwise persist the "Desktop N" placeholder).
         self._original: dict[int, str] = {}
+        # Called (deferred, to avoid re-entrancy in field-editor teardown) after a
+        # successful commit so the outline live-reverts cleared labels to "Desktop N"
+        # instead of showing the stale text until the window is reopened (item U).
+        self._on_commit: Callable[[], None] | None = None
         return self
+
+    @objc.python_method
+    def set_on_commit(self, callback: Callable[[], None]) -> None:
+        """Wire the post-commit callback that refreshes the outline (item U)."""
+        self._on_commit = callback
 
     @objc.python_method
     def set_nodes(
@@ -481,6 +520,18 @@ class PrefsDataSource(NSObject):
                 store.clear_label(self._paths, uuid)
         except (OSError, store.StoreError) as exc:
             log.warning("failed to commit %s edit for %s: %s", kind, uuid, exc)
+            return
+        # Defer the outline refresh to the next run-loop cycle: calling reloadData()
+        # directly from inside controlTextDidEndEditing_ (while the field editor is
+        # still tearing down) is an AppKit re-entrancy hazard (item U).
+        # NSOperationQueue.mainQueue() guarantees the block runs after the current
+        # call stack unwinds — a harder guarantee than NSTimer(0) which can fire in
+        # the same run-loop turn on some paths.
+        if self._on_commit is not None:
+            cb = self._on_commit
+            from Foundation import NSOperationQueue
+
+            NSOperationQueue.mainQueue().addOperationWithBlock_(lambda: cb())
 
 
 class PreferencesWindow:
@@ -499,13 +550,28 @@ class PreferencesWindow:
         self._data_source: PrefsDataSource | None = None
         self._target: _PruneTarget | None = None
         self._controls: _ControlsTarget | None = None
+        self._cts_button: object | None = None  # NSButton for "Click to switch" state sync
 
     def show(self) -> None:
-        """Build the window on first call, refresh its contents, and order front."""
+        """Build the window, refresh, center on the active screen, and order front (item T).
+
+        Centers on every open (not just first build) so the window follows the
+        menu-bar-owning screen after a monitor layout change. Activate immediately
+        before ``makeKeyAndOrderFront_`` so the window is both key and front.
+        """
         if self._window is None:
             self._build()
         self.refresh()
         if self._window is not None:
+            _center_on_main_screen(self._window)  # follow the active screen (item T)
+            # Re-centre a stranded color panel: if the panel is already open on another
+            # display, reopening Preferences must move it to the current active screen.
+            from AppKit import NSApplication, NSColorPanel
+
+            panel = NSColorPanel.sharedColorPanel()
+            if panel.isVisible():
+                _center_on_main_screen(panel)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             self._window.makeKeyAndOrderFront_(None)
 
     def _build(self) -> None:
@@ -530,10 +596,12 @@ class PreferencesWindow:
         outline.setOutlineTableColumn_(outline.tableColumnWithIdentifier_(_COL_LABEL))
 
         data_source = PrefsDataSource.alloc().init()
+        data_source.set_on_commit(self.refresh)  # live-revert cleared labels (item U)
         outline.setDataSource_(data_source)
         outline.setDelegate_(data_source)
 
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0.0, 40.0, 720.0, 380.0))
+        # Height 350 (was 380): 30 pt freed for the click-to-switch row 3 (item J).
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0.0, 40.0, 720.0, 350.0))
         scroll.setDocumentView_(outline)
         scroll.setHasVerticalScroller_(True)
         scroll.setAutoresizingMask_(18)  # width | height resizable
@@ -594,6 +662,23 @@ class PreferencesWindow:
         )
         content.addSubview_(ovl_corner)
 
+        # Row 3: "Click to switch" toggle (item J; effective only when buttons row is on).
+        # Placed at y=396, 6 pt above the scroll view top (390 = 40 + 350).
+        # Tag 7: tags 1-6 are used by _MODE_CHECKBOXES (6 = overlay.hide_on_unlabeled).
+        cts_tag = 7
+        target.register_tag(cts_tag, "menubar.click_to_switch")
+        cts = NSButton.alloc().initWithFrame_(NSMakeRect(16.0, 396.0, 130.0, 20.0))
+        cts.setButtonType_(NSButtonTypeSwitch)
+        cts.setTitle_("Click to switch")
+        cts.setState_(_state(bool(store.get_config_value(config, "menubar.click_to_switch"))))
+        cts.setTag_(cts_tag)
+        cts.setTarget_(target)
+        cts.setAction_("toggleCheckbox:")
+        cts.sizeToFit()
+        cts.setFrameOrigin_((16.0, 396.0))
+        content.addSubview_(cts)
+        self._cts_button = cts  # kept for state sync after dropdown toggles (item J)
+
     def _add_label(self, content: object, text: str, x: float, y: float, width: float) -> None:
         """Add a static text label to the settings strip."""
         field = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, width, 20.0))
@@ -629,6 +714,20 @@ class PreferencesWindow:
             store.set_config_value(paths, key, value)
         except (OSError, store.StoreError) as exc:
             log.warning("could not set %s=%s from prefs: %s", key, value, exc)
+
+    def sync_cts_state(self) -> None:
+        """Sync the click-to-switch checkbox to the current config (item J, P3).
+
+        Called by the dropdown ``toggleClickToSwitch_`` action so an open Preferences
+        window reflects the new state without requiring a close/reopen.
+        """
+        if self._cts_button is None:
+            return
+        paths = store.StorePaths.resolve(self._config_path)
+        config = store.load_config(paths)
+        self._cts_button.setState_(
+            _state(bool(store.get_config_value(config, "menubar.click_to_switch")))
+        )
 
     def _make_column(
         self, identifier: str, title: str, width: float, *, editable: bool

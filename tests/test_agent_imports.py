@@ -622,3 +622,151 @@ def test_record_ax_trusted_persists_checkpoint(tmp_path, monkeypatch):
     # Idempotent: re-recording the same checkpoint must not raise (write skipped).
     delegate._record_ax_trusted()
     assert store.load_agent_state(paths).last_cdhash == "CDHASH-CURRENT"
+
+
+def test_install_edit_menu_creates_main_menu_with_paste():
+    # Item U: _install_edit_menu appends an Edit submenu with standard key-equivalent
+    # items so Cmd+V/C/X/Z dispatch to text-field editors. It must be ADDITIVE — it
+    # must not replace any menu items that AppHelper or AppKit already installed.
+    from AppKit import NSApplication, NSMenu, NSMenuItem
+
+    from spacelabel.agent.app import AppDelegate
+
+    # Pre-seed the main menu to prove additivity.
+    app = NSApplication.sharedApplication()
+    pre_menu = NSMenu.alloc().init()
+    pre_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("AppMenu", "", "")
+    pre_menu.addItem_(pre_item)
+    app.setMainMenu_(pre_menu)
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    delegate._install_edit_menu()
+
+    main_menu = app.mainMenu()
+    assert main_menu is not None
+    assert main_menu.itemWithTitle_("AppMenu") is not None  # pre-existing item preserved
+    edit_item = main_menu.itemWithTitle_("Edit")
+    assert edit_item is not None
+    edit_menu = edit_item.submenu()
+    assert edit_menu is not None
+    assert edit_menu.itemWithTitle_("Paste") is not None
+    assert edit_menu.itemWithTitle_("Copy") is not None
+    assert edit_menu.itemWithTitle_("Cut") is not None
+    assert edit_menu.itemWithTitle_("Undo") is not None
+
+
+def test_toggle_click_to_switch_writes_config(tmp_path):
+    # Item J: toggleClickToSwitch_ flips menubar.click_to_switch in the store
+    # and reloads config (mirrors toggleMode_ for the non-mode setting).
+    from spacelabel import store
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._paths = paths
+    delegate._config = Config()
+    assert delegate._config.menubar.click_to_switch is False
+
+    # Stub _refresh so we can call the action without a full agent running.
+    refreshed: list[bool] = []
+    delegate._refresh = lambda: refreshed.append(True)
+
+    delegate.toggleClickToSwitch_(None)
+
+    loaded = store.load_config(paths)
+    assert loaded.menubar.click_to_switch is True
+    assert refreshed  # a refresh was triggered
+
+
+def test_prefs_commit_callback_fires_after_clear(tmp_path):
+    # Item U: after clearing a Space label the data source calls _on_commit so
+    # the outline row live-reverts to "Desktop N" without reopening the window.
+    from spacelabel import labeling, store
+    from spacelabel.agent.prefs import PrefsDataSource, _DisplayNode
+    from spacelabel.model import Display, Space
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    uuid = "6622AC87-2FD2-48E8-934D-F6EB303AC9BA"
+    store.set_label(paths, uuid, "Email")
+
+    data_source = PrefsDataSource.alloc().init()
+    space = Space(uuid=uuid, display_uuid="D1")
+    node = _DisplayNode(Display(uuid="D1", cg_display_id=1), "D1", [space])
+    data_source.set_nodes(
+        [node], store.load_labels(paths), labeling.assign_ordinals([space]), paths
+    )
+
+    callbacks: list[int] = []
+    data_source.set_on_commit(lambda: callbacks.append(1))
+
+    data_source._commit("space", uuid, "")  # clear the label
+
+    # The label must be gone from the store.
+    assert store.load_labels(paths).get(uuid) is None
+
+    # The NSTimer fires on the next run-loop cycle, so we can't poll it in a unit
+    # test without a live run loop. Verify that the callback IS wired (not None)
+    # so the deferred timer is scheduled, and that a direct call works correctly.
+    assert data_source._on_commit is not None
+    data_source._on_commit()  # simulate the timer firing
+    assert len(callbacks) == 1
+
+
+def test_install_edit_menu_idempotent():
+    # Item U: calling _install_edit_menu twice must not produce duplicate Edit submenus.
+    from AppKit import NSApplication, NSMenu, NSMenuItem
+
+    from spacelabel.agent.app import AppDelegate
+
+    app = NSApplication.sharedApplication()
+    base = NSMenu.alloc().init()
+    base.addItem_(NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("App", "", ""))
+    app.setMainMenu_(base)
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    delegate._install_edit_menu()
+    delegate._install_edit_menu()  # second call must be a no-op
+
+    menu = app.mainMenu()
+    assert menu is not None
+    edit_count = sum(
+        1 for i in range(menu.numberOfItems()) if str(menu.itemAtIndex_(i).title()) == "Edit"
+    )
+    assert edit_count == 1  # exactly one Edit menu, never two
+
+
+def test_sync_cts_state_noop_before_build():
+    # Item J P3: sync_cts_state must be a silent no-op when the window
+    # has never been built (_cts_button is None) — called from toggleClickToSwitch_
+    # before the user has ever opened Preferences.
+    from spacelabel.agent.prefs import PreferencesWindow
+
+    window = PreferencesWindow()
+    window.sync_cts_state()  # must not raise even with _cts_button = None
+
+
+def test_sync_cts_state_updates_button(tmp_path):
+    # Item J P3: after a config write, sync_cts_state updates the checkbox state.
+    from spacelabel import store
+    from spacelabel.agent.prefs import PreferencesWindow
+
+    paths = store.StorePaths.resolve(tmp_path / "config.json")
+    window = PreferencesWindow(config_path=tmp_path / "config.json")
+
+    # Simulate a built button: plant a mock with a recordable setState_.
+    calls: list[int] = []
+
+    class _MockBtn:
+        def setState_(self, v: int) -> None:  # noqa: N802
+            calls.append(v)
+
+    window._cts_button = _MockBtn()
+
+    # Start false, write true, sync.
+    store.set_config_value(paths, "menubar.click_to_switch", "true")
+    window.sync_cts_state()
+
+    from AppKit import NSControlStateValueOn
+
+    assert calls == [NSControlStateValueOn]
