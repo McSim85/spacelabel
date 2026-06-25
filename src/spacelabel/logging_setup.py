@@ -1,6 +1,6 @@
 """Logging configuration — the one place handlers are attached.
 
-Per DESIGN.md §8.2 and the stdlib logging HOWTO: library/module code only ever
+Per the stdlib logging HOWTO: library/module code only ever
 calls ``logging.getLogger(__name__)`` and never adds handlers or calls
 ``basicConfig``. This module exposes :func:`setup_logging`, the single
 configurator, called exactly once at the entry point (CLI or agent).
@@ -55,7 +55,7 @@ class _ColorFormatter(logging.Formatter):
         return f"{color}{message}{_RESET}" if color else message
 
 
-#: Rotating-file sink limits for the agent (DESIGN.md §8.2 / INTERFACE contract).
+#: Rotating-file sink limits for the agent (INTERFACE contract).
 _AGENT_LOG_MAX_BYTES = 1_000_000
 _AGENT_LOG_BACKUP_COUNT = 3
 
@@ -224,7 +224,7 @@ def setup_logging(
     try:
         # mkdir AND opening the rotating file sink can each raise OSError (missing
         # dir, permissions, read-only volume); both must degrade to stderr, not
-        # crash the agent (no-silent-except recovery, DESIGN.md §8.2).
+        # crash the agent (no-silent-except recovery).
         target_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.handlers.RotatingFileHandler(
             target_dir / "agent.log",

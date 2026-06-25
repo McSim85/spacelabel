@@ -1,11 +1,11 @@
 """Command-line interface — the single ``spacelabel`` console entry point.
 
-A :mod:`click` group dispatches every subcommand (DESIGN.md §8.1). The long-lived
+A :mod:`click` group dispatches every subcommand. The long-lived
 menu-bar agent is the ``agent`` subcommand (what the LaunchAgent runs); every
 other subcommand is a one-shot action sharing the read/store layers. ``main()``
 is the ``console_scripts`` entry point declared in ``pyproject.toml``.
 
-Two invariants make the surface scriptable (DESIGN §8.1, DECISIONS 9.1/9.2):
+Two invariants make the surface scriptable:
 stdout carries machine-readable data only (TSV by default, ``--json`` opt-in)
 while every diagnostic, header, and progress line goes to stderr; and exit codes
 are stable (``0`` ok, ``1`` runtime error, ``2`` usage error, ``3`` =
@@ -395,7 +395,7 @@ def status(ctx: click.Context, as_json: bool) -> None:
     its own lock and logs; check it with 'status --config <file>' -- bare status
     cannot enumerate agents for arbitrary config paths.
     """
-    # Exit-code contract: DECISIONS.md §9. Cross-config foreground agent: review F3.
+    # Exit-code contract. Cross-config foreground agent: review F3.
     from spacelabel import install as install_mod
 
     app_ctx: AppContext = ctx.obj
@@ -479,7 +479,7 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
             label = labels.get(space.uuid) if space.uuid else None
             # A notes-only entry (Label.text == "") is NOT a label — report it as
             # unlabeled (null), so `note add` on an unlabeled Space never makes it
-            # look labeled (DECISIONS.md 9.10).
+            # look labeled.
             label_text = label.text if (label is not None and label.text) else None
             records.append(
                 {
@@ -488,7 +488,7 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
                     "display_name": display_names.get(space.display_uuid),
                     "label": label_text,
                     # Task-queue size, so a notes-only Space is discoverable here
-                    # rather than only via `note list <uuid>` (DECISIONS.md 9.10).
+                    # rather than only via `note list <uuid>`.
                     "notes": len(label.notes) if label is not None else 0,
                     "current": space.is_current,
                     "labelable": bool(space.uuid),
@@ -503,7 +503,7 @@ def spaces(ctx: AppContext, as_json: bool, active_only: bool) -> None:
         if space.uuid:
             label = labels.get(space.uuid)
             uuid_cell = space.uuid
-            # Empty text == notes-only == unlabeled (DECISIONS.md 9.10), not a blank label.
+            # Empty text == notes-only == unlabeled, not a blank label.
             label_cell = label.text if (label is not None and label.text) else "(unlabeled)"
             notes_count = len(label.notes) if label is not None else 0
         else:
@@ -578,7 +578,7 @@ def label_list(ctx: AppContext, as_json: bool) -> None:
     Notes-only entries (a task queue on an unlabeled Space) are omitted here --
     they carry no label; surface them via 'note list'.
     """
-    # Notes-only Space design: DECISIONS.md §9.10.
+    # Notes-only Space design.
     paths = _paths(ctx)
     labels = {uuid: entry for uuid, entry in store.load_labels(paths).items() if entry.text}
     if as_json:
@@ -668,7 +668,7 @@ def _load_notes(paths: store.StorePaths, uuid: str) -> list[model.Note]:
     Used by the read-only ``note list``; the mutating commands validate the index
     inside the store's locked read-modify-write (see :class:`store.NoteIndexError`)
     rather than pre-reading here, so a corrupt store or a concurrent edit can't
-    misclassify the exit code (DECISIONS.md 9.1/9.10).
+    misclassify the exit code.
     """
     entry = store.load_labels(paths).get(labeling.canonical_uuid(uuid))
     return entry.notes if entry is not None else []
@@ -703,7 +703,7 @@ def note_list(ctx: AppContext, target: str | None, as_json: bool) -> None:
     notes-only queue stays discoverable even when its Space is not live (spaces
     shows only live Spaces). stdout = data.
     """
-    # Notes-only Space design: DECISIONS.md §9.10.
+    # Notes-only Space design.
     paths = _paths(ctx)
     if target is None:
         entries = {u: e for u, e in store.load_labels(paths).items() if e.notes}
@@ -1041,7 +1041,7 @@ def _resolve_target(target: str, *, validate: bool = False) -> tuple[str, str | 
     literal that is not a well-formed UUID (e.g. a transposed ``note add list
     current``) as a usage error. The operate/read paths (``clear``/``done``/``list``)
     pass ``validate=False`` so a **pre-existing** non-UUID key (a legacy typo/orphan
-    like ``list``) can still be inspected or removed from the CLI (DECISIONS.md 9.10).
+    like ``list``) can still be inspected or removed from the CLI.
     """
     import spacelabel.platform.cgs as cgs_mod
 

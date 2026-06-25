@@ -3,7 +3,7 @@
 No I/O and no PyObjC — these turn ``Space`` objects plus the UUID→``Label`` store
 into the strings every surface displays (menu-bar title, pill text, "Desktop N"
 fallback) and identify orphaned labels. Kept pure so they are unit-testable
-without a WindowServer (DESIGN.md §12 testing reality).
+without a WindowServer.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ __all__ = [
 def is_labelable(space: Space) -> bool:
     """Return ``True`` if ``space`` can carry a user label (has a persistent UUID).
 
-    Only spaces with a real macOS-assigned UUID are labelable (DESIGN.md §3.4).
+    Only spaces with a real macOS-assigned UUID are labelable.
     Spaces with ``uuid=""`` (a display's single default no-UUID desktop) are ordinary
     ``type==0`` user desktops that ``parse_spaces`` includes when
     ``include_unlabelable=True`` but that cannot be labeled — the overlay/HUD should
@@ -74,7 +74,7 @@ def assign_ordinals(spaces: Iterable[Space]) -> dict[int, int]:
 
     The ordinal is the "Desktop N" number shown when a Space has no label and the
     pill fallback; it mirrors the Mission Control / "Switch to Desktop N" ordering
-    (DESIGN.md §6.1, DECISIONS.md 9.5). Ordinals shift on reorder, so callers resolve
+    Ordinals shift on reorder, so callers resolve
     them live and never persist them.
 
     **This is the single ordinal source of truth shared by the pills, Preferences and
@@ -100,7 +100,7 @@ def ordinal_for_uuid(spaces: Iterable[Space], uuid: str) -> int | None:
 
     Built from a LIVE enumeration at lookup time -- ordinals shift on reorder, so
     click-to-switch resolves the clicked Space's UUID to its current ordinal here and
-    never caches the map (DECISIONS.md 9.5). Matches the numbering of
+    never caches the map. Matches the numbering of
     :func:`assign_ordinals`. An empty ``uuid`` never matches (an unlabelable Space is
     not a switch target).
     """
@@ -133,7 +133,7 @@ def title_for(
     """Return the menu-bar/HUD title for a Space.
 
     The stored label (truncated to ``max_length``) if present and non-empty, else
-    the ``Desktop {ordinal}`` fallback so the surface is never blank (DESIGN.md §6.1).
+    the ``Desktop {ordinal}`` fallback so the surface is never blank.
     """
     label = labels.get(space.uuid)
     if label is not None and label.text.strip():
@@ -150,8 +150,8 @@ def pill_text(
 ) -> str:
     """Return the buttons-row pill text: leading letter(s) of the label, else the number.
 
-    ``chars`` (1..2) leading non-space characters of the label when labelled
-    (DESIGN.md §6.1 / DECISIONS.md 9.4); the Space ``ordinal`` when unlabelled.
+    ``chars`` (1..2) leading non-space characters of the label when labelled;
+    the Space ``ordinal`` when unlabelled.
     """
     label = labels.get(space.uuid)
     if label is not None and label.text.strip():
@@ -163,8 +163,7 @@ def pill_text(
 def find_orphans(labels: Mapping[str, Label], live_uuids: Iterable[str]) -> list[str]:
     """Return stored label UUIDs absent from ``live_uuids``, preserving store order.
 
-    These are the orphans ``label prune`` removes; retained by default until then
-    (DECISIONS.md 5.6).
+    These are the orphans ``label prune`` removes; retained by default until then.
     """
     live = set(live_uuids)
     return [uuid for uuid in labels if uuid not in live]

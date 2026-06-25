@@ -1,13 +1,13 @@
-"""Menu-bar item (primary display mode) -- raw ``NSStatusItem`` (DESIGN.md §6.1).
+"""Menu-bar item (primary display mode) -- raw ``NSStatusItem``.
 
-``rumps`` is rejected (DECISIONS.md 2.1): it wraps these same ~15 calls, would
+``rumps`` is rejected: it wraps these same ~15 calls, would
 seize ``NSApplication``/run-loop ownership, and is poorly packaged (sdist-only,
 no PyObjC deps). Tahoe
 caveat: "process alive" is not "icon visible" -- run exactly one instance, don't
 hardcode contrast against the transparent Liquid-Glass bar, and surface a
 non-menu-bar fallback.
 
-The buttons row (DECISIONS.md 9.4 / docs/UI.md §2.2) is ONE status item hosting
+The buttons row is ONE status item hosting
 one custom CG-drawn view: pills show ``labeling.pill_text`` (leading letter(s)
 of the label, else the Space number), the current Space per display is marked by
 alpha (1.0 vs ~0.4) -- never color -- and physical displays are split L-to-R by a
@@ -45,7 +45,7 @@ __all__ = ["ButtonsRowView", "MenuBarItem", "PillModel"]
 log = logging.getLogger(__name__)
 
 #: Layout constants for the optional buttons row (points). Sizes are deliberate,
-#: not display-keyed -- the menu bar is a fixed-height surface (DESIGN.md §6.1).
+#: not display-keyed -- the menu bar is a fixed-height surface.
 _PILL_HEIGHT = 16.0
 _PILL_MIN_WIDTH = 18.0
 _PILL_PAD_X = 6.0
@@ -63,7 +63,7 @@ class PillModel:
 
     A plain value object (no PyObjC) so the row's per-display layout is easy to
     assemble in :meth:`MenuBarItem.set_buttons_row` and unit-test in isolation. The
-    clicked-pill -> Space identity used by click-to-switch hit-testing (DECISIONS.md 9.5)
+    clicked-pill -> Space identity used by click-to-switch hit-testing
     is the ``uuid`` for a labelable Space, or ``(display_uuid, id64)`` for the default
     unlabelable Space (``uuid=""``), switched by ordinal via its stable session id (9.5
     update). ``display_uuid`` disambiguates default Spaces across displays, whose ``id64``
@@ -112,7 +112,7 @@ def _pill_layout(
     drawing (:meth:`ButtonsRowView._draw_pills`) and hit-testing
     (:func:`_pill_at_x`), so a clicked pixel resolves to the pill that was drawn
     there -- a pill must never look clickable and switch to the wrong Space
-    (DECISIONS.md 9.5). Pure arithmetic over the layout constants: unit-testable
+    Pure arithmetic over the layout constants: unit-testable
     without a WindowServer.
     """
     cy = (height - _PILL_HEIGHT) / 2.0
@@ -155,7 +155,7 @@ def _preferred_width(groups: Sequence[Sequence[PillModel]]) -> float:
 
 
 class ButtonsRowView(NSView):
-    """Custom flat view drawing the per-display pill row (DECISIONS.md 9.4).
+    """Custom flat view drawing the per-display pill row.
 
     One view for the whole row (never N status items): pills are laid out
     left-to-right grouped by physical display, displays separated by a thin
@@ -163,7 +163,7 @@ class ButtonsRowView(NSView):
 
     The view is always the hit target (:meth:`hitTest_` always delegates to super) so
     that tooltip tracking areas fire regardless of click-to-switch state. When
-    click-to-switch is enabled (DECISIONS.md 9.5) a pill click resolves to its Space
+    click-to-switch is enabled, a pill click resolves to its Space
     UUID; when disabled, every click opens the status menu so Preferences/Quit stay
     reachable. Right-click always opens the menu.
     """
@@ -229,7 +229,7 @@ class ButtonsRowView(NSView):
 
     @objc.python_method
     def set_click_enabled(self, enabled: bool) -> None:
-        """Enable or disable pill click-to-switch (DECISIONS.md 9.5).
+        """Enable or disable pill click-to-switch.
 
         The view is always the hit target (so tooltip tracking fires regardless).
         When disabled, :meth:`mouseDown_` opens the menu instead of switching Spaces.
@@ -246,7 +246,7 @@ class ButtonsRowView(NSView):
         return False
 
     def hitTest_(self, point: object) -> object:  # noqa: N802
-        """Return the view as hit target so tooltip tracking areas fire (DECISIONS.md 9.5).
+        """Return the view as hit target so tooltip tracking areas fire.
 
         Previously this returned ``nil`` when click-to-switch was disabled to make the
         view mouse-transparent and let clicks reach the status button. That silently
@@ -267,7 +267,7 @@ class ButtonsRowView(NSView):
             log.warning("buttons-row draw failed: %s", exc)
 
     def mouseDown_(self, event: object) -> None:  # noqa: N802
-        """Switch to the clicked pill's Space, or open the menu (DECISIONS.md 9.5).
+        """Switch to the clicked pill's Space, or open the menu.
 
         When click-to-switch is disabled, every click opens the menu so
         Preferences/Quit stay reachable (display-only pills). When enabled, a pill
@@ -291,7 +291,7 @@ class ButtonsRowView(NSView):
         pill-resolution dispatch is unit-testable without synthesizing an NSEvent. A
         pill is a switch target when it carries a Space identity -- a ``uuid`` (labelable
         Space) or a session ``id64`` (the default unlabelable Space, switched by ordinal
-        via its stable session id, DECISIONS.md 9.5). A pill with neither (``uuid=""`` and
+        via its stable session id. A pill with neither (``uuid=""`` and
         ``id64=0``) opens the menu like a click off any pill, never a dead click.
         """
         pills, _, _ = _pill_layout(self._groups, float(self.bounds().size.height))
@@ -365,7 +365,7 @@ def _pill_fill_color(hex_color: str | None) -> object:
     """Resolve a pill fill color from an optional ``#rrggbb`` string.
 
     Falls back to a neutral control-background color when no/invalid color is set;
-    color only tints the fill and never signals "current" (DECISIONS.md 9.4).
+    color only tints the fill and never signals "current".
     """
     if hex_color:
         parsed = _color_from_hex(hex_color)
@@ -394,7 +394,7 @@ class MenuBarItem:
     """The active Space's label shown as an ``NSStatusItem`` title.
 
     Title and menu are the functional minimum; the optional buttons row is drawn
-    via :class:`ButtonsRowView` when enabled (DECISIONS.md 9.4).
+    via :class:`ButtonsRowView` when enabled.
     """
 
     def __init__(self, *, show_buttons_row: bool = False) -> None:
@@ -412,7 +412,7 @@ class MenuBarItem:
         self._item.setMenu_(self._menu)
         self._row_view: ButtonsRowView | None = None
         #: Pill-click handler (Space UUID -> switch), wired by the delegate; the
-        #: menu-open handler is the item's own :meth:`_pop_up_menu` (DECISIONS.md 9.5).
+        #: menu-open handler is the item's own :meth:`_pop_up_menu`.
         self._pill_switch_handler: object | None = None
         if show_buttons_row:
             self._install_row_view()
@@ -427,7 +427,7 @@ class MenuBarItem:
         view = ButtonsRowView.alloc().initWithFrame_(frame)
         # Pills are display-only until click-to-switch enables capture: the view
         # starts with _click_enabled False, so mouseDown_ opens the menu until
-        # set_click_enabled(True) arms pill switching (DECISIONS.md 9.5).
+        # set_click_enabled(True) arms pill switching.
         button.addSubview_(view)
         self._row_view = view
         # Re-wire handlers if they were set before the row existed (runtime re-install).
@@ -451,7 +451,7 @@ class MenuBarItem:
                 button.setFrame_(NSMakeRect(0.0, 0.0, _PILL_MIN_WIDTH, 22.0))
 
     def set_pill_switch_handler(self, handler: object | None) -> None:
-        """Wire the pill-click handler (Space UUID -> switch); DECISIONS.md 9.5.
+        """Wire the pill-click handler (Space UUID -> switch).
 
         The menu-open handler is always this item's own :meth:`_pop_up_menu`, so the
         delegate only supplies the switch action. Stored so a runtime row re-install
@@ -462,7 +462,7 @@ class MenuBarItem:
             self._row_view.set_handlers(handler, self._pop_up_menu)
 
     def set_pills_clickable(self, enabled: bool) -> None:
-        """Enable/disable pill click-to-switch capture on the row view (DECISIONS.md 9.5).
+        """Enable/disable pill click-to-switch capture on the row view.
 
         When disabled (the default, and whenever switching is unavailable) the row
         ignores the mouse so clicks open the menu; the delegate toggles this when
@@ -498,7 +498,7 @@ class MenuBarItem:
 
         The status item also hosts the Preferences/Quit menu, so it must stay
         present even when the menu-bar *display* mode is disabled -- it just stops
-        reflecting the active Space (DESIGN.md §6.1 / item W).
+        reflecting the active Space (item W).
         """
         self.set_show_buttons_row(False)
         button = self._item.button()
@@ -573,7 +573,7 @@ class MenuBarItem:
         """Replace the status item's menu with the given ``NSMenuItem`` objects.
 
         The agent uses this to populate per-display Space rows and the mode
-        toggles / Preferences / Quit entries (docs/UI.md §2.3).
+        toggles / Preferences / Quit entries.
         """
         self._menu.removeAllItems()
         for item in items:

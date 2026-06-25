@@ -1,4 +1,4 @@
-"""Pure HUD/overlay geometry — fonts and the nine-anchor placement grid (DESIGN.md §9.9).
+"""Pure HUD/overlay geometry — fonts and the nine-anchor placement grid.
 
 No PyObjC: the panel modules pass in the display's ``visibleFrame`` and point size
 and consume these results, so the math is unit-testable without a WindowServer.
@@ -66,7 +66,7 @@ def short_side(size_pt: tuple[float, float]) -> float:
 
 
 def hud_font_size(size_pt: tuple[float, float]) -> int:
-    """HUD font in points: ``clamp(round(S*0.05), 18, 64)`` (DESIGN.md §9.9)."""
+    """HUD font in points: ``clamp(round(S*0.05), 18, 64)``."""
     return int(clamp(round(short_side(size_pt) * 0.05), 18, 64))
 
 
@@ -74,7 +74,7 @@ def overlay_font_size(size_pt: tuple[float, float], configured: int | str) -> in
     """Overlay font in points.
 
     A configured int is used verbatim; the literal ``"auto"`` computes
-    ``clamp(round(S*0.018), 12, 28)`` (DESIGN.md §9.9 / DECISIONS.md 9.7).
+    ``clamp(round(S*0.018), 12, 28)``.
     """
     if isinstance(configured, int):
         return configured
@@ -89,7 +89,7 @@ def overlay_max_content_extent(available: float, margin: float, pad: float) -> f
     ``margin`` from the anchored edge (:func:`anchor_origin`). Reserving the margin on
     **both** sides (``available - 2*margin - 2*pad``) keeps the panel within
     ``available`` for every anchor — an edge anchor leaves a full margin on the far
-    side, a centered one has even more room (DECISIONS.md 9.10). Clamped at ``0``: a
+    side, a centered one has even more room. Clamped at ``0``: a
     display narrower than the panel's own padding+margin can't be honored, but no real
     display is that small (the padding alone is a couple dozen points).
     """
@@ -101,7 +101,7 @@ def overlay_note_font_size(title_font: int, configured: int | str) -> int:
 
     A configured int is used verbatim; the literal ``"auto"`` sits one step
     (``_NOTE_FONT_STEP`` pt) below the resolved ``title_font`` so the task list
-    reads as smaller than the bold title, with a small floor (DECISIONS.md 9.10).
+    reads as smaller than the bold title, with a small floor.
     """
     if isinstance(configured, int):
         return configured
@@ -131,7 +131,7 @@ def anchor_origin(
 
     ``visible_frame`` is ``(vx, vy, vw, vh)`` in AppKit's bottom-left coordinate
     space (use ``NSScreen.visibleFrame`` so the panel clears menu bar/notch/Dock).
-    A centered axis ignores ``margin``; edge axes are inset by it (DESIGN.md §9.9).
+    A centered axis ignores ``margin``; edge axes are inset by it.
     """
     vx, vy, vw, vh = visible_frame
     horizontal, vertical = parse_anchor(position)

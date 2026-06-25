@@ -1,9 +1,7 @@
 """spacelabel — label macOS Spaces (virtual desktops) by their stable UUID.
 
 The label is bound to the Space's **UUID**, not its position, so it follows the
-desktop through any reorder (the core differentiator over WhichSpace). See
-``DESIGN.md`` for the architecture and ``DECISIONS.md`` for the rationale behind
-every locked choice.
+desktop through any reorder (the core differentiator over WhichSpace).
 
 The package exposes a single console entry point, ``spacelabel`` (see
 :mod:`spacelabel.cli`); the long-lived menu-bar agent is the ``spacelabel agent``
@@ -67,7 +65,7 @@ try:
 except PackageNotFoundError:  # not installed: a source clone, or the frozen .app bundle
     __version__ = _version_from_app_bundle() or "0.0.0.dev0"
 
-# Per DESIGN.md §8.2 and the stdlib logging HOWTO: a library never configures
+# Per the stdlib logging HOWTO: a library never configures
 # logging. Attach one NullHandler at import so library log records are dropped
 # until the entry point calls spacelabel.logging_setup.setup_logging().
 logging.getLogger(__name__).addHandler(logging.NullHandler())

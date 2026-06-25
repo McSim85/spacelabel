@@ -1,4 +1,4 @@
-"""NSApplication accessory app, AppDelegate, and run loop (DESIGN.md §6).
+"""NSApplication accessory app, AppDelegate, and run loop.
 
 Runs under ``NSApplicationActivationPolicyAccessory`` (set in code -- no Dock icon,
 no ``LSUIElement`` plist needed for a dev run) via
@@ -6,7 +6,7 @@ no ``LSUIElement`` plist needed for a dev run) via
 observer (debounced) to the enabled display modes, all reading the same
 UUID->label store.
 
-Single instance only (DECISIONS.md 6.5): an ``fcntl.flock`` on ``agent.lock``
+Single instance only: an ``fcntl.flock`` on ``agent.lock``
 guards against a second agent that would aggravate the Tahoe ControlCenter
 visibility loop. Config/labels live-reload via a 1.0s mtime-poll ``NSTimer``
 (a robust simplification vs kqueue), so a CLI ``label set`` is reflected live.
@@ -87,7 +87,7 @@ def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, int], ...]
     tick-to-tick by the poll so a Mission Control **reorder** — which fires neither
     ``activeSpaceDidChange`` nor ``didChangeScreenParameters`` — is detected,
     alongside create/delete (length changes). Order is preserved (no sorting): a
-    reorder permutes the tuple even when the set is identical. (DECISIONS.md §4.3.)
+    reorder permutes the tuple even when the set is identical.
 
     Field choices:
     * **No ``is_current``:** an active-Space change is the observer's job
@@ -149,7 +149,7 @@ def _is_managed_run(
 _STATE_ON = NSControlStateValueOn
 _STATE_OFF = NSControlStateValueOff
 
-#: Mode toggle rows in the dropdown (config key -> menu title), docs/UI.md §2.3.
+#: Mode toggle rows in the dropdown (config key -> menu title).
 _MODE_MENU_TITLES = (
     ("menubar", "Menu-bar title"),
     ("hud", "On-switch HUD"),
@@ -252,7 +252,7 @@ def run_agent(
 
 
 def _acquire_single_instance_lock(config_path: Path | None) -> object:
-    """Acquire an exclusive non-blocking lock on ``agent.lock`` (DECISIONS.md 6.5).
+    """Acquire an exclusive non-blocking lock on ``agent.lock``.
 
     Returns:
         The open lock-file handle (kept open for the process lifetime).
@@ -289,7 +289,7 @@ def _acquire_single_instance_lock(config_path: Path | None) -> object:
     # The flock itself is anonymous, so `spacelabel status` reads the pid here; the config
     # lets `status --config X` tell whether the agent holding a SHARED store lock is serving
     # THIS config or a sibling (several config files can share one store dir / lock).
-    # Best-effort (DECISIONS.md §9).
+    # Best-effort.
     try:
         handle.truncate(0)
         handle.write(f"{os.getpid()}\n{paths.config_file.resolve()}\n")
@@ -348,7 +348,7 @@ class AppDelegate(NSObject):
         self._topology_poll_ticks: int = 0
         # One-shot guard so an UNEXPECTED topology-read error warns once, not per tick.
         self._topology_read_warned: bool = False
-        # Click-to-switch runtime state (DECISIONS.md 9.5): availability is verified
+        # Click-to-switch runtime state: availability is verified
         # reactively (on a pill click) and on a fresh opt-in; a failure disables
         # capture with a surfaced reason rather than a silent no-op.
         self._click_to_switch_available: bool = True
@@ -461,7 +461,7 @@ class AppDelegate(NSObject):
         config = self._require_config()
         self._menubar = MenuBarItem(show_buttons_row=config.menubar.show_buttons_row)
         # Wire pill click-to-switch (no-op until menubar.click_to_switch is enabled
-        # and verified; DECISIONS.md 9.5). The menu-open handler is the item's own.
+        # and verified). The menu-open handler is the item's own.
         self._menubar.set_pill_switch_handler(self._on_pill_clicked)
         # The menu is (re)built per refresh from the live Spaces (see _rebuild_menu).
         if config.modes.get("hud"):
@@ -474,7 +474,7 @@ class AppDelegate(NSObject):
     def _rebuild_menu(self, spaces: list[Space], ordinals: dict[int, int]) -> None:
         """Build the dropdown: rename, per-display Space list, mode toggles, Prefs, Quit.
 
-        Mirrors docs/UI.md §2.3. Spaces are grouped under a disabled per-display
+        Spaces are grouped under a disabled per-display
         header; the current Space on each display is checkmarked; an unlabeled Space
         shows its "Desktop N" number; a Space with no UUID is shown disabled. Clicking
         a labelable Space row renames it; the top item renames the current Space.
@@ -548,7 +548,7 @@ class AppDelegate(NSObject):
             items.append(cts_item)
 
         # Surface WHY click-to-switch is off when it is enabled but unusable, so the
-        # opt-in never looks active yet silently no-ops (DECISIONS.md 9.5).
+        # opt-in never looks active yet silently no-ops.
         if (
             config.modes.get("menubar")
             and config.menubar.show_buttons_row
@@ -575,7 +575,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _start_observer(self) -> None:
-        """Start the debounced space/display-change observer (DESIGN.md §5)."""
+        """Start the debounced space/display-change observer."""
         from spacelabel.platform.notifications import SpaceObserver
 
         config = self._require_config()
@@ -814,7 +814,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _apply_click_to_switch_capture(self) -> None:
-        """Toggle pill click capture to match config + availability (DECISIONS.md 9.5).
+        """Toggle pill click capture to match config + availability.
 
         Called from :meth:`_update_buttons_row` so the row view is guaranteed to exist;
         the availability state it reads was already reconciled by
@@ -833,7 +833,7 @@ class AppDelegate(NSObject):
 
         Resolves the clicked Space LIVE at click time -- by ``uuid`` (a labelable Space)
         or by ``(display_uuid, id64)`` (the default unlabelable Space, which has no UUID;
-        switched by its ordinal via the stable session id, DECISIONS.md 9.5) -- so an
+        switched by its ordinal via the stable session id) -- so an
         ordinal that shifted on a reorder is never cached. ``display_uuid`` disambiguates
         default Spaces across displays, whose ``id64`` can collide. Resolves the target's
         enabled "Switch to Desktop N" shortcut and posts it. Any failure disables capture
@@ -854,7 +854,7 @@ class AppDelegate(NSObject):
             return
         # Resolve by UUID (labelable, globally unique) or by (display_uuid, id64) for the
         # default unlabelable Space -- keyed by display because a default's id64 can be
-        # reused across displays (DECISIONS.md 1.5/9.5).
+        # reused across displays.
         if uuid:
             target = next((space for space in spaces if space.uuid == uuid), None)
         else:
@@ -899,8 +899,8 @@ class AppDelegate(NSObject):
         # Global prerequisites (Accessibility + the Desktop-N shortcut) are satisfied; the
         # LAST gate is per-target. macOS only reliably switches the FOCUSED display's Space,
         # so a chord for a Space on another display is a near-silent no-op (item O, verified
-        # dual-display 2026-06-24). Refuse with a visible reason rather than a silent no-op
-        # (DECISIONS.md 9.5), keeping the feature armed so the same pill works once its
+        # dual-display 2026-06-24). Refuse with a visible reason rather than a silent no-op,
+        # keeping the feature armed so the same pill works once its
         # display is focused. Checked LAST so a denied-AX / disabled-shortcut blocker
         # surfaces first instead of being masked by the focus notice.
         active_uuid = self._active_display_uuid()
@@ -946,7 +946,7 @@ class AppDelegate(NSObject):
 
         A *stale* grant — an enabled entry bound to an OLD ad-hoc cdhash that no longer
         matches this process after an app update — needs REMOVE-and-re-add, not "enable":
-        toggling the stale row often re-grants the old cdhash (DECISIONS.md §6.9, item L).
+        toggling the stale row often re-grants the old cdhash (item L).
         Staleness is inferred from the persisted cdhash / ax-trusted checkpoint (we can't
         read TCC.db — SIP — but we can read our own code identity). The entry name is also
         branched: the signed cask bundle (frozen) lists as “spacelabel”; a dev/uv run
@@ -1005,7 +1005,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _click_to_switch_warning_item(self, reason: str, settings_url: str | None) -> object:
-        """Build the attention 'click-to-switch off' dropdown row (DECISIONS.md 9.5).
+        """Build the attention 'click-to-switch off' dropdown row.
 
         ENABLED (so AppKit does NOT gray it out) with a colored ⚠️ emoji, so the reason
         is noticeable rather than the easy-to-miss dim disabled line it was. When a
@@ -1034,7 +1034,7 @@ class AppDelegate(NSObject):
         """Resolve the HUD banner point size for ``screen``.
 
         An explicit int ``config.hud.font_size`` overrides; otherwise the auto
-        per-display formula sized to the screen's short side (DESIGN.md §9.9). Shared
+        per-display formula sized to the screen's short side. Shared
         by the on-switch HUD and the click-to-switch refusal banner so both honor the
         configured size.
 
@@ -1071,7 +1071,7 @@ class AppDelegate(NSObject):
 
             self._hud = Hud()
         # Show on the display the switch landed on, not whatever holds the key window
-        # (DESIGN.md §4.3). Fall back to mainScreen only if the active screen is unknown.
+        # Fall back to mainScreen only if the active screen is unknown.
         active_uuid = self._active_display_uuid()
         screen = None
         if active_uuid is not None:
@@ -1093,7 +1093,7 @@ class AppDelegate(NSObject):
 
         Direct feedback to a user click, so it shows regardless of the ``hud`` mode
         toggle (which only governs the ambient on-switch label) -- this is what keeps a
-        refused switch from being a silent no-op (DECISIONS.md 9.5). Reuses the HUD
+        refused switch from being a silent no-op. Reuses the HUD
         banner at the configured size; held a touch longer than the default so the
         sentence is readable.
         """
@@ -1153,7 +1153,7 @@ class AppDelegate(NSObject):
             # title_for's blank-label test (.strip()) so whitespace-only labels
             # are treated as unlabeled (they'd show "Desktop N" anyway).
             # Exception: notes-only entries (Label.text == "" but with notes)
-            # still carry user content (DECISIONS.md 9.10) and must show the
+            # still carry user content and must show the
             # overlay — they're an unlabeled task list, not an empty Space.
             if config.overlay.hide_on_unlabeled:
                 label = self._labels.get(current.uuid)
@@ -1169,7 +1169,7 @@ class AppDelegate(NSObject):
                 current, self._labels, ordinal, max_length=config.menubar.max_length
             )
             # Per-Space notes ride on the label entry, keyed by the Space UUID
-            # (DECISIONS.md 9.10); show them under the title unless overlay.show_notes
+            # show them under the title unless overlay.show_notes
             # is off. An unlabeled Space with notes shows "Desktop N" as the title.
             label = self._labels.get(current.uuid)
             notes = label.notes if (label is not None and config.overlay.show_notes) else []
@@ -1544,7 +1544,7 @@ def _color_swatch(hex_color: str | None) -> object | None:
     """Return a small rounded NSImage filled with ``#rrggbb``, or None if unset/bad.
 
     Used as a menu-item image so a label's color tag is visible in the dropdown
-    (the color also tints the buttons-row pills, DECISIONS.md 9.4/9.8).
+    (the color also tints the buttons-row pills).
     """
     if not hex_color:
         return None

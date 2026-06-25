@@ -1,8 +1,8 @@
-"""Preferences window -- a two-level ``NSOutlineView`` (DESIGN.md §6 / DECISIONS.md 2.4, 9.6).
+"""Preferences window -- a two-level ``NSOutlineView``.
 
 Each physical **display** is a parent row; its **Spaces** are children, so two
-displays' Spaces never conflate (docs/UI.md §3). Columns: an inline-editable label
-column (commits on Return AND focus-loss, Esc cancels -- DECISIONS.md 9.6), an
+displays' Spaces never conflate. Columns: an inline-editable label
+column (commits on Return AND focus-loss, Esc cancels), an
 ``NSColorWell`` color column, and a "now" marker for the current Space on its
 display. A "Prune orphans..." button drops labels for absent Spaces.
 

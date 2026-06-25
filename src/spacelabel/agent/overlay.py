@@ -1,10 +1,10 @@
-"""Persistent corner overlay -- an always-on-top ``NSPanel`` (DESIGN.md §6.3).
+"""Persistent corner overlay -- an always-on-top ``NSPanel``.
 
 Same non-activating, click-through, all-Spaces configuration as the HUD, but at
 ``NSStatusWindowLevel`` (the polite always-on-top tier). Pinned to a corner of
 the active screen's ``visibleFrame()`` (avoids menu bar / Dock) and repositioned
 on ``didChangeScreenParameters``. Corner and margin are config-driven and placed
-by the shared nine-anchor helper (DESIGN.md §9.9).
+by the shared nine-anchor helper.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 _OVERLAY_PAD_X = 14.0
 _OVERLAY_PAD_Y = 8.0
 #: Glyphs for a note's checkbox state on the overlay — display-only, never an
-#: interactive control (the panel is click-through, DESIGN.md §6.3 / DECISIONS 9.10).
+#: interactive control (the panel is click-through).
 _GLYPH_DONE = "☑"  # ☑
 _GLYPH_TODO = "☐"  # ☐
 #: Vertical spacing between overlay lines (points), used when notes are shown.
@@ -142,7 +142,7 @@ class Overlay:
         ``note_font_size`` (defaults to a step below the title), prefixed by a glyph
         reflecting ``done`` (``☑``/``☐``). The glyph is **display-only** — toggling is
         done via ``spacelabel note done`` and reflected on the next refresh; the panel
-        stays click-through and never captures the click (DESIGN.md §6.3, DECISIONS 9.10).
+        stays click-through and never captures the click.
         """
         if not notes:
             self.set_text(title)
@@ -216,7 +216,7 @@ class Overlay:
 
         Long content wraps within the max width (the field word-wraps) and the panel
         is clamped to the max height too, so neither a long note line nor a long task
-        list can push the anchored panel off-screen (DECISIONS.md 9.10). When the list
+        list can push the anchored panel off-screen. When the list
         exceeds the height bound the overflow simply clips (the corner overlay is a
         glance summary; ``note list`` shows the full queue).
         """

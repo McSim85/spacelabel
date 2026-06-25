@@ -1,4 +1,4 @@
-"""On-switch HUD -- a transient non-activating ``NSPanel`` (DESIGN.md §6.2).
+"""On-switch HUD -- a transient non-activating ``NSPanel``.
 
 A borderless ``NSWindowStyleMaskNonactivatingPanel`` at ``NSScreenSaverWindowLevel``
 with ``CanJoinAllSpaces | Stationary | FullScreenAuxiliary``, click-through, and
@@ -8,7 +8,7 @@ auto-dismissed by a timer. A single panel instance is reused across switches.
 
 The panel is placed by the shared nine-anchor helper
 :func:`spacelabel.agent.geometry.anchor_origin` on the target screen's
-``visibleFrame`` (DESIGN.md §9.9), so position is fully configurable.
+``visibleFrame``, so position is fully configurable.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _ALL_SPACES_BEHAVIOR = (
     | NSWindowCollectionBehaviorFullScreenAuxiliary
 )
 
-#: Fade timing (seconds) -- UX taste, tuned live in Phase 6 (DECISIONS.md 9.9).
+#: Fade timing (seconds) -- UX taste, tuned live in Phase 6.
 _FADE_IN = 0.12
 _FADE_OUT = 0.35
 
@@ -57,7 +57,7 @@ _HUD_PAD_Y = 16.0
 class NonActivatingPanel(NSPanel):
     """Borderless click-through panel that never becomes key or main.
 
-    Shared base for the HUD and the corner overlay (DECISIONS.md 2.2): both must
+    Shared base for the HUD and the corner overlay: both must
     float across every Space and never steal focus from the active app.
     """
 
@@ -150,7 +150,7 @@ class Hud:
             margin: Edge inset in points (ignored on a centered axis).
             font_size: Point size for the banner; ``None`` keeps the current font.
                 The agent passes the per-display size from
-                :func:`~spacelabel.agent.geometry.hud_font_size` (DESIGN.md §9.9).
+                :func:`~spacelabel.agent.geometry.hud_font_size`.
         """
         target = screen if screen is not None else NSScreen.mainScreen()
         if target is None:
