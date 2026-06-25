@@ -491,6 +491,24 @@ def test_display_list_shows_overlay_status(runner, cfg, monkeypatch):
     assert json.loads(r.stdout)[0]["overlay"] == "on"
 
 
+def test_display_list_fallback_includes_overlay_only_uuids(runner, cfg, monkeypatch):
+    # A display with only overlay-off state (no custom name) must still appear in the
+    # no-topology fallback — previously it was invisible because the fallback iterated
+    # overrides.items() only, missing UUIDs that only existed in overlay_disabled.
+    monkeypatch.setattr("spacelabel.platform.displays.discover_topology", lambda: [])
+    monkeypatch.setattr("spacelabel.platform.cgs.active_display_uuid", lambda: "")
+    # DISP_A: overlay-off only (no custom name).
+    runner.invoke(cli, _base(cfg, "display", "overlay-off", DISP_A))
+    r = runner.invoke(cli, _base(cfg, "display", "list", "--json"))
+    records = json.loads(r.stdout)
+    uuids = [rec["uuid"] for rec in records]
+    assert DISP_A in uuids, "overlay-only UUID must appear in the fallback output"
+    rec = next(r for r in records if r["uuid"] == DISP_A)
+    assert rec["overlay"] == "off"
+    assert rec["name"] == ""  # no custom name stored
+    assert rec["custom"] is False
+
+
 def test_display_set_list_clear(runner, cfg, monkeypatch):
     # No live displays in the test -> list falls back to stored overrides.
     monkeypatch.setattr("spacelabel.platform.displays.discover_topology", lambda: [])

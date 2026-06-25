@@ -155,13 +155,16 @@ class _LabelColorWell(NSColorWell):
         self._space_uuid = ""
         return self
 
-    def mouseDown_(self, event: object) -> None:  # noqa: N802
-        """On click: open the colour picker for labeled Spaces; explain why for unlabeled ones.
+    def activate_(self, exclusive: bool) -> None:
+        """Centre the NSColorPanel, or explain why color is unavailable for unlabeled Spaces.
 
-        ``NSColorWell.setEnabled_(False)`` silently swallows clicks (T-4 finding).
-        By intercepting ``mouseDown_`` we can surface a brief non-modal sheet when
-        the user clicks a disabled well, instead of leaving them wondering why nothing
-        happened. For enabled wells, fall through to the normal NSColorWell behaviour.
+        ``NSColorWell.activate_`` is called by AppKit's internal tracking (after
+        ``mouseDown_``), so it is the right intercept point — a ``mouseDown_`` override
+        is NOT sufficient because ``setEnabled_(False)`` prevents AppKit from dispatching
+        ``mouseDown_`` to NSView subclasses at all, making the handler unreachable.  The
+        fix: leave unlabeled wells *enabled* (no ``setEnabled_(False)`` in ``_color_cell``)
+        but intercept here: if no Space UUID is bound, show an explanation sheet and
+        return without opening the colour panel.
         """
         if not self._space_uuid:
             from AppKit import NSAlert
@@ -177,10 +180,6 @@ class _LabelColorWell(NSColorWell):
             if win is not None:
                 alert.beginSheetModalForWindow_completionHandler_(win, lambda _r: None)
             return
-        objc.super(_LabelColorWell, self).mouseDown_(event)
-
-    def activate_(self, exclusive: bool) -> None:
-        """Center the shared NSColorPanel on the active screen before showing it (item T)."""
         from AppKit import NSColorPanel
 
         _center_on_main_screen(NSColorPanel.sharedColorPanel())
@@ -479,9 +478,9 @@ class PrefsDataSource(NSObject):
             well.set_space_uuid(space.uuid)
             well.setTarget_(self)
             well.setAction_("colorChanged:")
-        else:
-            # Unlabeled (incl. notes-only): no label to attach a color to -> disabled.
-            well.setEnabled_(False)
+        # Unlabeled (incl. notes-only): keep well ENABLED so AppKit dispatches activate_,
+        # where the "Set a label first" sheet is shown. setEnabled_(False) would prevent
+        # mouseDown_/activate_ from being called at all, leaving clicks silently ignored.
         return well
 
     def colorChanged_(self, sender: object) -> None:  # noqa: N802

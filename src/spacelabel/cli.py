@@ -877,15 +877,18 @@ def display_list(ctx: AppContext, as_json: bool) -> None:
                 for disp in topology
             ]
         else:
+            # Union custom-name UUIDs with overlay-disabled UUIDs: a display that only
+            # has overlay state stored (no custom name) must still appear in the output.
+            all_uuids = sorted(set(overrides.keys()) | overlay_disabled)
             records = [
                 {
                     "uuid": uuid,
-                    "name": name,
-                    "custom": True,
+                    "name": overrides.get(uuid, ""),
+                    "custom": uuid in overrides,
                     "active": uuid == active,
                     "overlay": "off" if uuid in overlay_disabled else "on",
                 }
-                for uuid, name in sorted(overrides.items())
+                for uuid in all_uuids
             ]
         click.echo(json.dumps(records))
         return
@@ -902,9 +905,17 @@ def display_list(ctx: AppContext, as_json: bool) -> None:
             for disp in topology
         ]
     else:
+        # Same union as the JSON branch: include overlay-only displays.
+        all_uuids = sorted(set(overrides.keys()) | overlay_disabled)
         rows = [
-            ["", uuid, name, "custom", "off" if uuid in overlay_disabled else "on"]
-            for uuid, name in sorted(overrides.items())
+            [
+                "",
+                uuid,
+                overrides.get(uuid, ""),
+                "custom" if uuid in overrides else "stored",
+                "off" if uuid in overlay_disabled else "on",
+            ]
+            for uuid in all_uuids
         ]
     _echo_table(["CURRENT", "DISPLAY_UUID", "NAME", "SOURCE", "OVERLAY"], rows, color_current=True)
 
