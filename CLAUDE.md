@@ -1,11 +1,9 @@
 # CLAUDE.md — spacelabel
 
-Standing brief for every Claude Code session and contributor. Kept tight on
-purpose; the authoritative depth lives in **[`DESIGN.md`](DESIGN.md)** (the *how*)
-and **[`DECISIONS.md`](DECISIONS.md)** (the *why* + confidence). **Read both before
-changing anything** — especially `DECISIONS.md` §0 and "Cross-phase impact". A
-change that contradicts a locked decision needs a deliberate decision update, not
-a quiet override.
+Standing brief for every Claude Code session and contributor. Read
+**[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** before touching the load-bearing
+invariants — a change that contradicts them needs a deliberate decision, not a
+quiet override.
 
 ## What this is
 
@@ -16,14 +14,13 @@ a quiet override.
 That is the whole point versus WhichSpace (which keys by position, so a reorder
 shifts every label). Anywhere you key, store, or look up a label, use the
 per-Space `uuid` string. `id64`/`ManagedSpaceID`/index are session-scoped and must
-never become the label key (DECISIONS §1.4).
+never become the label key.
 
 ## Architecture map
 
 `src/` layout; one package, one `click` entry point (`spacelabel = spacelabel.cli:main`).
 The agent is the `spacelabel agent` subcommand; every other subcommand is a
-one-shot CLI action over the same read/store layers. See `DESIGN.md` §2 for the
-authoritative design.
+one-shot CLI action over the same read/store layers.
 
 ```text
 src/spacelabel/
@@ -48,14 +45,14 @@ src/spacelabel/
 
 Data store: two JSON files under `~/Library/Application Support/spacelabel/`
 (`labels.json`, `config.json`), atomic writes (`fcntl.flock` → temp → `os.replace`),
-agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
+agent watches and reloads live.
 
 ## Hard gotchas (load-bearing — get these exact)
 
 - **No SIP disable, ever.** All CGS reads work SIP-on; the project premise dies if
   anything needs SIP off.
 - **CGS binds via CoreGraphics with a per-symbol CGS→SLS fallback — NOT a SkyLight
-  `dlopen`** (DECISIONS §0/§1). On Tahoe, SkyLight has no on-disk Mach-O and exports
+  `dlopen`.** On Tahoe, SkyLight has no on-disk Mach-O and exports
   only `SLS*`; CoreGraphics re-exports the `CGS*` aliases. Resolve each symbol
   `CGS`-name-then-`SLS`-name; on miss raise the logged **`CGSUnavailableError`** and
   fall back to the spaces-plist parser. Never `CFRelease` a `Copy` result that
@@ -63,9 +60,9 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   resolve, the PyObjC↔CFArray bridge round-trips, RSS stays flat over 4000 reads
   (`already_retained` correct), forced-nil → plist fallback yields the identical set,
   and every live uuid is persisted in the on-disk plist (uuid reboot-stability
-  ~high; literal-reboot confirm still pending — DECISIONS §1).
+  ~high; literal-reboot confirm still pending).
 - **Display UUID comes from `CGDisplayCreateUUIDFromDisplayID`, bound from
-  ColorSync — NOT Quartz/CoreGraphics** (Phase-4 finding, DECISIONS §3.6). On Tahoe
+  ColorSync — NOT Quartz/CoreGraphics.** On Tahoe
   PyObjC's `Quartz` does not expose it and CoreGraphics does not export it; it lives
   in `ColorSync.framework` (and ApplicationServices). `displays.display_uuid` binds
   it via `objc.loadBundleFunctions` with `already_cfretained`. This CFUUID is the
@@ -76,14 +73,14 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   **workspace** notification center (`NSWorkspace.sharedWorkspace().notificationCenter()`),
   **not** the default center; the event carries no Space identity, so **re-read the
   UUID every fire**; debounce ~200ms trailing-edge. `didChangeScreenParameters` is
-  the **default** center. (DESIGN §5 / DECISIONS §4)
+  the **default** center.
 - **Space *switching* is SIP/Dock-walled** → only via the opt-in Ctrl+N "Switch to
   Desktop N" shortcut + Accessibility, OFF by default; if it can't be confirmed,
-  **disable with a visible reason, never silently no-op**. (DECISIONS §9.5 / DESIGN §6)
+  **disable with a visible reason, never silently no-op**.
   **Phase-6 verified-gotcha:** the grant only binds when the agent runs as the
   **signed `.app`** (`dev.mcsim.spacelabel`) — a shared-`python3.x` identity
   (e.g. a dev/uv run) can't be granted, and the **ad-hoc cdhash rotates each release so the grant goes
-  stale on upgrade** (re-grant; detection = todo **L**). **Multi-display (item O, fixed
+  stale on upgrade** (re-grant; stale-grant detection is already implemented). **Multi-display (item O, fixed
   2026-06-24):** the earlier "fails on secondary displays / ordinal mismatch" framing
   was **wrong** — the ordinal *does* match macOS's Desktop-N numbering. The real limit
   is **focus**: macOS only reliably switches the **active (focused) display's** Space;
@@ -92,23 +89,22 @@ agent watches and reloads live. See `DESIGN.md` §7 / DECISIONS §5.
   show a visible "only works on the focused display" notice instead of failing silently.
   And one **ordinal source of truth** (`labeling.assign_ordinals` over
   `include_unlabelable=True`, counting each display's default desktop) now backs pills,
-  Preferences, and the switch path (item V). (DECISIONS §9.5)
+  Preferences, and the switch path.
 - **Never hardcode display/Space topology** — discover displays and Spaces at runtime;
   no hardcoded models, resolutions, UUIDs, scales, orientations, or counts. The
-  reference machine is for testing only. (DESIGN §4 / DECISIONS §3)
+  reference machine is for testing only.
 
 ## Conventions
 
 - PEP 8 / 257 / 484, enforced by **ruff** + **mypy `--strict`**.
 - **No silent exception handling** — never bare `except: pass`/`continue`; catch a
   specific exception, log with context, then recover or re-raise. CGS/plist read
-  sites are the canonical application points. (DESIGN §8.2)
+  sites are the canonical application points.
 - **stdlib `logging`, never `print`.** Library code uses `getLogger(__name__)` +
   `NullHandler` and never configures handlers; only `setup_logging()` does.
 - **Stdlib-first.** Only third-party deps beyond PyObjC: **`click`**. `rumps` and
-  `Pillow` are rejected (DECISIONS §2) — don't reintroduce them.
-- Conventional Commits (`feat:`, `fix:`, `docs:`, …). If a change revises a
-  decision, update `DECISIONS.md` in the same PR.
+  `Pillow` are rejected — don't reintroduce them.
+- Conventional Commits (`feat:`, `fix:`, `docs:`, …).
 
 ## Commands
 
@@ -128,8 +124,7 @@ uv run spacelabel agent --debug    # run the agent in the foreground
 - **pre-commit is installed** locally and mirrors the CI gates.
 - **CI is macOS-only** (`macos-latest`) — PyObjC framework wheels don't install on
   Linux, so a Linux runner can't even build the package.
-- **Distribute as a signed `.app` via a Homebrew cask** (DECISIONS §6.8, reverses
-  pipx-only #30): `brew install --cask spacelabel`. Build the bundle with
+- **Distribute as a signed `.app` via a Homebrew cask:** `brew install --cask spacelabel`. Build the bundle with
   `tools/build_app.sh [--sign]` (py2app, build-time only — never a runtime dep); the
   agent process **is** the bundle so Accessibility keys on `dev.mcsim.spacelabel`. The
   cask `binary` stanza puts the same exe on PATH as the `spacelabel` CLI. The dev
@@ -154,7 +149,7 @@ The `--uncommitted` flag on `codex review` conflicts with a positional prompt ar
 work around it by staging files first, then passing the prompt as a positional argument.
 - CLI contract: stdout = machine-readable data (TSV default, `--json` opt-in),
   stderr = all diagnostics; exit codes `0` ok / `1` runtime / `2` usage / `3` =
-  status "agent not running". (DECISIONS §9 / `docs/CLI.md`)
+  status "agent not running". (see `docs/CLI.md`)
 
 ## Testing reality
 
@@ -164,13 +159,12 @@ parser, the LaunchAgent builder, the CLI with live readers monkeypatched). **Liv
 CGS / Spaces / GUI behavior is local-only** — it cannot run on a CI runner (no
 window server, no real displays). The Phase-6 read-only probe verifies the
 load-bearing empirical assumptions on hardware (uuid reboot-stability, flat RSS /
-CF ownership, the PyObjC↔CFArray bridge). See **[`docs/TESTING.md`](docs/TESTING.md)**
-for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
+CF ownership, the PyObjC↔CFArray bridge). See **[`CONTRIBUTING.md`](CONTRIBUTING.md)**
+for the mock boundary and local-only commands.
 
 ## Don'ts
 
-- Don't relitigate locked decisions (re-read `DESIGN.md`/`DECISIONS.md` first; if you
-  truly must change one, update `DECISIONS.md` deliberately).
+- Don't relitigate locked decisions (re-read `docs/ARCHITECTURE.md` first).
 - Don't add dependencies casually — stdlib-first; only `click` beyond PyObjC.
 - Don't hardcode display/Space topology.
 
@@ -178,13 +172,5 @@ for the mock boundary + the exact local-only commands, and `DESIGN.md` §12.
 
 - **`dev.mcsim.spacelabel`** is the single reverse-DNS constant (LaunchAgent `Label`,
   plist filename, `os_log` subsystem) — one source of truth so a later move to a
-  a future namespace rename is a one-line change. (DECISIONS §6.7)
+  a future namespace rename is a one-line change.
 - Repo: public at github.com/McSim85/spacelabel; MIT © Max Kramarenko.
-
----
-
-> **This is a living doc.** Refreshed after **Phase 4** (final commands/modules),
-> after **Phase 6** (verified gotchas — CGS gate confirmed; click-to-switch
-> signed-`.app`/secondary-display caveats, 2026-06-23), and after the **wallpaper
-> mode removal** (2026-06-25, DECISIONS §7). Next: fold in fixes as the **K–Z**
-> backlog lands.

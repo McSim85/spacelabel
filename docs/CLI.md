@@ -1,15 +1,5 @@
 # spacelabel — CLI specification
 
-> **Status:** finalized in Phase 3 (design-only). The command tree below is the
-> **canonical surface** — it matches the scaffold in `src/spacelabel/cli.py` and
-> the README verbatim. **Command names are locked; do not rename them in Phase 4.**
-> Flags marked **(proposed)** are new in Phase 3 and are flagged for Phase-4
-> implementation in [`DECISIONS.md`](../DECISIONS.md) §9; everything else is
-> already wired in the scaffold.
->
-> Companion docs: [`DESIGN.md`](../DESIGN.md) §8 (CLI surface & logging),
-> [`DECISIONS.md`](../DECISIONS.md) §2.5/2.6 (click + logging), [`UI.md`](./UI.md).
-
 ---
 
 ## 1. Synopsis
@@ -54,12 +44,10 @@ These attach to the root group and apply to every subcommand. `--verbose` and
 | `-h`, `--help` | flag | — | Print help for the group or subcommand and exit 0. |
 
 ¹ Default config dir = `~/Library/Application Support/spacelabel/`
-(`config.json`, `labels.json`) per DESIGN §7. `--config` overrides the file
-spacelabel reads/writes.
+(`config.json`, `labels.json`). `--config` overrides the file spacelabel reads/writes.
 
 > **Logging never touches stdout.** `--verbose`/`--debug` only change the stderr
-> log level; they never add output to the data channel. This is enforced by
-> `setup_logging(LogMode.CLI, …)` (DESIGN §8.2).
+> log level; they never add output to the data channel.
 
 ---
 
@@ -75,20 +63,18 @@ spacelabel agent
 
 Starts the `NSApplication` accessory app (menu-bar item, optional buttons row,
 HUD/overlay per `config.json`) and **blocks** until the agent quits.
-This is exactly what the LaunchAgent's `ProgramArguments` invoke
-(`…/spacelabel agent`, DESIGN §9.2).
+This is exactly what the LaunchAgent's `ProgramArguments` invoke.
 
 - Honors the global `--config`.
 - Logging in agent mode is quiet (`WARNING+`) and goes to the agent log file
-  (`~/Library/Logs/spacelabel/agent.log`), **not** stdout — see DECISIONS 2.6.
+  (`~/Library/Logs/spacelabel/agent.log`), **not** stdout.
   Running `spacelabel --debug agent` from a terminal raises the level for that
   foreground run (useful for development; `uv run spacelabel agent --debug`).
 - **Exit:** `0` on a clean menu **Quit**; non-zero if it crashes. This pairs
   with the LaunchAgent's `KeepAlive={SuccessfulExit:false}` so a deliberate Quit
-  stays stopped while a crash is restarted (DECISIONS 6.4).
+  stays stopped while a crash is restarted.
 - Single-instance: the agent refuses to start a second copy (logs a warning and
-  exits non-zero) to avoid the Tahoe ControlCenter visibility negotiation loop
-  (DECISIONS 6.5).
+  exits non-zero) to avoid the Tahoe ControlCenter visibility negotiation loop.
 
 ### 3.2 `install` / `uninstall` — manage the login LaunchAgent
 
@@ -100,13 +86,13 @@ spacelabel uninstall [--purge] [--yes] [--dry-run]    (--keep-labels: deprecated
 `install` writes `~/Library/LaunchAgents/dev.mcsim.spacelabel.plist` with the
 real `$HOME` substituted into the absolute paths, creates
 `~/Library/Logs/spacelabel/`, and loads it via
-`launchctl bootstrap gui/$UID` (DESIGN §9.2). `uninstall` runs
+`launchctl bootstrap gui/$UID`. `uninstall` runs
 `launchctl bootout …` and removes the plist.
 
 - **Points the agent at the app bundle.** `install` resolves the cask-installed
   `spacelabel.app` executable (the running process is inside the bundle) and writes
   *that* absolute path into the plist, so the agent process **is** the bundle and
-  Accessibility keys on `dev.mcsim.spacelabel` (DECISIONS §6.8). Falls back to the
+  Accessibility keys on `dev.mcsim.spacelabel`. Falls back to the
   source/dev console script beside the interpreter (for `uv pip install -e .` dev
   installs); **refuses** (exit 1) when neither resolves (a transient runner venv).
 - **`--no-load`:** write/refresh the plist but don't load it now (load happens at next
@@ -161,10 +147,10 @@ state — detecting **any** running agent, the managed LaunchAgent **or** a fore
 ### 3.4 `spaces` — list current Spaces (live CGS read)
 
 ```text
-spacelabel spaces [--json] [--all-displays/--active-display]   (flags: proposed)
+spacelabel spaces [--json] [--all-displays/--active-display]
 ```
 
-Reads the live Space topology via the CGS path (DESIGN §3) and prints the Spaces
+Reads the live Space topology via the CGS path and prints the Spaces
 across all displays, marking each display's current one. **Data → stdout.**
 
 - **Default output** is a **space-aligned table** (header on stdout), stable
@@ -181,7 +167,7 @@ across all displays, marking each display's current one. **Data → stdout.**
   `cut`/`awk`-parseable — pass **`--json`** for a self-describing structure that
   scripts can consume. The **`NOTES`** column is the task-queue size (blank when 0),
   so a Space carrying notes — including a notes-only one shown `(unlabeled)` — is
-  visible here without probing each UUID with `note list` (DECISIONS 9.10).
+  visible here without probing each UUID with `note list`.
 - **`--json`:** array of objects
   `[{"uuid","display_uuid","display_name","label","notes","current","labelable"}, …]`
   (`uuid` is `null` and `labelable` is `false` for a Space with no assigned UUID;
@@ -193,9 +179,9 @@ across all displays, marking each display's current one. **Data → stdout.**
   `(no UUID)` so the display is visible, but it **cannot be labeled** until macOS
   assigns a UUID (e.g. after you add a Space on that display). With separate Spaces
   per display, each display marks its own current Space (so more than one `*` row
-  is normal). (DESIGN §3.4, DECISIONS §9.2 revised)
+  is normal).
 - **Exit:** `0` on success; `1` if the CGS path **and** the plist fallback both
-  fail (logged via the no-silent-except policy, DESIGN §8.2).
+  fail (logged via the no-silent-except policy).
 
 ### 3.5 `mode` — show or toggle a display mode
 
@@ -207,32 +193,31 @@ With **neither** `--on` nor `--off`, prints the mode's current state to stdout
 (`menubar: on`); with one of them, sets it in `config.json` and prints the new
 state. The mode name is a `click.Choice` (invalid value → exit 2).
 
-- A running agent picks up the change live via its config file-watch (DESIGN §7.3) —
-  no restart needed.
+- A running agent picks up the change live via its config file-watch — no restart needed.
 - **Exit:** `0` on success; `2` on an invalid mode name.
 
 ### 3.6 `label` — create / list / remove labels
 
-The whole point of the tool. Labels are keyed by **Space UUID** (DECISIONS 1.4).
-`current` is a convenience target resolved to the active Space's UUID at call
-time via the live CGS read. A literal `<uuid>` target must be a **well-formed UUID**
+The whole point of the tool. Labels are keyed by **Space UUID** — never by position
+or index. `current` is a convenience target resolved to the active Space's UUID at
+call time via the live CGS read. A literal `<uuid>` target must be a **well-formed UUID**
 (copy one from `spacelabel spaces`); any other value — e.g. a transposed
 `label set list "Email"` — is a **usage error (exit 2)**, not a silent write to a
 Space that can't exist. (A valid UUID for a currently-absent Space is still allowed —
-labels are retained for Spaces that aren't live right now, DECISIONS 5.6.)
+labels are retained for Spaces that aren't live right now.)
 
 ```text
 spacelabel label set   {<uuid>|current} <text>
-spacelabel label list  [--json]                       (--json: proposed)
+spacelabel label list  [--json]
 spacelabel label clear {<uuid>|current}
-spacelabel label prune [--dry-run]                    (--dry-run: proposed)
+spacelabel label prune [--dry-run]
 ```
 
 - **`label set`** — assign/replace the label for a Space. `<text>` may contain
   spaces (quote it); empty text is rejected (use `clear`). Resolving `current`
   requires a live read; if it fails → exit 1. On success the entry's
   `updated_at` (and `created_at` if new) is stamped and `last_display` recorded
-  for grouping (DESIGN §7.1).
+  for grouping.
   ```sh
   spacelabel label set current "Email"
   spacelabel label set 6622AC87-2FD2-48E8-934D-F6EB303AC9BA "Code review"
@@ -245,19 +230,18 @@ spacelabel label prune [--dry-run]                    (--dry-run: proposed)
   stored label prints an informational note to **stderr** and still exits `0`,
   so scripts can clear unconditionally. Resolving `current` that can't be read → exit 1.
 - **`label prune`** — drop labels whose UUID is absent from the **current**
-  Spaces set (orphans). Requires a live read. **`--dry-run` (proposed)** lists
-  what *would* be removed (to stdout) and changes nothing. Retain-by-default
-  policy means this is the explicit, opt-in cleanup (DECISIONS 5.6). It prunes
-  **labels, not tasks**: an orphan that still has a note queue is demoted to a
-  notes-only entry (its tasks survive), so prune never silently deletes a task
-  list (DECISIONS 9.10); a notes-only orphan is left untouched.
+  Spaces set (orphans). Requires a live read. **`--dry-run`** lists what *would*
+  be removed (to stdout) and changes nothing. Retain-by-default policy means this
+  is the explicit, opt-in cleanup. It prunes **labels, not tasks**: an orphan that
+  still has a note queue is demoted to a notes-only entry (its tasks survive), so
+  prune never silently deletes a task list; a notes-only orphan is left untouched.
 - **Exit:** `0` success (incl. idempotent clear); `1` if a required live read
   fails or `current` can't be resolved; `2` on missing arguments.
 
 ### 3.7 `note` — per-Space task queue
 
 Each Space can carry a small **task queue** alongside its label, keyed by the same
-**Space UUID** (DECISIONS 9.10) so the list follows the Space through reorders — not
+**Space UUID** so the list follows the Space through reorders — not
 by display. The corner overlay renders it as the bold label/`Desktop N` title above
 the task lines. The CLI is the edit surface; `current` resolves to the active Space, and
 a literal `<uuid>` target must be a well-formed Space UUID (a transposed
@@ -297,7 +281,7 @@ spacelabel note clear  {<uuid>|current} [<index>]
 - Notes live in `labels.json` next to the label, so a `note add` from the CLI is
   reflected **live** by a running agent (the overlay re-renders on the file-watch).
 - The overlay checkboxes are **display-only** glyphs — the panel is click-through and
-  never captures clicks (DESIGN §6.3); toggling is done here via `note done`. And
+  never captures clicks; toggling is done here via `note done`. And
   `label clear` keeps any tasks (the entry becomes notes-only), so clearing a label
   never discards its task list.
 - **Exit:** `0` success (incl. idempotent clear); `1` if `current` can't be resolved
@@ -306,11 +290,11 @@ spacelabel note clear  {<uuid>|current} [<index>]
 ### 3.8 `config` — read / write configuration
 
 ```text
-spacelabel config get [<key>]        (bare `get` dumps all — proposed)
+spacelabel config get [<key>]
 spacelabel config set  <key> <value>
 ```
 
-Keys are **dotted paths** into `config.json` (DESIGN §7.2), e.g.
+Keys are **dotted paths** into `config.json`, e.g.
 `modes.hud`, `hud.position`, `hud.duration_ms`, `overlay.corner`,
 `overlay.show_notes`, `overlay.note_font_size`, `menubar.show_buttons_row`,
 `debounce_ms`, `log_level`.
@@ -323,11 +307,10 @@ spacelabel config set hud.position top-left
 - **`config get <key>`** — print the value to **stdout** (raw scalar, no quotes,
   so it's substitutable: `dur=$(spacelabel config get hud.duration_ms)`).
   Unknown key → exit 1 with an error on stderr.
-- **`config get` (no key, proposed)** — pretty-print the full effective config
-  to stdout as JSON.
+- **`config get` (no key)** — pretty-print the full effective config to stdout as JSON.
 - **`config set <key> <value>`** — validate `<value>` against the key's expected
   type (bool/int/enum/string) and the `schema_version`, write atomically
-  (temp → `fsync` → `os.replace` under an `fcntl.flock`, DESIGN §7.3), then echo
+  (temp → `fsync` → `os.replace` under an `fcntl.flock`), then echo
   the stored value. Type/enum violations → exit 1 with a specific message
   (e.g. `overlay.corner must be one of top-left,top-right,bottom-left,bottom-right`).
 - A running agent reloads on write (file-watch). **Exit:** `0` success;
@@ -413,9 +396,8 @@ UUIDs) rather than erroring, and never prints to your shell.
 | `3` | `status` only: agent is **not running** (a clean negative, not an error) | `status` |
 
 Notes:
-- Codes `1` and `2` are click's own conventions (verified against the scaffold:
-  `ClickException` → 1, `UsageError` → 2). Phase 4 should not invent ad-hoc
-  codes beyond the reserved `3` for `status`.
+- Codes `1` and `2` are click's own conventions (`ClickException` → 1, `UsageError` → 2).
+  Do not add new codes beyond the reserved `3` for `status`.
 - Every non-zero exit is accompanied by a human message on **stderr**
   (`Error: …` for code 1/2). stdout stays empty or partial-but-valid is avoided —
   on error, prefer writing nothing to stdout.
@@ -471,21 +453,3 @@ spacelabel label prune
 # Run the agent in the foreground for development
 uv run spacelabel agent --debug
 ```
-
----
-
-## 7. Phase-4 hand-off (flags introduced here)
-
-The following are **new in Phase 3** and must be implemented in Phase 4 (also
-recorded in [`DECISIONS.md`](../DECISIONS.md) §9):
-
-- `--json` on `spaces`, `label list`, `status`, and bare `config get`.
-- `--active-display/--all-displays` on `spaces`.
-- `--dry-run` on `label prune`.
-- `--no-load` on `install`; `--keep-labels` reserved on `uninstall`.
-- Exit code **3** reserved for `status` (agent not running).
-- Default `spaces`/`label list` output = **tab-separated, header-to-stderr** —
-  Phase 4 must keep stdout pure (no aligned-column padding) for parseability.
-
-None of these rename or remove a scaffolded command; they only add optional
-flags and define output/exit semantics around the locked command tree.

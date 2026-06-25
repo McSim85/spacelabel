@@ -1,4 +1,4 @@
-"""Optional ``os_log`` mirror for the agent (DESIGN.md §8.2) — feature-detected.
+"""Optional ``os_log`` mirror for the agent — feature-detected.
 
 Not load-bearing: its PyObjC import path on Tahoe is unverified, so it is
 feature-detected and silently skipped when unavailable. The ``os_log`` subsystem

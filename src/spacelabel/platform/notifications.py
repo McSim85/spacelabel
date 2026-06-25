@@ -1,4 +1,4 @@
-"""Space-change and display-change observation with debounce (DESIGN.md §5).
+"""Space-change and display-change observation with debounce.
 
 Observe ``NSWorkspaceActiveSpaceDidChangeNotification`` on
 ``NSWorkspace.sharedWorkspace().notificationCenter()`` (NOT the default center) --
@@ -8,7 +8,7 @@ re-discover topology. Coalesce bursts with a trailing-edge ~200ms debounce; the
 debounced callback does the off-main CGS read, then marshals the UI update back
 to the main thread.
 
-Notification-center footgun (DECISIONS.md 4.1 / 3.3) -- the center choice is
+Notification-center footgun -- the center choice is
 load-bearing and easy to get wrong:
 
 - ``NSWorkspaceActiveSpaceDidChangeNotification`` is posted ONLY on the per-process
@@ -162,7 +162,7 @@ class SpaceObserver:
     ``NSApplicationDidChangeScreenParametersNotification`` on the default center
     (prompt). The callbacks run on the AppKit main thread; the CGS read happens
     inline in the debounced callback (the ~200ms debounce already prevents thrash --
-    an off-main read is a Phase-6 optimization, DESIGN.md §5 / contract).
+    an off-main read is a Phase-6 optimization).
     """
 
     def __init__(

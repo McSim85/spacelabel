@@ -1,4 +1,4 @@
-"""CGS read path — the core, highest-risk module (DESIGN.md §3, DECISIONS.md §1).
+"""CGS read path — the core, highest-risk module.
 
 Reads Spaces and the active Space from the private CoreGraphics-Services API,
 read-only and SIP-on. Per the §0 baseline correction we **bind against
@@ -6,7 +6,7 @@ CoreGraphics** (which re-exports the symbols under their legacy ``CGS*`` names)
 and resolve each symbol ``CGS``-name-then-``SLS``-name, so the binding survives a
 point release that drops the ``CGS`` alias. The committed loader is PyObjC's
 ``objc.loadBundleFunctions`` with ``already_retained`` on the two ``Copy``
-functions (DECISIONS.md 1.1-1.3). On total failure raise :class:`CGSUnavailableError`
+functions. On total failure raise :class:`CGSUnavailableError`
 and let callers fall back to :mod:`spacelabel.platform.spaces_plist`.
 """
 
@@ -33,10 +33,10 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-# ObjC type encodings used by the committed loader (DESIGN.md §3.3):
+# ObjC type encodings used by the committed loader:
 #   i = CGSConnectionID (int32)   Q = CGSSpaceID (uint64)   @ = object (auto-bridged)
 # already_retained=True hands the Copy() +1 to PyObjC so it releases on GC; never
-# also CFRelease manually. Pinned to AltTab-proven arm64 widths (DECISIONS.md 1.3).
+# also CFRelease manually. Pinned to AltTab-proven arm64 widths.
 _FUNCS: tuple[tuple[str, str, bytes, dict[str, object] | None], ...] = (
     ("CGSMainConnectionID", "SLSMainConnectionID", b"i", None),
     (
@@ -60,7 +60,7 @@ _NS: dict[str, Any] = {}
 #: Memoized framework bundles. CoreGraphics holds the ``CGS*`` re-exports (§0); SkyLight
 #: holds the ``SLS*`` implementations and is loaded lazily, only if a ``CGS*`` alias misses
 #: (on Tahoe CoreGraphics exports only ``CGS*`` and SkyLight only ``SLS*``, so the SLS
-#: fallback MUST target SkyLight, not CoreGraphics -- DECISIONS.md §1.1).
+#: fallback MUST target SkyLight, not CoreGraphics).
 _BUNDLES: dict[str, Any] = {}
 
 
@@ -73,7 +73,7 @@ def _is_real_uuid(value: object) -> bool:
 
     The ``"Main"``/header rows carry an empty ``uuid`` and special Spaces can use
     literal non-UUID strings (e.g. ``dashboard``); both must be rejected so only
-    labelable user Spaces survive (DESIGN.md §3.4).
+    labelable user Spaces survive.
     """
     text = str(value).strip()
     if not text:
@@ -91,8 +91,7 @@ def _normalize_display_identifier(raw: object, main_display_uuid: str | None) ->
     When *Displays have separate Spaces* is off the identifier is the literal
     ``"Main"`` (and other non-UUID sentinels are possible); remap any
     non-UUID-parseable identifier to ``main_display_uuid`` when known, else fall
-    back to the raw string so the value is never lost (DESIGN.md §3.5,
-    DECISIONS.md 1.7).
+    back to the raw string so the value is never lost.
     """
     text = str(raw) if raw is not None else ""
     if _is_real_uuid(text):
@@ -117,8 +116,8 @@ def parse_spaces(
     with ``str()``/``int()``.
 
     Special Spaces (non-zero ``type`` or a ``TileLayoutManager`` key) are ALWAYS
-    skipped. By default only **labelable** Spaces are returned (DESIGN.md §3.4 /
-    DECISIONS.md 1.6) -- those with a real UUID. With ``include_unlabelable=True``
+    skipped. By default only **labelable** Spaces are returned -- those with a real UUID.
+    With ``include_unlabelable=True``
     an ordinary (``type == 0``) Space whose ``uuid`` is empty/non-UUID is also
     returned, with ``uuid=""`` (macOS has not yet assigned that Space a persistent
     UUID -- e.g. a display's single default Space, marked by a ``wsid`` key) -- BUT only
@@ -130,14 +129,14 @@ def parse_spaces(
     only when ``current_by_display[its display] == its id64``. Session ``id64`` is
     globally unique for labelable Spaces, but a display's default Space can report a
     low/reused id (``1``), so a bare-id64 set could mark the wrong display's default
-    current. (DECISIONS.md 1.5/9.5.)
+    current.
 
     Args:
         managed: Per-display dicts as returned by ``CGSCopyManagedDisplaySpaces``.
         current_by_display: Map of display UUID -> that display's live current-Space
             ``id64``; a Space is marked current iff its display's entry equals its id64.
         main_display_uuid: Primary display UUID used to remap the ``"Main"`` sentinel
-            and any other non-UUID display identifier (DESIGN.md §3.5).
+            and any other non-UUID display identifier.
         include_unlabelable: Also return ordinary Spaces with a real id64 but no real
             UUID (``uuid=""``).
 
@@ -165,7 +164,7 @@ def parse_spaces(
         for space in raw_spaces:
             # A malformed element (non-dict, or non-numeric type/id) must not abort
             # the whole enumeration: log with context and skip just that Space
-            # (no-silent-except, DESIGN.md §8.2).
+            # (no-silent-except).
             if not isinstance(space, Mapping):
                 log.warning(
                     "skipping non-mapping Space entry on display %s: %r",
@@ -216,7 +215,7 @@ def _load() -> dict[str, Any]:
     ``SLS`` name against a **separately-loaded SkyLight** bundle. This is the real
     per-symbol fallback: on Tahoe CoreGraphics exports only the ``CGS*`` re-exports and
     SkyLight only the ``SLS*`` implementations, so trying the ``SLS`` name against
-    CoreGraphics (the old code) was a no-op (DECISIONS.md §1.1, improvements.md item H).
+    CoreGraphics (the old code) was a no-op.
     The two ``Copy`` functions carry ``already_retained`` so PyObjC balances the ``+1``
     retain (never also ``CFRelease``). Both bundles are cached in ``_BUNDLES``; SkyLight
     is loaded lazily, only if some ``CGS*`` alias is missing.
@@ -325,7 +324,7 @@ def current_space_id(display_uuid: str) -> int:
     """Return the live current Space id for the given display UUID.
 
     Uses the live ``CGSManagedDisplayGetCurrentSpace`` call (never the dict's
-    ``"Current Space"``, which lags right after a switch -- DECISIONS.md 1.5).
+    ``"Current Space"``, which lags right after a switch).
 
     Args:
         display_uuid: The CFUUID string of the display to query.
@@ -346,7 +345,7 @@ def active_display_uuid() -> str:
 
     Prefers ``CGSCopyActiveMenuBarDisplayIdentifier``; on a falsy/missing result
     falls back to ``NSScreen.mainScreen()``'s CFUUID via
-    :func:`spacelabel.platform.displays.display_uuid` (DECISIONS.md 1.8).
+    :func:`spacelabel.platform.displays.display_uuid`.
 
     Returns:
         The active display's CFUUID string (empty string only if every source is
@@ -364,9 +363,8 @@ def active_display_uuid() -> str:
             return canonical_uuid(active_str)
         # Non-UUID identifier (e.g. the literal "Main" when 'Displays have separate
         # Spaces' is off): remap to the primary display UUID through the SAME path as
-        # enumerate_spaces so the active-display join still matches (DESIGN.md §3.5,
-        # DECISIONS.md 1.7) -- otherwise read_active_space_uuid never finds the
-        # current Space and the agent shows no label.
+        # enumerate_spaces so the active-display join still matches -- otherwise
+        # read_active_space_uuid never finds the current Space and the agent shows no label.
         from spacelabel.platform import displays
 
         return _normalize_display_identifier(active_str, displays.primary_display_uuid())
@@ -398,7 +396,7 @@ def list_spaces() -> list[dict[str, object]]:
 
     Deep-converts the bridged ``NSArray``/``NSDictionary`` from
     ``CGSCopyManagedDisplaySpaces`` so the result is JSON-friendly and free of
-    bridged objects (DESIGN.md §3.4).
+    bridged objects.
 
     Returns:
         One native ``dict`` per managed display.
@@ -426,7 +424,7 @@ def enumerate_spaces(*, include_unlabelable: bool = False) -> list[Space]:
     Space id via ``CGSManagedDisplayGetCurrentSpace`` (wrapped per display in
     specific try/except -> log + skip, never silent), then delegates the labelable
     filter to :func:`parse_spaces`. The ``"Main"`` sentinel is remapped via
-    :func:`spacelabel.platform.displays.primary_display_uuid` (DESIGN.md §3.4-3.6).
+    :func:`spacelabel.platform.displays.primary_display_uuid`.
 
     Args:
         include_unlabelable: When True, also return ordinary Spaces with no
@@ -450,7 +448,7 @@ def enumerate_spaces(*, include_unlabelable: bool = False) -> list[Space]:
     if not isinstance(native, list):
         # A nil/garbage result is a FAILED read, not an empty topology -- raise so
         # callers engage the plist fallback / error path instead of reporting "0
-        # Spaces" with exit 0 (DESIGN.md §3.4 / CLI.md §3.4).
+        # Spaces" with exit 0.
         raise CGSUnavailableError(
             f"CGSCopyManagedDisplaySpaces returned no usable data ({type(native).__name__})"
         )
@@ -472,7 +470,7 @@ def enumerate_spaces(*, include_unlabelable: bool = False) -> list[Space]:
         if sid:
             # Key per display, not a flat id64 set: a display's default Space can report
             # a low/reused id (e.g. 1), which a flat set would mark current on the wrong
-            # display (DECISIONS.md 1.5).
+            # display.
             current_by_display[identifier] = sid
 
     return parse_spaces(
@@ -487,7 +485,7 @@ def read_active_space_uuid() -> str | None:
     """Resolve the active display's current Space UUID (the agent's hot path).
 
     Resolves the active display, reads its live current Space id, then maps that id
-    to a Space ``uuid`` via :func:`enumerate_spaces` (DESIGN.md §3.6). Returns the
+    to a Space ``uuid`` via :func:`enumerate_spaces`. Returns the
     UUID string, or ``None`` if no labelable Space on the active display matches the
     live current id.
 

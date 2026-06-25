@@ -1,6 +1,6 @@
 """Persistent store -- ``labels.json`` and ``config.json`` under Application Support.
 
-Both files live in ``~/Library/Application Support/spacelabel/`` (DESIGN.md §7).
+Both files live in ``~/Library/Application Support/spacelabel/``.
 All writes are atomic (temp file -> ``fsync`` -> ``os.replace``) and serialized
 with an advisory ``fcntl.flock``; the agent watches both files and reloads on
 change so a CLI edit is reflected live without a restart.
@@ -267,7 +267,7 @@ def _atomic_write_json(target: Path, payload: Mapping[str, object]) -> None:
 
     Writes to a sibling temp file in the same directory, flushes and ``fsync``s
     it, then ``os.replace``s it over ``target`` so a reader never observes a
-    partial file (DESIGN.md §7.3).
+    partial file.
     """
     text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     tmp_path: Path | None = None
@@ -355,7 +355,7 @@ def _guard_before_rewrite(path: Path) -> None:
 def _notes_from_entry(uuid: str, raw: object) -> list[Note]:
     """Parse the optional ``notes`` array of one ``labels.json`` entry (tolerant).
 
-    Each item is a ``{text, done}`` object (DECISIONS.md 9.10). A non-list value or
+    Each item is a ``{text, done}`` object. A non-list value or
     a malformed item (non-object, missing/empty ``text``) is logged and skipped so a
     hand-edited file never crashes the load; ``done`` defaults to ``False`` when
     absent or non-bool. Order is preserved (the queue order).
@@ -382,10 +382,10 @@ def _notes_from_entry(uuid: str, raw: object) -> list[Note]:
 def _label_from_entry(uuid: str, entry: object) -> Label | None:
     """Build a :class:`Label` from one ``labels.json`` entry, or ``None`` if empty.
 
-    The on-disk key is ``label`` (DESIGN.md §7.1); ``color``/``last_display``, the
+    The on-disk key is ``label``; ``color``/``last_display``, the
     timestamps and ``notes`` are optional and forward-compatible. A non-dict entry
     is skipped (logged). A **notes-only** entry (empty/absent ``label`` but with at
-    least one note) is valid — a task list on an unlabeled Space (DECISIONS.md 9.10);
+    least one note) is valid — a task list on an unlabeled Space;
     surfaces fall back to ``Desktop N``. An entry with neither a label nor any note
     carries nothing and is skipped, never crashing the load.
     """
@@ -461,8 +461,8 @@ def _labels_to_payload(labels: Mapping[str, Label]) -> dict[str, object]:
     """Serialize the in-memory label map to the ``labels.json`` payload shape.
 
     Optional fields (``color``/``last_display``/timestamps/``notes``) are omitted
-    when empty so the file stays minimal (DESIGN.md §7.1). ``label`` itself is
-    omitted when the text is empty (a notes-only entry, DECISIONS.md 9.10).
+    when empty so the file stays minimal. ``label`` itself is
+    omitted when the text is empty (a notes-only entry).
     """
     entries: dict[str, object] = {}
     for uuid, label in labels.items():
@@ -531,7 +531,7 @@ def clear_label(paths: StorePaths, uuid: str, *, timestamp: str | None = None) -
     """Clear the label text for ``uuid`` via locked RMW; return ``True`` if one existed.
 
     If the Space also has notes, the entry is **kept** as a notes-only entry — the
-    task queue must survive clearing the label (DECISIONS.md 9.10), so a `label clear`
+    task queue must survive clearing the label, so a `label clear`
     never silently discards a task list; the entry is removed entirely when it has no
     notes. On demotion the label-only attributes are dropped — ``color`` is cleared
     (it is per-label, 9.8, and a notes-only Space is unlabeled everywhere else, so a
@@ -560,11 +560,11 @@ def prune_labels(
 ) -> list[str]:
     """Prune orphan **labels** (UUIDs absent from ``live_uuids``); return the pruned UUIDs.
 
-    Locked read-modify-write (DECISIONS.md 5.6 -- retain by default, explicit prune
+    Locked read-modify-write (retain by default, explicit prune
     for removal). ``label prune`` removes *labels*, not *notes*: an orphan that still
     carries a task queue is **demoted to a notes-only entry** (label text + color
     dropped, ``updated_at`` bumped) rather than deleted, so a maintenance prune never
-    silently destroys a Space's tasks (DECISIONS.md 9.10); an orphan with no notes is
+    silently destroys a Space's tasks; an orphan with no notes is
     deleted entirely. A notes-only orphan (no label to prune) is left untouched and
     not reported. Returns the orphan UUIDs whose label was pruned, in store order.
     """
@@ -591,14 +591,14 @@ def prune_labels(
 
 
 # --------------------------------------------------------------------------- #
-# Notes (per-Space task queue, stored on the label entry — DECISIONS.md 9.10)
+# Notes (per-Space task queue, stored on the label entry)
 # --------------------------------------------------------------------------- #
 
 
 def add_note(paths: StorePaths, uuid: str, text: str, *, timestamp: str | None = None) -> Label:
     """Append a task to ``uuid``'s note queue via locked RMW; return the stored Label.
 
-    Creates a notes-only entry when the Space has no label yet (DECISIONS.md 9.10).
+    Creates a notes-only entry when the Space has no label yet.
     The existing label text/color/``created_at`` are preserved and ``updated_at`` is
     refreshed. The new task starts ``done=False``.
     """
@@ -1172,7 +1172,7 @@ def config_from_dict(data: Mapping[str, object]) -> Config:
 
     Tolerant of missing/extra keys and wrong-typed values: each field falls back
     to its model default rather than raising, so a hand-edited or partial file
-    still loads (DESIGN.md §8.2 -- recover, do not crash).
+    still loads (recover, do not crash).
     """
     defaults = Config()
 

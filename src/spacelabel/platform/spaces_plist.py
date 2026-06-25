@@ -1,9 +1,9 @@
-"""Fallback parser for ``~/Library/Preferences/com.apple.spaces.plist`` (DESIGN.md §11).
+"""Fallback parser for ``~/Library/Preferences/com.apple.spaces.plist``.
 
 A **topology/UUID-enumeration fallback only** -- used when the CGS read path raises
 :class:`spacelabel.platform.cgs.CGSUnavailableError`. It is cached by ``cfprefsd`` and
 flushed only on Space create/delete, so it is **stale for the current Space**;
-always read the live current Space via CGS (DECISIONS.md 3.4). Accordingly every
+always read the live current Space via CGS. Accordingly every
 parsed :class:`~spacelabel.model.Space` has ``is_current=False``.
 
 The parser is pure (stdlib only): :func:`parse_spaces_plist` takes an already-loaded
@@ -33,7 +33,7 @@ def plist_path() -> Path:
 
 
 def _is_real_uuid(value: object) -> bool:
-    """Return True when ``value`` parses as a real UUID string (DECISIONS.md 1.6)."""
+    """Return True when ``value`` parses as a real UUID string."""
     if not value:
         return False
     try:
@@ -49,7 +49,7 @@ def parse_spaces_plist(
     main_display_uuid: str | None = None,
     include_unlabelable: bool = False,
 ) -> list[Space]:
-    """Parse a loaded Spaces plist mapping into Spaces (PURE, DESIGN.md §11).
+    """Parse a loaded Spaces plist mapping into Spaces (PURE).
 
     Navigates ``data["SpacesDisplayConfiguration"]["Management Data"]["Monitors"]``
     (a list of per-monitor dicts); for each monitor reads ``"Display Identifier"``
@@ -60,12 +60,12 @@ def parse_spaces_plist(
     ``uuid`` is missing/non-UUID is also returned (``uuid=""``), so the ordinal count
     matches the live :func:`spacelabel.platform.cgs.parse_spaces` on the CGS-fallback
     path and "Desktop N" stays consistent with the live read (item V). ``is_current``
-    is always ``False`` because the plist lags the live current Space (DECISIONS.md 3.4).
+    is always ``False`` because the plist lags the live current Space.
 
     A non-UUID ``"Display Identifier"`` (the literal ``"Main"`` when 'Displays have
     separate Spaces' is off) is remapped to ``main_display_uuid`` when provided, the
     same normalization :func:`spacelabel.platform.cgs.parse_spaces` applies, so the
-    fallback path joins against the live NSScreen<->UUID topology (DESIGN.md §3.5).
+    fallback path joins against the live NSScreen<->UUID topology.
 
     Every key access is guarded; a malformed shape (wrong type at any level) is
     logged and yields an empty result rather than raising. Monitor records that
@@ -95,8 +95,7 @@ def parse_spaces_plist(
         raw_display = str(display_identifier) if display_identifier is not None else ""
         # Canonicalize a real-UUID identifier, and remap the "Main" sentinel / any
         # non-UUID identifier to the primary UUID, so the fallback joins against the
-        # live (canonical) topology -- mirrors cgs._normalize_display_identifier
-        # (DESIGN.md §3.5).
+        # live (canonical) topology -- mirrors cgs._normalize_display_identifier.
         if _is_real_uuid(raw_display):
             display_uuid = canonical_uuid(raw_display)
         elif main_display_uuid is not None:
@@ -160,7 +159,7 @@ def read_spaces(*, include_unlabelable: bool = False) -> list[Space]:
     A missing file (``FileNotFoundError``) or a corrupt plist
     (``plistlib.InvalidFileException`` / ``OSError`` / ``ValueError``) is logged at
     WARNING and recovered as an empty list -- this is a best-effort fallback path
-    (DECISIONS.md 3.4), never a hard error. ``include_unlabelable`` is forwarded so the
+    never a hard error. ``include_unlabelable`` is forwarded so the
     CGS-fallback ordinal count matches the live read (item V).
     """
     path = plist_path()

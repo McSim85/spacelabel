@@ -1,4 +1,4 @@
-"""Display topology discovery and the NSScreen <-> CGS display-id mapping (DESIGN.md §4).
+"""Display topology discovery and the NSScreen <-> CGS display-id mapping.
 
 Everything is discovered at runtime via ``NSScreen.screens()`` -- never hardcode
 count, resolution, orientation, scale, or arrangement (portability requirement).
@@ -10,7 +10,7 @@ by PyObjC's ``Quartz`` and is NOT exported by CoreGraphics; it lives in
 ``ColorSync.framework`` (and ``ApplicationServices``). We bind it with
 ``objc.loadBundleFunctions`` (ColorSync, then ApplicationServices), the same
 loader pattern as the CGS read path, with ``already_cfretained`` so PyObjC
-balances the Create-rule +1 (verified live; DECISIONS.md §3.2).
+balances the Create-rule +1 (verified live).
 
 All PyObjC imports are lazy inside the live functions so pure helpers
 (:func:`friendly_name`, :func:`describe`) and the package ``--help`` path never
@@ -90,7 +90,7 @@ def display_uuid(cg_display_id: int) -> str | None:
     Resolves ``CGDisplayCreateUUIDFromDisplayID`` (bound from ColorSync, see
     :func:`_resolve_display_uuid_fn`) then ``CoreFoundation.CFUUIDCreateString``.
     Returns ``None`` (logged) when the symbol or the display id has no resolvable
-    UUID -- callers must tolerate a missing identity rather than crash (DESIGN.md §4).
+    UUID -- callers must tolerate a missing identity rather than crash.
     """
     import CoreFoundation
 
@@ -113,8 +113,7 @@ def localized_name(cg_display_id: int) -> str | None:
 
     Scans ``NSScreen.screens()`` for the screen whose ``NSScreenNumber`` matches
     ``cg_display_id`` and returns its ``localizedName``. Returns ``None`` when no
-    screen matches or the name is empty (DECISIONS.md 9 open question -- friendly
-    name is best-effort).
+    screen matches or the name is empty (friendly name is best-effort).
     """
     from AppKit import NSScreen
 
@@ -134,7 +133,7 @@ def localized_name(cg_display_id: int) -> str | None:
 
 
 def discover_topology() -> list[Display]:
-    """Enumerate connected displays and their CGS identities (DESIGN.md §4).
+    """Enumerate connected displays and their CGS identities.
 
     Iterates ``NSScreen.screens()``; per screen reads ``NSScreenNumber`` (guarded
     -- never assume the key is present), ``frame`` (origin/size, orientation is
@@ -179,8 +178,8 @@ def primary_display_uuid() -> str | None:
     """Return the UUID of the primary display (the screen at origin ``(0, 0)``).
 
     The primary display is the one whose ``frame.origin`` is the AppKit global
-    origin; this is the remap target for the CGS ``"Main"`` sentinel (DESIGN.md
-    §3.5). If no screen sits exactly at the origin (e.g. a fractional arrangement),
+    origin; this is the remap target for the CGS ``"Main"`` sentinel. If no screen
+    sits exactly at the origin (e.g. a fractional arrangement),
     fall back to ``NSScreen.screens()[0]`` -- the menu-bar-owning *primary* screen
     per AppKit, NOT ``mainScreen()`` (which is the *active/key* screen and may be a
     secondary display). Returns ``None`` (logged) when no UUID can be resolved.
@@ -201,7 +200,7 @@ def primary_display_uuid() -> str | None:
             return display_uuid(cg_id)
 
     # No screen exactly at the origin: the primary is screens()[0], not the
-    # active/key mainScreen() (DESIGN.md §3.5 -- the remap target is the primary).
+    # active/key mainScreen() -- the remap target is the primary.
     if first_cg_id is not None:
         log.info("no display at origin (0,0); using NSScreen.screens()[0] as primary")
         return display_uuid(first_cg_id)
@@ -225,8 +224,7 @@ def friendly_name(display: Display) -> str:
     """Return a human-facing name for a display (PURE).
 
     Uses ``display.name`` when present, else a short ``Display <8-char-prefix>``
-    derived from the UUID (DECISIONS.md 9 -- fall back to a UUID prefix when no
-    model name is available).
+    derived from the UUID (fall back to a UUID prefix when no model name is available).
     """
     if display.name:
         return display.name

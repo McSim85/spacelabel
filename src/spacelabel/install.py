@@ -1,4 +1,4 @@
-"""LaunchAgent install / uninstall via ``launchctl`` (DESIGN.md §9.2).
+"""LaunchAgent install / uninstall via ``launchctl``.
 
 The agent runs at login in the per-user Aqua GUI domain (``NSStatusItem`` needs
 a window-server session). The reverse-DNS id :data:`spacelabel.BUNDLE_ID` is used
@@ -95,7 +95,7 @@ def _is_ephemeral_path(path: Path) -> bool:
     - **Pipx-managed venvs** (unsupported install path): ``~/.local/pipx/`` —
       checked on the *original* path before symlink resolution, because the
       console script may be a symlink pointing outside ``~/.local/pipx`` while
-      the invoking Python still lives there (DECISIONS.md §6.6/§6.8).
+      the invoking Python still lives there.
 
     A DURABLE project venv (``~/code/proj/.venv/bin/spacelabel``) returns False.
     """
@@ -152,8 +152,7 @@ def _enclosing_app_exe() -> Path | None:
     stanza), so a user invoking ``spacelabel install`` is running *inside*
     ``spacelabel.app``. The LaunchAgent must exec that bundle executable so the agent
     process **is** the bundle and macOS attributes Accessibility (TCC) to
-    ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot
-    (DECISIONS.md §6 / §2.7, todo/phase-6-blockers.md Tier 1 step 5). Detected by
+    ``dev.mcsim.spacelabel`` -- the whole point of the distribution pivot. Detected by
     walking up from the running executable / this module's file to the enclosing
     ``.app``; returns ``None`` when not bundled (a dev install).
 
@@ -194,12 +193,11 @@ def _resolve_install_shim() -> Path:
     Resolution order, each an absolute, durable path launchd can exec without a shell:
 
     1. the cask-installed ``spacelabel.app`` main executable, so the agent process **is**
-       the bundle -- a stable, *named* Accessibility identity (the distribution pivot,
-       DECISIONS.md §6);
+       the bundle -- a stable, *named* Accessibility identity (the distribution pivot);
     2. a **source/dev** console script beside the running interpreter
        (``<bindir>/spacelabel`` next to ``<bindir>/python``, e.g. ``.venv/bin/spacelabel``
        from ``uv run`` / an editable install) -- a real, durable venv path, NOT the
-       transient ``PATH`` lookup §9.1 warns against, so contributors can exercise the
+       transient ``PATH`` lookup, so contributors can exercise the
        LaunchAgent lifecycle locally.
 
     Only when none of these resolves (a genuinely transient launch) does it refuse, rather
@@ -224,7 +222,7 @@ def _resolve_install_shim() -> Path:
         log.warning(
             "not running from the spacelabel.app bundle; the LaunchAgent will exec the "
             "source/dev shim %s. Fine for local development, but prefer the Homebrew cask "
-            "for a stable Accessibility identity (DECISIONS.md §6); the agent breaks if this "
+            "for a stable Accessibility identity; the agent breaks if this "
             "venv is removed.",
             durable,
         )
@@ -621,7 +619,7 @@ def purge_user_data(targets: list[Path]) -> list[Path]:
 
 @dataclass(frozen=True, slots=True)
 class AgentStatus:
-    """Install + run state of the agent (DECISIONS.md §9 exit-code contract).
+    """Install + run state of the agent (exit-code contract).
 
     ``installed``/``loaded`` describe the LaunchAgent plist (present on disk / loaded
     into ``gui/$UID``); ``running`` is True when *any* agent process -- the managed
@@ -714,7 +712,7 @@ def _probe_agent_lock(config_path: Path | None) -> tuple[bool, int | None, Path 
 
 
 def agent_status_detail(config_path: Path | None = None) -> AgentStatus:
-    """Report install + run state, detecting a foreground agent too (improvements.md item I).
+    """Report install + run state, detecting a foreground agent too.
 
     Combines the LaunchAgent service state (``launchctl``) with a probe of ``agent.lock``,
     so a foreground ``spacelabel agent`` (dev/debug) is reported **running** even though

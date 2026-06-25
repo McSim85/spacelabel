@@ -2,8 +2,7 @@ name: Build and attach release artifacts
 
 # Triggered when the release-please PR is merged and a GitHub Release is created.
 #
-# Distribution is a signed .app shipped via a Homebrew CASK (DECISIONS.md §6 — the
-# 2026-06-22 pivot that reversed the former pipx-only path; pipx removed 2026-06-25). The jobs:
+# Distribution is a signed .app shipped via a Homebrew CASK. The jobs:
 #
 #   build-app:    builds the self-contained spacelabel.app on a macOS arm64 runner
 #                 (py2app, ad-hoc signed inside-out — no Apple account/secrets/cost),
@@ -25,7 +24,7 @@ name: Build and attach release artifacts
 # an already-published sha256 in a merged cask bump stays valid); and the cask bump forks
 # from main and is idempotent (reuses its branch/PR), so a retry never corrupts a release.
 #
-# Ad-hoc caveats (documented in README/UI.md): the cdhash changes each build so the
+# Ad-hoc caveats (documented in README.md): the cdhash changes each build so the
 # Accessibility grant drops on upgrade until re-granted, and downloads hit Gatekeeper
 # quarantine (right-click→Open). Developer-ID signing + notarization (paid Apple Developer
 # Program + secrets) is a deferred follow-on for friction-free public installs.

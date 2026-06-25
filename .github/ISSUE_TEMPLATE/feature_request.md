@@ -20,5 +20,5 @@ assignees: ""
 
 ## Additional context
 
-<!-- Mockups, links, related issues. Note if this touches a locked decision in
-DECISIONS.md. -->
+<!-- Mockups, links, related issues. Note if this touches a core architectural
+invariant described in docs/ARCHITECTURE.md. -->

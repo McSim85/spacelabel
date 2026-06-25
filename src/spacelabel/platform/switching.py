@@ -1,8 +1,8 @@
 """Synthetic Space switching via the "Switch to Desktop N" Mission Control shortcut.
 
-Space *switching* is the one operation behind the SIP/Dock wall (DECISIONS.md 9.5,
-docs/UI.md §2.4): there is no public or SIP-free private API that sets the active
-Space. The only supported path is the user-enabled per-desktop "Switch to Desktop
+Space *switching* is the one operation behind the SIP/Dock wall: there is no public
+or SIP-free private API that sets the active Space. The only supported path is the
+user-enabled per-desktop "Switch to Desktop
 N" Mission Control keyboard shortcut, synthesized with ``CGEventPost`` once the
 user grants Accessibility.
 
@@ -160,7 +160,7 @@ def is_switchable_target(target_display_uuid: str, active_display_uuid: str | No
     Desktop-N numbering matched our enumeration, but cross-display chords did not
     land). So click-to-switch is offered only when the target Space is on the active
     display; otherwise the caller refuses with a visible reason rather than a silent
-    no-op (DECISIONS.md 9.5, todo item O).
+    no-op.
 
     Switchable iff the active display is **known** AND the target is on it. If the
     active display can't be resolved we refuse -- never silently post a possibly
@@ -181,7 +181,7 @@ def load_symbolic_hotkeys() -> dict[str, object]:
 
     Reads through ``cfprefsd`` (CFPreferences) so a just-changed System Settings
     binding is seen without the stale-file lag the on-disk plist suffers (the same
-    "prefer the live source" ethos as DECISIONS.md 3.4 for the spaces plist).
+    "prefer the live source" ethos for the spaces plist).
     Returns an empty dict when the domain/key is absent or not a mapping (logged) --
     no shortcuts are configured. Raises :exc:`HotkeyReadError` on genuine system
     failures (Foundation unavailable, bridge error) so callers can surface an accurate
@@ -234,7 +234,7 @@ def post_switch(binding: KeyBinding) -> bool:
 
     Returns ``True`` once the events are posted. This is best-effort: a posted event
     may still be dropped (e.g. Accessibility revoked between the check and the post),
-    which is acceptable for an opt-in, documented feature (DECISIONS.md 9.5 §e) --
+    which is acceptable for an opt-in, documented feature --
     the caller has already verified the prerequisites. Posting requires Accessibility.
     Feature-detected: returns ``False`` (logged) if the Quartz CGEvent symbols are
     unavailable. Posted at the HID tap so the WindowServer's hotkey dispatch (which
@@ -301,7 +301,7 @@ def _load_ax_functions() -> dict[str, Any]:
 #
 # macOS keys an Accessibility (TCC) grant to the code-signing **cdhash** of the
 # running binary. The shipping bundle is ad-hoc-signed, so the cdhash **rotates on
-# every release** (DECISIONS.md §6.9): after an upgrade an already-enabled
+# every release**: after an upgrade an already-enabled
 # "spacelabel" entry is bound to the OLD cdhash and no longer applies, so
 # ``AXIsProcessTrusted`` stays False and toggling the stale row often re-grants the
 # OLD hash — the user must REMOVE it and let a fresh prompt re-add it. We can't read
