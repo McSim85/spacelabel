@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/McSim85/spacelabel/compare/v1.1.2...v1.2.0) (2026-06-26)
+
+
+### Features
+
+* **agent:** track lifecycle/reload events, show version in menu; doc completion ([#77](https://github.com/McSim85/spacelabel/issues/77)) ([35fb8ef](https://github.com/McSim85/spacelabel/commit/35fb8ef990bc6ff9eaedc8bbf87d4e860688dda9))
+
 ## [1.1.2](https://github.com/McSim85/spacelabel/compare/v1.1.1...v1.1.2) (2026-06-25)
 
 
