@@ -8,11 +8,37 @@ whole module is skipped rather than failed.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
+import logging
 
 import pytest
 
 pytest.importorskip("AppKit", reason="PyObjC/AppKit not available (non-macOS)")
+
+
+@contextlib.contextmanager
+def _capture_spacelabel_logs(level: int = logging.INFO):
+    """Collect ``spacelabel`` log records via a direct handler (test_logging.py pattern).
+
+    The package logger sets ``propagate=False`` once ``setup_logging`` has run, so
+    ``caplog`` (which captures via the root logger) can miss records depending on test
+    order. Attaching a handler straight to the ``spacelabel`` logger and raising its
+    level captures the INFO lifecycle lines deterministically regardless of ordering.
+    """
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = logging.getLogger("spacelabel")
+    prev_level = logger.level
+    logger.setLevel(level)
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
+
 
 AGENT_MODULES = [
     "spacelabel.agent.app",
@@ -773,3 +799,141 @@ def test_sync_cts_state_updates_button(tmp_path):
     from AppKit import NSControlStateValueOn
 
     assert calls == [NSControlStateValueOn]
+
+
+def test_application_will_terminate_logs_clean_stop():
+    # Lifecycle tracking: a clean NSApplication termination (menu Quit / cask `quit:`)
+    # logs an "agent stopping" INFO line. Paired with run_agent's "agent starting", a
+    # start with no preceding stop in agent.log means killed/crashed, not quit.
+    from spacelabel.agent.app import AppDelegate
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(None)
+    with _capture_spacelabel_logs() as records:
+        delegate.applicationWillTerminate_(None)
+    assert any("agent stopping" in r.getMessage() for r in records)
+
+
+def test_poll_reload_logs_config_reload_reason(tmp_path, monkeypatch):
+    # Config-reload tracking: when config.json's mtime changes, _poll_reload logs the
+    # reason at INFO. mtimes are stubbed so exactly the config branch fires (others
+    # stable; the every-3-tick CGS topology read is skipped on the first tick).
+    from spacelabel.agent import app as app_mod
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = Config()
+    delegate._refresh = lambda: None  # don't build AppKit surfaces in a unit test
+
+    watched = {
+        str(delegate._paths.config_file): 1.0,
+        str(delegate._paths.labels_file): 1.0,
+        str(delegate._paths.displays_file): 1.0,
+        str(delegate._spaces_plist_path): 1.0,
+    }
+    monkeypatch.setattr(app_mod, "_mtime", lambda p: watched.get(str(p), 0.0))
+    delegate._config_mtime = 1.0
+    delegate._labels_mtime = 1.0
+    delegate._displays_mtime = 1.0
+    delegate._spaces_plist_mtime = 1.0
+
+    watched[str(delegate._paths.config_file)] = 2.0  # only config.json changed
+    with _capture_spacelabel_logs() as records:
+        delegate._poll_reload(None)
+    messages = [r.getMessage() for r in records]
+    assert any("config reloaded: config.json changed" in m for m in messages)
+    # The unchanged stores must NOT log a reload reason.
+    assert not any("labels reloaded" in m for m in messages)
+
+
+def test_poll_reload_logs_labels_reload_reason(tmp_path, monkeypatch):
+    # Same harness, labels.json branch: logs the reason + the loaded entry count.
+    from spacelabel.agent import app as app_mod
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = Config()
+    delegate._refresh = lambda: None
+
+    watched = {
+        str(delegate._paths.config_file): 1.0,
+        str(delegate._paths.labels_file): 1.0,
+        str(delegate._paths.displays_file): 1.0,
+        str(delegate._spaces_plist_path): 1.0,
+    }
+    monkeypatch.setattr(app_mod, "_mtime", lambda p: watched.get(str(p), 0.0))
+    delegate._config_mtime = 1.0
+    delegate._labels_mtime = 1.0
+    delegate._displays_mtime = 1.0
+    delegate._spaces_plist_mtime = 1.0
+
+    watched[str(delegate._paths.labels_file)] = 2.0  # only labels.json changed
+    with _capture_spacelabel_logs() as records:
+        delegate._poll_reload(None)
+    assert any("labels reloaded: labels.json changed" in r.getMessage() for r in records)
+
+
+def test_poll_reload_does_not_spam_spaces_changed_on_repeated_ticks(tmp_path, monkeypatch):
+    # codex P2: the spaces-plist branch commits its baseline only in _refresh_impl, so a
+    # stuck/failed refresh would re-enter it every tick. The "Spaces changed" INFO must
+    # log once per distinct mtime, not once per tick. Here _refresh is a no-op (the
+    # baseline never advances), so two polls with the same changed mtime yield exactly
+    # one log line — proving the "announced mtime" gate.
+    from spacelabel.agent import app as app_mod
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = Config()
+    delegate._refresh = lambda: None  # render that never commits the baseline
+
+    watched = {
+        str(delegate._paths.config_file): 1.0,
+        str(delegate._paths.labels_file): 1.0,
+        str(delegate._paths.displays_file): 1.0,
+        str(delegate._spaces_plist_path): 1.0,
+    }
+    monkeypatch.setattr(app_mod, "_mtime", lambda p: watched.get(str(p), 0.0))
+    delegate._config_mtime = 1.0
+    delegate._labels_mtime = 1.0
+    delegate._displays_mtime = 1.0
+    delegate._spaces_plist_mtime = 1.0
+    delegate._spaces_plist_announced_mtime = 1.0
+
+    watched[str(delegate._spaces_plist_path)] = 2.0  # a create/delete bumps the plist
+    with _capture_spacelabel_logs() as records:
+        delegate._poll_reload(None)  # tick 1: detect + log once
+        delegate._poll_reload(None)  # tick 2: baseline still stale -> must NOT re-log
+    spaces_logs = [r for r in records if "Spaces changed" in r.getMessage()]
+    assert len(spaces_logs) == 1, f"expected one 'Spaces changed' line, got {len(spaces_logs)}"
+
+
+def test_rebuild_menu_appends_disabled_version_footer(tmp_path, monkeypatch):
+    # Part 3: the dropdown ends with a dimmed, disabled "spacelabel v<version>" row so
+    # the running build is visible at a glance. Uses a fake menubar to capture the items
+    # without creating a real NSStatusItem.
+    from spacelabel import __version__
+    from spacelabel.agent.app import AppDelegate
+    from spacelabel.model import Config
+    from spacelabel.platform import displays
+
+    delegate = AppDelegate.alloc().initWithConfigPath_(tmp_path / "config.json")
+    delegate._config = Config()
+    delegate._labels = {}
+
+    captured: dict[str, list] = {}
+
+    class _FakeMenubar:
+        def set_menu_items(self, items):
+            captured["items"] = items
+
+    delegate._menubar = _FakeMenubar()  # type: ignore[assignment]
+    monkeypatch.setattr(displays, "discover_topology", lambda: [])
+
+    delegate._rebuild_menu([], {})
+
+    items = captured["items"]
+    footer = items[-1]
+    assert str(footer.title()) == f"spacelabel v{__version__}"
+    assert footer.isEnabled() is False

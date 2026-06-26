@@ -112,6 +112,13 @@ spacelabel install     # installs + loads the LaunchAgent (pointed at the app bu
 spacelabel status      # check it's running
 ```
 
+Homebrew **casks don't install shell completions** (only formulae do), so enable
+tab-completion once after install:
+
+```sh
+spacelabel completion install   # writes the script to your shell's auto-load dir
+```
+
 > **Ad-hoc signing caveat.** The bundle is ad-hoc-signed (no Apple Developer account
 > yet), so on first launch Gatekeeper may block it — right-click → **Open** once, or
 > `xattr -dr com.apple.quarantine /Applications/spacelabel.app`. The cdhash changes

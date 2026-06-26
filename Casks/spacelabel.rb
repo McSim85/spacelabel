@@ -102,6 +102,8 @@ cask "spacelabel" do
   caveats <<~CAVEATS
     spacelabel ships ad-hoc-signed (no Apple Developer account yet). After install:
       * run `spacelabel install` to start the menu-bar agent at login;
+      * run `spacelabel completion install` to enable shell tab-completion
+        (zsh/bash/fish) -- Homebrew casks can't install completions automatically;
       * to enable click-to-switch, grant Accessibility to "spacelabel" under
         System Settings -> Privacy & Security -> Accessibility.
     An ad-hoc signature's cdhash changes each release, so the Accessibility grant must
