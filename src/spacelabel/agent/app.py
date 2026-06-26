@@ -37,7 +37,7 @@ from AppKit import (
 from Foundation import NSTimer
 from PyObjCTools import AppHelper
 
-from spacelabel import labeling, store
+from spacelabel import __version__, labeling, store
 from spacelabel.agent import geometry
 from spacelabel.logging_setup import (
     LogMode,
@@ -234,7 +234,17 @@ def run_agent(
     delegate.retainLockHandle_(lock_handle)
     delegate.set_managed_run(managed)
     app.setDelegate_(delegate)
-    log.info("starting spacelabel agent run loop")
+    # Lifecycle marker (INFO, so visible only at log_level=INFO): pid + version + run
+    # mode + config let an operator count restarts and tell a managed login start from a
+    # dev run. Paired with applicationWillTerminate_'s "agent stopping" line — a start
+    # with no preceding stop means the previous instance was killed/crashed, not quit.
+    log.info(
+        "agent starting: pid=%d version=%s mode=%s config=%s",
+        os.getpid(),
+        __version__,
+        "managed" if managed else "foreground",
+        store.StorePaths.resolve(config_path).config_file,
+    )
     # installInterrupt=True wires a SIGINT handler so Ctrl-C stops the AppKit run
     # loop during a foreground/dev run (the LaunchAgent stops via the menu Quit).
     AppHelper.runEventLoop(installInterrupt=True)
@@ -337,12 +347,21 @@ class AppDelegate(NSObject):
         # changes — catches a Mission Control reorder, which fires no notification and
         # is invisible in the spaces plist (DECISIONS 4.3).
         self._topology_sig: tuple[tuple[str, str, int], ...] | None = None
+        # Last topology signature ANNOUNCED to the log. Distinct from _topology_sig
+        # (committed only by a successful _refresh_impl): a failed render leaves
+        # _topology_sig stale so the reorder branch keeps firing every poll, but the
+        # INFO line must log once per distinct change, not once per failed-render tick.
+        self._topology_announced_sig: tuple[tuple[str, str, int], ...] | None = None
         # Spaces-plist path + last mtime: a cheap stat() watched every 1 s tick for
         # create/delete (the plist flushes on those — §3.4), independent of CGS.
         from spacelabel.platform import spaces_plist
 
         self._spaces_plist_path = spaces_plist.plist_path()
         self._spaces_plist_mtime: float = 0.0
+        # Last plist mtime ANNOUNCED to the log (same once-per-change rationale as
+        # _topology_announced_sig above — the render baseline _spaces_plist_mtime only
+        # advances on a successful refresh).
+        self._spaces_plist_announced_mtime: float = 0.0
         # Tick counter so the EXPENSIVE CGS topology read runs every
         # _TOPOLOGY_POLL_EVERY_TICKS, not every 1 s tick (cheap mtime checks stay at 1 s).
         self._topology_poll_ticks: int = 0
@@ -571,6 +590,17 @@ class AppDelegate(NSObject):
         )
         quit_item.setTarget_(self)
         items.append(quit_item)
+
+        # Dim, disabled footer showing the running agent's version (no target/action so
+        # AppKit grays it out) — lets the user confirm at a glance which build the live
+        # menu-bar process is on, which an ad-hoc upgrade can otherwise leave ambiguous.
+        items.append(NSMenuItem.separatorItem())
+        version_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"spacelabel v{__version__}", "", ""
+        )
+        version_item.setEnabled_(False)
+        items.append(version_item)
+
         self._menubar.set_menu_items(items)
 
     @objc.python_method
@@ -638,23 +668,33 @@ class AppDelegate(NSObject):
         labels_mtime = _mtime(self._paths.labels_file)
         displays_mtime = _mtime(self._paths.displays_file)
         changed = False
+        # Lifecycle/reload markers below are INFO (visible only at log_level=INFO) and
+        # fire once per actual change — each branch is already gated on an mtime delta.
         if config_mtime != self._config_mtime:
             old_debounce = self._config.debounce_ms if self._config is not None else None
             self._config_mtime = config_mtime
             self._config = self._load_config()
             changed = True
+            log.info("config reloaded: config.json changed")
             # The SpaceObserver captured debounce_ms at construction; restart it so a
             # `config set debounce_ms ...` actually takes effect live.
             if self._observer is not None and self._config.debounce_ms != old_debounce:
+                log.info(
+                    "debounce_ms %s -> %s; restarting space observer",
+                    old_debounce,
+                    self._config.debounce_ms,
+                )
                 self._restart_observer()
         if labels_mtime != self._labels_mtime:
             self._labels_mtime = labels_mtime
             self._labels = self._load_labels()
             changed = True
+            log.info("labels reloaded: labels.json changed (%d entries)", len(self._labels))
         if displays_mtime != self._displays_mtime:
             # Display names are reloaded fresh in _rebuild_menu; just trigger a refresh.
             self._displays_mtime = displays_mtime
             changed = True
+            log.info("display settings changed: displays.json changed")
         # Cheap create/delete signal (every 1 s tick, like config/labels/displays): the
         # spaces plist flushes on Space create/delete (§3.4), so its mtime is a stat()-
         # cost watch that works whether or not CGS is available. Reorder is invisible
@@ -662,8 +702,16 @@ class AppDelegate(NSObject):
         # Detect only — do NOT commit the baseline here; _refresh_impl commits it on a
         # successful render, so a failed render retries on the next tick (codex P2),
         # consistent with the CGS topology baseline below.
-        if _mtime(self._spaces_plist_path) != self._spaces_plist_mtime:
+        plist_mtime = _mtime(self._spaces_plist_path)
+        if plist_mtime != self._spaces_plist_mtime:
             changed = True
+            # The render baseline (_spaces_plist_mtime) only advances on a successful
+            # _refresh_impl, so a failing render would re-enter this branch every tick.
+            # Gate the INFO on a separate "announced" mtime so it logs once per distinct
+            # create/delete instead of storming agent.log during a stuck refresh (codex P2).
+            if plist_mtime != self._spaces_plist_announced_mtime:
+                self._spaces_plist_announced_mtime = plist_mtime
+                log.info("Spaces changed: com.apple.spaces.plist changed (create/delete)")
         # Live-topology diff for REORDER: a Mission Control reorder fires no
         # notification and is invisible in the plist, so compare a live CGS signature
         # (DECISIONS 4.3). The CGS read (~1 ms, ~6 ms p99) is the one EXPENSIVE part, so
@@ -676,7 +724,13 @@ class AppDelegate(NSObject):
             self._topology_poll_ticks = 0
             topology_sig = self._live_topology_signature()
             if topology_sig is not None and topology_sig != self._topology_sig:
-                log.debug("space topology changed (reorder); refreshing")
+                # Same once-per-change gating as the spaces-plist branch: _topology_sig is
+                # committed only by a successful _refresh_impl, so log on a separate
+                # "announced" signature to avoid re-logging every 3 s tick if the render
+                # keeps failing (codex P2).
+                if topology_sig != self._topology_announced_sig:
+                    self._topology_announced_sig = topology_sig
+                    log.info("space topology changed (reorder); refreshing")
                 changed = True
         if changed:
             self._refresh()
@@ -1218,6 +1272,21 @@ class AppDelegate(NSObject):
         if self._reload_timer is not None:
             self._reload_timer.invalidate()
         NSApplication.sharedApplication().terminate_(None)
+
+    def applicationWillTerminate_(self, _notification: object) -> None:  # noqa: N802
+        """Log a CLEAN shutdown (INFO; visible only at log_level=INFO).
+
+        Fires on an orderly ``NSApplication`` termination only: the menu **Quit**
+        (``quit_`` -> ``terminate_``) and the Homebrew cask's ``quit:`` Apple event on
+        upgrade/uninstall. It deliberately does NOT fire on a ``SIGTERM`` (the cask's
+        ``signal:`` force-stop fallback has no handler), ``SIGKILL``, or the
+        ``os._exit(1)`` startup-crash fast-fail. That asymmetry is the diagnostic value:
+        an "agent starting" line in ``agent.log`` with no preceding "agent stopping"
+        means the previous instance was killed or crashed (e.g. a launchd ``KeepAlive``
+        relaunch), not cleanly quit. No SIGTERM handler is added on purpose — it would
+        break the deliberate ``KeepAlive`` crash-relaunch contract (see the cask).
+        """
+        log.info("agent stopping: pid=%d (clean termination)", os.getpid())
 
     def renameCurrent_(self, _sender: object) -> None:  # noqa: N802
         """Rename the active Space (prompt prefilled with its current label)."""

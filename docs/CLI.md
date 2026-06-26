@@ -352,6 +352,10 @@ picks it up automatically — it does not run `spacelabel` on every startup, and
 fish/bash it needs no rc edit). `--shell auto` (the default) detects the shell from
 `$SHELL`. Writing is idempotent (rewrites only when the script changes).
 
+> **Homebrew cask installs:** completion is **not** set up by `brew install --cask`
+> (only Homebrew *formulae* can install completions, not casks), so run
+> `spacelabel completion install` once after installing.
+
 - **`--dry-run`** — print the generated completion script to **stdout** (the data
   channel) and the target path to stderr, without writing anything. Works even
   when `$HOME` can't be resolved (the script itself needs no home dir).
