@@ -51,7 +51,7 @@ concurrency:
 
 jobs:
   build-app:
-    runs-on: macos-15  # Apple Silicon (arm64); the ad-hoc build is arm64-only for now
+    runs-on: macos-26  # Apple Silicon (arm64); the ad-hoc build is arm64-only for now
     steps:
       - uses: actions/checkout@v7
         with:
