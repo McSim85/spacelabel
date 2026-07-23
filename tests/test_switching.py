@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from spacelabel.platform.switching import (
     KeyBinding,
+    SwitchOutcome,
+    classify_switch,
     is_grant_stale,
     is_switchable_target,
     parse_desktop_binding,
@@ -145,3 +147,69 @@ def test_grant_was_trusted_dominates_even_with_equal_cdhash():
     # ax_was_trusted=True is stale regardless of cdhash equality (a manual revoke is
     # reported stale too -- a benign false positive; the remove-and-re-add cure still works).
     assert is_grant_stale(current_cdhash="same", last_cdhash="same", ax_was_trusted=True) is True
+
+
+# ---- posted-switch read-back classification (orphaned-desktop honesty fix) --
+#
+# classify_switch maps the SETTLED current Space + read-back EVIDENCE to an outcome. The
+# orphan bounce is a sequence (flash target -> land on Desktop 1), so a bare
+# observed==home is not enough: REVERTED requires evidence a bounce occurred -- the target
+# was seen (saw_target) OR the click started elsewhere (origin != home). home with neither
+# is a no-op -> WRONG_DESKTOP, not an orphan. Only REVERTED earns the "reconnect the
+# display" wording. The success decision (which read is the settled one) is the agent's.
+#
+# Fixtures use the real reference layout: home (Desktop 1) = the no-UUID default,
+# id64 == 1; Kids/Valeriia == 650; 503s-upgrade == 927; Spacefix == 2541.
+
+
+def _classify(**kw):
+    # Defaults: origin unknown, target not seen — so each test states only its evidence.
+    kw.setdefault("origin_id", None)
+    kw.setdefault("saw_target", False)
+    return classify_switch(**kw)
+
+
+def test_classify_switch_confirmed_when_observed_is_target():
+    assert _classify(target_id=697, observed_id=697, home_id=1) is SwitchOutcome.CONFIRMED
+
+
+def test_classify_switch_reverted_on_home_bounce_from_other_space():
+    # THE REAL REPRO: click an orphaned pill (target 650) from a non-Desktop-1 Space
+    # (origin 2541); macOS flashes it and bounces to Desktop 1 (home 1). Evidence =
+    # started elsewhere -> REVERTED, so the "reconnect the display" notice fires.
+    outcome = _classify(target_id=650, observed_id=1, home_id=1, origin_id=2541)
+    assert outcome is SwitchOutcome.REVERTED
+
+
+def test_classify_switch_reverted_on_home_bounce_via_flash_evidence():
+    # Clicked from Desktop 1 itself (origin == home), but the target was seen to flash
+    # before the bounce -> still an evidenced orphan bounce.
+    outcome = _classify(target_id=650, observed_id=1, home_id=1, origin_id=1, saw_target=True)
+    assert outcome is SwitchOutcome.REVERTED
+
+
+def test_classify_switch_home_noop_without_evidence_is_wrong_desktop_not_orphan():
+    # Started on Desktop 1 and the event had NO effect (never saw the target): settled on
+    # home but with no bounce evidence -> generic, NOT the orphan diagnosis (#3/#4).
+    outcome = _classify(target_id=650, observed_id=1, home_id=1, origin_id=1, saw_target=False)
+    assert outcome is SwitchOutcome.WRONG_DESKTOP
+
+
+def test_classify_switch_noop_at_nonhome_origin_is_wrong_desktop():
+    # No effect, stayed at a non-home origin (2541): not target, not home -> generic.
+    outcome = _classify(target_id=650, observed_id=2541, home_id=1, origin_id=2541)
+    assert outcome is SwitchOutcome.WRONG_DESKTOP
+
+
+def test_classify_switch_other_desktop_is_wrong_desktop():
+    # Landed on a genuinely different desktop (not target, not home) -> generic notice,
+    # even with a flash seen (it did not settle on home, so it is not a home bounce).
+    outcome = _classify(target_id=650, observed_id=927, home_id=1, origin_id=2541, saw_target=True)
+    assert outcome is SwitchOutcome.WRONG_DESKTOP
+
+
+def test_classify_switch_confirmed_takes_precedence_over_bounce_evidence():
+    # Clicking Desktop 1 itself and landing there: observed == target == home -> CONFIRMED
+    # wins over the reverted check regardless of evidence, so no spurious failure notice.
+    outcome = _classify(target_id=1, observed_id=1, home_id=1, origin_id=2541, saw_target=True)
+    assert outcome is SwitchOutcome.CONFIRMED

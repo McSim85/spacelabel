@@ -34,7 +34,7 @@ from AppKit import (
     NSObject,
     NSScreen,
 )
-from Foundation import NSTimer
+from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
 from PyObjCTools import AppHelper
 
 from spacelabel import __version__, labeling, store
@@ -78,6 +78,28 @@ _TOPOLOGY_POLL_EVERY_TICKS = 3
 # before a genuine duplicate is rejected.
 _LOCK_RETRY_ATTEMPTS = 10
 _LOCK_RETRY_DELAY_S = 0.03
+
+#: Verify a posted "Switch to Desktop N" by POLLING the live current Space, not a single
+#: fixed-delay sample: a slow switch may not have arrived at one deadline, and the bounce
+#: briefly *flashes* the target before reverting. The interval is deliberately >= the
+#: observed near-instant flash so two consecutive target reads mean a genuine, HELD
+#: landing (not the flash) — that lets us confirm success early and stop watching, so a
+#: later user navigation isn't misattributed to the posted switch. interval * max = the
+#: ceiling (~1.2 s) before we conclude a switch did not land — long enough for a slow
+#: switch to settle, short enough that a failure notice still reads as click feedback.
+_SWITCH_VERIFY_POLL_INTERVAL_S = 0.3
+_SWITCH_VERIFY_MAX_POLLS = 4
+
+#: The three switch-failure banners (the ONLY strings _flash_switch_notice shows for a
+#: verification miss). A confirmed switch clears a still-visible one of these so a stale
+#: "could not switch" doesn't outlive the failure it described (there may be no ambient
+#: HUD to replace it — HUD mode off, or an unlabelable target).
+_SWITCH_NOTICE_ORPHAN = "Orphaned desktop — reconnect its display to switch."
+_SWITCH_NOTICE_FAILED = "Could not switch to that desktop."
+_SWITCH_NOTICE_UNVERIFIED = "Could not confirm the switch."
+_SWITCH_FAILURE_NOTICES = frozenset(
+    {_SWITCH_NOTICE_ORPHAN, _SWITCH_NOTICE_FAILED, _SWITCH_NOTICE_UNVERIFIED}
+)
 
 
 def _topology_signature(spaces: list[Space]) -> tuple[tuple[str, str, int], ...]:
@@ -375,6 +397,10 @@ class AppDelegate(NSObject):
         self._click_to_switch_settings_url: str | None = None
         self._click_to_switch_on: bool = False
         self._ax_prompted: bool = False
+        #: Monotonic token so a newer posted switch supersedes an in-flight read-back
+        #: verify (rapid clicks / navigating away within the verify delay must not fire a
+        #: stale "could not switch" notice for a switch that actually succeeded).
+        self._switch_verify_seq: int = 0
         return self
 
     def retainLockHandle_(self, handle: object) -> None:  # noqa: N802
@@ -901,6 +927,11 @@ class AppDelegate(NSObject):
             # (ButtonsRowView._handle_click_at_x), so a click never reaches here with neither.
             log.debug("ignoring click-to-switch for a pill with no Space identity")
             return
+        # Supersede any in-flight verification NOW, as a new click begins — not only when a
+        # new verify is scheduled. Otherwise a prior click's read-back can later overwrite
+        # THIS click's feedback even when this one refuses early (off-display, no shortcut,
+        # AX denied) and so never schedules its own verify. (#5)
+        self._switch_verify_seq += 1
         try:
             spaces = cgs.enumerate_spaces(include_unlabelable=True)
         except cgs.CGSUnavailableError as exc:
@@ -969,14 +1000,197 @@ class AppDelegate(NSObject):
             )
             self._flash_switch_notice("Click-to-switch only works on the focused display.")
             return
+        # Read-back evidence: the active display's Desktop 1 (home) — the first enumerated
+        # Space on that display, where the orphaned bounce lands — and the pre-switch
+        # current Space (origin). A bounce is home + evidence (target flashed, or origin !=
+        # home); home with neither is a no-op, not an orphan (see classify_switch).
+        home_id = next((s.id64 for s in spaces if s.display_uuid == active_uuid), 0)
+        origin_id = self._read_current_space_id(active_uuid)
         if switching.post_switch(binding):
             log.info(
                 "posted “Switch to Desktop %d” for Space (uuid=%r id64=%s)", ordinal, uuid, id64
             )
+            self._schedule_switch_verify(active_uuid, target.id64, origin_id, home_id, ordinal)
         else:
             self._disable_click_to_switch(
                 "could not post the switch key event (CGEventPost unavailable)."
             )
+
+    @objc.python_method
+    def _read_current_space_id(self, display_uuid: str | None) -> int | None:
+        """Read the live current Space id64 for ``display_uuid``; None if unreadable.
+
+        Returns None on a failed read AND on id ``0`` — ``CGSManagedDisplayGetCurrentSpace``
+        uses ``0`` to mean "this display has no current Space" (a transient during a
+        display/fullscreen transition), which the active-Space path rejects the same way.
+        Treating it as a real id would let ``classify_switch`` mistake it for a wrong/orphan
+        landing.
+        """
+        from spacelabel.platform import cgs
+
+        if not display_uuid:
+            return None
+        try:
+            sid = cgs.current_space_id(display_uuid)
+        except (cgs.CGSUnavailableError, ValueError, TypeError, RuntimeError, objc.error) as exc:
+            # objc.error (a PyObjC bridge exception) is NOT a RuntimeError, so it must be
+            # named explicitly — else it escapes this best-effort read and turns the caller
+            # (a pill click, or a read-back poll) into a silent no-op.
+            log.debug("could not read current space id for display %s: %s", display_uuid, exc)
+            return None
+        return sid or None
+
+    @objc.python_method
+    def _schedule_switch_verify(
+        self,
+        active_uuid: str | None,
+        target_id: int,
+        origin_id: int | None,
+        home_id: int,
+        ordinal: int,
+    ) -> None:
+        """After posting a switch, POLL the current Space and report the settled result.
+
+        macOS refuses to switch to some Spaces — notably ones orphaned onto the built-in
+        from a disconnected display: the shortcut flashes the target, then snaps to
+        Desktop 1. The orphan bounce is a *sequence* (flash target -> land home), not a
+        single value, so we track EVIDENCE — whether the target was ever seen
+        (``saw_target``) — and, with the origin, hand the settled state to
+        :func:`switching.classify_switch`.
+
+        Success is confirmed as soon as the target is seen HELD (two consecutive reads)
+        and the loop then STOPS — so a later user navigation within the window is not
+        misattributed to the posted switch. The poll interval is >= the near-instant flash
+        precisely so the flash (a single sighting) can't masquerade as a held target. A
+        slow switch that only reaches the target on the final poll is still accepted
+        (``settled == target``). On confirmation any stale switch-failure banner from an
+        earlier click is cleared, since no ambient HUD may replace it.
+
+        A miss is matched to the settled state (freshest of the last two reads, riding out
+        one transient CGS ``0``): Desktop 1 with bounce evidence -> the orphan notice; any
+        other desktop, or Desktop 1 with no evidence (a no-op) -> a generic "could not
+        switch"; both reads unreadable, or an unexpected error -> "could not confirm"
+        (never silent — the contract forbids a silent no-op).
+
+        ACCEPTED limits: (a) no finite window distinguishes "on target, staying" from "on
+        target, about to bounce" if a flash spans the window's end — pathological, since
+        the bounce is near-instant; (b) a click made FROM Desktop 1 whose flash is shorter
+        than one poll interval yields no evidence, so its orphan is reported as a generic
+        "could not switch". We accept (b) rather than shrink the interval, because a
+        shorter interval would let a longer flash forge a "held" target -> a FALSE success,
+        which is worse than a generic-instead-of-orphan message.
+
+        A repeating timer on ``NSRunLoopCommonModes`` (like the notification debounce) so a
+        menu/modal tracking loop can't postpone it onto a later Space change; the monotonic
+        token (bumped by every click in ``_on_pill_clicked``) supersedes an in-flight loop.
+        """
+        from spacelabel.platform import switching
+
+        if not active_uuid:
+            return
+
+        token = self._switch_verify_seq  # bumped in _on_pill_clicked; newer clicks supersede
+        polls = 0
+        saw_target = False  # was the target ever observed (the flash) — bounce evidence
+        prev_obs: int | None = None  # previous poll's raw read (penultimate at the final poll)
+        stopped = False  # set before invalidate so a failed invalidate can't relaunch the body
+
+        def _stop(timer: NSTimer, message: str | None = None) -> None:
+            # Single exit: mark stopped FIRST (so a bridge error from invalidate() leaves a
+            # firing timer harmless — the next tick no-ops), then invalidate and optionally
+            # notify, each guarded so neither can escape the callback boundary (#5).
+            nonlocal stopped
+            stopped = True
+            try:
+                timer.invalidate()
+            except Exception:
+                log.exception("failed to invalidate the switch-verify timer")
+            if message is not None:
+                try:
+                    self._flash_switch_notice(message)
+                except Exception:
+                    log.exception("failed to show the switch-verification failure notice")
+
+        def _poll(timer: NSTimer) -> None:
+            nonlocal polls, saw_target, prev_obs
+            if stopped:
+                return
+            try:
+                if token != self._switch_verify_seq:
+                    _stop(timer)  # a newer click superseded this loop
+                    return
+                polls += 1
+                observed = self._read_current_space_id(active_uuid)  # None if 0 / unreadable
+                if observed == target_id:
+                    saw_target = True
+                # Success confirmed early from a HELD target (two consecutive reads) — then
+                # stop, so a later navigation isn't read as this switch's result (#3).
+                if observed is not None and observed == target_id and prev_obs == target_id:
+                    _stop(timer)
+                    self._clear_switch_failure_notice()
+                    return
+                if polls < _SWITCH_VERIFY_MAX_POLLS:
+                    prev_obs = observed
+                    return
+                # Settled state = freshest of the last two reads (ride out one transient
+                # 0/None); a stale earlier read is NOT reused (#2).
+                settled = observed if observed is not None else prev_obs
+                if settled is None:
+                    log.warning(
+                        "could not confirm “Switch to Desktop %d”: current Space unreadable",
+                        ordinal,
+                    )
+                    _stop(timer, _SWITCH_NOTICE_UNVERIFIED)
+                    return
+                outcome = switching.classify_switch(
+                    target_id=target_id,
+                    observed_id=settled,
+                    home_id=home_id,
+                    origin_id=origin_id,
+                    saw_target=saw_target,
+                )
+                if outcome is switching.SwitchOutcome.CONFIRMED:
+                    _stop(timer)
+                    self._clear_switch_failure_notice()
+                    return
+                log.warning(
+                    "“Switch to Desktop %d” did not land (%s): current id64=%s, target=%s",
+                    ordinal,
+                    outcome.value,
+                    settled,
+                    target_id,
+                )
+                _stop(
+                    timer,
+                    _SWITCH_NOTICE_ORPHAN
+                    if outcome is switching.SwitchOutcome.REVERTED
+                    else _SWITCH_NOTICE_FAILED,
+                )
+            except Exception:
+                # Boundary backstop: surface a generic failure (never a silent no-op) and
+                # stop — a bridge error (e.g. objc.error) must not leave the switch
+                # unverified AND unreported.
+                log.exception("unexpected error verifying a posted switch")
+                _stop(timer, _SWITCH_NOTICE_UNVERIFIED)
+
+        # Non-scheduled create + add to common modes (NSRunLoopCommonModes already covers
+        # the default mode, so one add fires it everywhere the debounce timer does).
+        timer = NSTimer.timerWithTimeInterval_repeats_block_(
+            _SWITCH_VERIFY_POLL_INTERVAL_S, True, _poll
+        )
+        NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSRunLoopCommonModes)
+
+    @objc.python_method
+    def _clear_switch_failure_notice(self) -> None:
+        """Dismiss a still-visible switch-FAILURE banner (a confirmed switch supersedes it).
+
+        Only dismisses when the HUD is currently showing one of the switch-failure strings
+        (:data:`_SWITCH_FAILURE_NOTICES`) — never an unrelated ambient label — so a later
+        successful click can't leave a stale "could not switch" up when there is no ambient
+        HUD to replace it (HUD mode off, or an unlabelable target).
+        """
+        if self._hud is not None and self._hud.current_text in _SWITCH_FAILURE_NOTICES:
+            self._hud.dismiss()
 
     @objc.python_method
     def _disable_click_to_switch(self, reason: str, *, settings_url: str | None = None) -> None:

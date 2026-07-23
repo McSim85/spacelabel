@@ -11,6 +11,15 @@ code + modifier flags) from ``com.apple.symbolichotkeys`` and post exactly that,
 and we refuse -- with a specific, logged reason -- when the shortcut is
 absent/disabled or Accessibility is denied (never a silent no-op).
 
+Even a correctly-posted chord is not guaranteed to switch: macOS itself refuses to
+make certain Spaces current -- notably ones **orphaned onto another display** after a
+monitor is disconnected (they still show in Mission Control, but the genuine shortcut,
+even pressed by hand, flashes the target and bounces back to Desktop 1). We cannot
+force those. Instead the agent reads the live current Space back after posting
+(:func:`classify_switch`) and surfaces a truthful "couldn't switch" notice rather than
+a false-success HUD; reconnecting the display (or reordering in Mission Control)
+restores them.
+
 Empirically grounded on the reference machine (macOS 26.5.1, build 25F80):
 symbolic-hotkey id ``118`` is "Switch to Desktop 1" with the default-but-disabled
 binding ``[asciiChar=65535, keyCode=18 (kVK_ANSI_1), modifiers=0x40000 (Control)]``
@@ -25,6 +34,7 @@ feature-detected and bound lazily, exactly like the CGS and ColorSync read paths
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -33,7 +43,9 @@ from typing import Any
 __all__ = [
     "HotkeyReadError",
     "KeyBinding",
+    "SwitchOutcome",
     "accessibility_trusted",
+    "classify_switch",
     "code_signature_hash",
     "is_grant_stale",
     "is_switchable_target",
@@ -260,6 +272,56 @@ def post_switch(binding: KeyBinding) -> bool:
         return False
     log.debug("posted key code %d with flags 0x%x", binding.key_code, binding.modifier_flags)
     return True
+
+
+class SwitchOutcome(enum.Enum):
+    """A posted "Switch to Desktop N" outcome, mapped from the settled state + evidence.
+
+    ``CONFIRMED`` -- the active Space is the target. ``REVERTED`` -- an orphaned-desktop
+    **bounce**: it landed on the active display's Desktop 1 *and* the read-back has
+    evidence a bounce occurred (the target was seen flashing, or the click started on a
+    different Space). ``WRONG_DESKTOP`` -- any other miss, INCLUDING a no-effect no-op
+    that merely left us on Desktop 1 without ever reaching the target (a dropped event, a
+    revoked grant) -- NOT an orphan. Only ``REVERTED`` warrants the "reconnect the
+    display" wording; ``WRONG_DESKTOP`` gets generic failure wording.
+    """
+
+    CONFIRMED = "confirmed"
+    REVERTED = "reverted"
+    WRONG_DESKTOP = "wrong_desktop"
+
+
+def classify_switch(
+    *,
+    target_id: int,
+    observed_id: int,
+    home_id: int,
+    origin_id: int | None,
+    saw_target: bool,
+) -> SwitchOutcome:
+    """Map a settled current-Space id + read-back evidence to a switch outcome.
+
+    PURE (a unit-test target). The orphaned-desktop bounce is a *sequence* -- flash the
+    target, then snap to the active display's Desktop 1 (``home_id``) -- not a single
+    value, so a settled ``observed_id == home_id`` alone cannot tell a real bounce from a
+    no-effect no-op that simply left us on Desktop 1. We therefore require **evidence**:
+    ``saw_target`` (the target was observed at least once during polling -- the flash) OR
+    ``origin_id != home_id`` (the click started on another Space, so ending on Desktop 1
+    is itself unexpected). This is what reconciles "key the bounce on home, not origin"
+    with "a home no-op is not an orphan": home + evidence -> orphan; home + no evidence ->
+    generic.
+
+    ``origin_id`` may be ``None`` (the pre-switch read failed); then only ``saw_target``
+    counts. Returns ``CONFIRMED`` iff ``observed_id == target_id`` (the caller decides
+    *which* read is the settled one); else ``REVERTED`` for an evidenced Desktop 1 bounce;
+    else ``WRONG_DESKTOP``.
+    """
+    if observed_id == target_id:
+        return SwitchOutcome.CONFIRMED
+    started_elsewhere = origin_id is not None and origin_id != home_id
+    if observed_id == home_id and (saw_target or started_elsewhere):
+        return SwitchOutcome.REVERTED
+    return SwitchOutcome.WRONG_DESKTOP
 
 
 def _load_ax_functions() -> dict[str, Any]:
