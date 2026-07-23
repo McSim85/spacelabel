@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/McSim85/spacelabel/compare/v1.2.0...v1.2.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **agent:** verify click-to-switch and report orphaned-desktop bounces honestly ([#82](https://github.com/McSim85/spacelabel/issues/82)) ([9b88d8e](https://github.com/McSim85/spacelabel/commit/9b88d8e43cf5c88030d5e27fc9d9e3706c9e917f))
+
 ## [1.2.0](https://github.com/McSim85/spacelabel/compare/v1.1.2...v1.2.0) (2026-06-26)
 
 
