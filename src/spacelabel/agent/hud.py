@@ -129,6 +129,29 @@ class Hud:
         self._field = _build_label_field(42.0)
         self._panel.setContentView_(self._field)
         self._dismiss_timer: object | None = None
+        #: Text currently shown (None when hidden) — lets a caller clear a specific stale
+        #: banner (e.g. a switch-failure notice a later confirmed switch supersedes) without
+        #: tearing down an unrelated ambient label.
+        self._current_text: str | None = None
+
+    @property
+    def current_text(self) -> str | None:
+        """The text currently displayed, or ``None`` when the panel is hidden/faded."""
+        return self._current_text
+
+    @objc.python_method
+    def dismiss(self) -> None:
+        """Fade the panel out now (cancels any pending auto-dismiss); no-op if hidden."""
+        if self._current_text is None:
+            return
+        self._cancel_dismiss()
+        self._current_text = None
+        self._fade_to(0.0, _FADE_OUT)
+        self._dismiss_timer = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            _FADE_OUT,
+            False,
+            lambda _t: self._panel.orderOut_(None),
+        )
 
     def show(
         self,
@@ -157,6 +180,7 @@ class Hud:
             log.warning("no screen available; HUD not shown")
             return
         self._cancel_dismiss()
+        self._current_text = str(text)
         if font_size is not None:
             self._field.setFont_(NSFont.boldSystemFontOfSize_(float(font_size)))
         self._size_to_text(text)
@@ -214,6 +238,7 @@ class Hud:
     @objc.python_method
     def _dismiss_block(self, _timer: object) -> None:
         """Fade out and order the panel out after the fade completes."""
+        self._current_text = None
         self._fade_to(0.0, _FADE_OUT)
         self._dismiss_timer = NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
             _FADE_OUT,

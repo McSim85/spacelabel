@@ -90,6 +90,22 @@ agent watches and reloads live.
   And one **ordinal source of truth** (`labeling.assign_ordinals` over
   `include_unlabelable=True`, counting each display's default desktop) now backs pills,
   Preferences, and the switch path.
+  **Orphaned-desktop caveat (verified 2026-07-23):** after a display is **disconnected**,
+  macOS re-homes its Spaces onto the remaining display (all under one display UUID) but
+  **refuses to switch to some of them** — the genuine "Switch to Desktop N" shortcut,
+  even pressed **by hand**, flashes the target then bounces to Desktop 1. The ordinal
+  still matches macOS's Desktop-N order (confirmed by a manual keyboard sweep), so the
+  posted chord is correct; macOS just won't complete the switch, and **no key-posting
+  method can force it** (SIP wall). So the switch path **polls the current Space after
+  posting** (0.3 s × up to 4, on `NSRunLoopCommonModes`), tracks whether the target ever
+  flashed, and maps the *settled* state (freshest of the last two reads) via
+  `switching.classify_switch`. The orphan bounce is a **sequence** (flash target → land on
+  Desktop 1), so the "reconnect the display" wording fires only on a Desktop 1 landing
+  **with bounce evidence** (target flashed, or click started on another Space) — a Desktop
+  1 no-op with no evidence is a generic "couldn't switch". Irreducible limit: no finite
+  window distinguishes "on target, staying" from "on target, about to bounce", so a fresh
+  final target is taken as success. The item-O "ordinal matches Desktop-N" guarantee holds
+  only for a **clean** topology.
 - **Never hardcode display/Space topology** — discover displays and Spaces at runtime;
   no hardcoded models, resolutions, UUIDs, scales, orientations, or counts. The
   reference machine is for testing only.

@@ -71,6 +71,39 @@ tells the user to **remove and re-add** the entry — not just re-toggle the sta
 shortcut only reliably switches the Space on the display that currently has focus. An
 off-display pill shows a visible HUD notice instead of failing silently.
 
+**Orphaned desktops can't be switched to — even by hand.** When a display is
+disconnected, macOS re-homes its Spaces onto the remaining display (they still show in
+Mission Control), but it *refuses to make some of them current*: the genuine "Switch to
+Desktop N" shortcut, even pressed manually, flashes the target and bounces back to
+Desktop 1. spacelabel's ordinal numbering still matches macOS's Desktop-N order here —
+verified against a manual keyboard sweep — so it posts the correct chord; macOS simply
+won't complete the switch. No key-posting method can force it. So the agent **polls the
+live current Space after posting** (every 0.3 s up to ~1.2 s, on `NSRunLoopCommonModes`
+so a menu/modal tracking loop can't defer it), tracking whether the target was ever seen
+(the flash). It decides from the settled state — the freshest of the last two reads (to
+ride out one transient CGS `0`/unavailable, without reusing a stale early read) — via
+`switching.classify_switch`: settled on the target → confirmed (silent); settled on the
+display's **Desktop 1 with bounce evidence** (the target flashed, or the click started on
+another Space) → the orphaned-desktop "reconnect the display" notice; any other landing —
+including Desktop 1 with *no* evidence, i.e. a clean-topology no-op — → a generic "couldn't
+switch"; the last two reads both unreadable, or an unexpected bridge error → "couldn't
+confirm" (never a silent no-op). The orphan is a *sequence* (flash → home), so it needs
+that evidence, not a bare Desktop-1 reading. Success is confirmed as soon as the target is
+seen **held** (two consecutive reads) and the loop then **stops**, so a later navigation
+inside the window isn't misread as this switch's result; the interval is kept ≥ the flash
+so the flash can't forge a "held" target. On confirmation a stale switch-failure banner
+from an earlier click is dismissed (no ambient HUD may replace it). **Accepted limits:**
+(a) no finite window separates "on target, staying" from "on target, about to bounce" if a
+flash spans the window's end (pathological — the bounce is near-instant); (b) a click made
+*from* Desktop 1 whose flash is shorter than one interval yields no evidence, so its orphan
+degrades to a generic "couldn't switch" — accepted rather than shrinking the interval,
+which would let a longer flash forge a false success (the worse error). The notice replaces
+the stale target-label HUD the debounced `activeSpaceDidChange` refresh leaves up.
+Reconnecting the display (or reordering in Mission Control) restores them. Note the item-O
+"ordinal matches
+Desktop-N" guarantee holds for a *clean* topology; a detached-display re-home leaves
+individual Spaces unswitchable regardless.
+
 ## 5. Three display modes
 
 | Mode | What it does | Default |
